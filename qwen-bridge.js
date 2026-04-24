@@ -10,7 +10,7 @@ const { query, isSDKAssistantMessage, isSDKPartialAssistantMessage,
         isSDKSystemMessage, isSDKResultMessage } = require('@qwen-code/sdk')
 const path = require('path')
 const { createPlaywrightServer } = require('./playwright-tool')
-const { createVisionServer } = require('./vision-tool')
+const { createVisionServer, registerImages, clearImages } = require('./vision-tool')
 
 // ── EventSink implementations ─────────────────────────────────────────────────
 
@@ -92,17 +92,18 @@ class QwenBridge {
       try { await this.activeQuery.interrupt() } catch (e) { /* ignore */ }
     }
 
-    // Create per-instance MCP servers (isolated browser + image state)
+    // Create per-instance Playwright MCP server (isolated browser state)
     this._playwrightServer = createPlaywrightServer()
+    // Create Vision MCP server (shares module-level image store)
     this._visionServer = createVisionServer()
 
-    // Register images on this instance's vision server (if any)
+    // Register images via module-level function (if any)
     let imageContext = ''
     if (images && images.length > 0) {
-      const ids = this._visionServer._registerImages(images)
+      const ids = registerImages(images)
       imageContext = `\n\nThe user has attached ${ids.length} image(s) to this message. Image IDs: ${ids.join(', ')}. You MUST use the vision_analyze tool to see and analyze these images. Call vision_analyze with the image_id and a prompt describing what you want to know. Do NOT say you cannot see images — use the tool.`
     } else {
-      this._visionServer._clearImages()
+      clearImages()
     }
 
     // Build the prompt: inject conversation history so the agent has multi-turn context
@@ -271,9 +272,7 @@ When the user attaches images, you MUST use vision_analyze to see them. You cann
     }
     this._playwrightServer = null
     // Clean up per-instance vision image store
-    if (this._visionServer && this._visionServer._clearImages) {
-      this._visionServer._clearImages()
-    }
+    clearImages()
     this._visionServer = null
   }
 }

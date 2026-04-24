@@ -255,7 +255,7 @@
             <button class="compact-notice-close" onclick="document.getElementById('compactNotice').style.display='none'">✕</button>
           </div>
 
-          <!-- stats bar -->
+          <!-- stats bar (unified: status + tokens above input) -->
           <div class="agent-stats" id="agentStats" style="display:none"></div>
 
           <!-- input -->
@@ -269,7 +269,6 @@
                 <option value="agent">🤖 Agent (tools + files)</option>
               </select>
               <button class="perm-toggle auto" id="permToggle" onclick="togglePermMode()" title="Toggle auto-approve / ask before changes">🔓 Auto</button>
-              <span id="liveStats" class="live-stats"></span>
             </div>
             <div class="agent-input-box">
               <div class="input-wrap" style="position:relative">

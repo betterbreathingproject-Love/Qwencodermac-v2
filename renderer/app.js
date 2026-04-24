@@ -530,9 +530,11 @@ async function sendAgentMode(prompt) {
   let lastText = '', lastThinking = '', tokenCount = 0, startTime = null
   let agentFinished = false
   let lastToolName = ''
+  let inputTokens = 0, outputTokens = 0
   window._rawCount = 0
   window.app.offQwenEvents()
   updateStatusBar('initializing')
+  updateAgentStatsBar({ state: 'initializing' })
 
   // Debounced markdown rendering — avoids O(n²) re-render on every delta
   let _mdRenderTimer = null
@@ -556,11 +558,16 @@ async function sendAgentMode(prompt) {
       case 'session-start':
         document.getElementById(respId+'-status').textContent = '🤖 Agent running in ' + (ev.cwd||'.')
         updateStatusBar('initializing')
+        updateAgentStatsBar({ state: 'initializing' })
         break
       case 'text-delta':
         lastText = ev.text
+        outputTokens += (ev.text || '').length - (lastText.length - (ev.text || '').length)
+        if (!startTime) startTime = Date.now()
+        tokenCount = lastText.length
         scheduleRender()
-        updateStatusBar('generating')
+        updateStatusBar('generating', { tokens: tokenCount, tks: _calcTks(tokenCount, startTime) })
+        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, tks: _calcTks(tokenCount, startTime) })
         break
       case 'thinking-delta':
         lastThinking = ev.text
@@ -568,12 +575,14 @@ async function sendAgentMode(prompt) {
         thinkEl.style.display = 'block'
         document.getElementById(respId+'-think-body').textContent = lastThinking + '▌'
         updateStatusBar('thinking')
+        updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount })
         break
       case 'tool-use':
         lastToolName = ev.name || ''
         document.getElementById(respId+'-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
         document.getElementById(respId+'-status').textContent = `🔧 Using tool: ${ev.name}`
         updateStatusBar('tool', { toolName: ev.name })
+        updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: tokenCount })
         scrollOutput()
         break
       case 'tool-result': {
@@ -587,7 +596,6 @@ async function sendAgentMode(prompt) {
             statusEl.className = 'tool-status ' + newStatus
             statusEl.innerHTML = (ev.is_error ? '✗ Error' : '✓ Done')
           }
-          // For todo blocks, update the status badge instead of appending raw result
           const todoStatus = lastTool.querySelector('.todo-status')
           if (todoStatus) {
             todoStatus.className = 'todo-status ' + (ev.is_error ? 'todo-status-error' : 'todo-status-done')
@@ -596,13 +604,13 @@ async function sendAgentMode(prompt) {
             lastTool.insertAdjacentHTML('beforeend', renderToolResult(ev.content, ev.is_error))
           }
         }
-        // Refresh file tree after file-modifying tool operations
         const FILE_TOOLS = ['write_file', 'edit_file', 'create_file', 'bash', 'str_replace_editor']
         if (!ev.is_error && FILE_TOOLS.some(t => lastToolName.includes(t))) {
           if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
         }
         document.getElementById(respId+'-status').textContent = '🤖 Agent processing...'
         updateStatusBar('processing')
+        updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens: tokenCount })
         scrollOutput()
         break
       }
@@ -616,28 +624,35 @@ async function sendAgentMode(prompt) {
         }
         if (html) document.getElementById(respId+'-text').innerHTML = html
         if (ev.usage) {
-          const bar = document.getElementById('agentStats'); bar.style.display = 'flex'
-          bar.innerHTML = `<div class="stat-chip"><span class="stat-label">Input</span><span class="stat-val">${ev.usage.input_tokens||0} tok</span></div>
-            <div class="stat-chip accent"><span class="stat-label">Output</span><span class="stat-val">${ev.usage.output_tokens||0} tok</span></div>`
+          inputTokens = ev.usage.input_tokens || inputTokens
+          outputTokens = ev.usage.output_tokens || outputTokens || tokenCount
         }
         updateStatusBar('processing')
+        updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens })
         scrollOutput()
         break
       }
       case 'system':
         if (ev.subtype === 'debug') document.getElementById(respId+'-status').textContent = `🔍 ${ev.data}`
         else { document.getElementById(respId+'-status').textContent = ev.subtype === 'init' ? '🤖 Agent initialized' : `⚙️ ${ev.subtype}` }
+        // Don't go to idle on system events — agent is still working
         updateStatusBar('processing')
+        updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens: tokenCount })
         scrollOutput()
         break
       case 'usage':
-        document.getElementById('liveStats').textContent = `${ev.usage?.output_tokens||0} tok out`
+        if (ev.usage) {
+          inputTokens = ev.usage.input_tokens || ev.usage.prompt_tokens || inputTokens
+          outputTokens = ev.usage.output_tokens || ev.usage.completion_tokens || outputTokens
+        }
+        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens })
         break
       case 'result':
         document.getElementById(respId+'-status').textContent = ev.is_error ? `❌ ${ev.subtype}: ${ev.result||'error'}` : '✅ Done'
         if (!agentFinished) {
           agentFinished = true
           updateStatusBar('idle')
+          updateAgentStatsBar({ state: 'done', inputTokens, outputTokens: outputTokens || tokenCount })
           finishGeneration()
         }
         break
@@ -647,16 +662,13 @@ async function sendAgentMode(prompt) {
         if (textEl) textEl.innerHTML = renderMd(lastText)
         const tb = document.getElementById(respId+'-think-body')
         if (tb && tb.textContent.endsWith('▌')) tb.textContent = tb.textContent.slice(0,-1)
-        document.getElementById('liveStats').textContent = ''
-        // Save agent response to conversation history
         if (lastText) saveToHistory('assistant', lastText)
-        // Refresh file tree after agent finishes
         if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
-        // Show a preview button if agent created an HTML file
         showPreviewButton(respId)
         if (!agentFinished) {
           agentFinished = true
           updateStatusBar('idle')
+          updateAgentStatsBar({ state: 'done', inputTokens, outputTokens: outputTokens || tokenCount })
           finishGeneration()
         }
         break
@@ -665,45 +677,42 @@ async function sendAgentMode(prompt) {
         if (!agentFinished) {
           agentFinished = true
           updateStatusBar('idle')
+          updateAgentStatsBar({ state: 'done', inputTokens, outputTokens: tokenCount })
           finishGeneration()
         }
         break
       case 'raw-stream': {
         const sev = ev.event; if (!sev) break
-        updateStatusBar('generating')
+        if (!startTime) startTime = Date.now()
         if (sev.choices?.[0]?.delta?.content) {
           const content = sev.choices[0].delta.content
           lastText += content
           scheduleRender()
-          tokenCount += content.length; if (!startTime) startTime = Date.now()
-          const elapsed = (Date.now()-startTime)/1000
-          const tks = elapsed>0?(tokenCount/elapsed).toFixed(1):'—'
-          document.getElementById('liveStats').textContent = `${tokenCount} tok · ${tks} tk/s`
+          tokenCount += content.length
+          const tks = _calcTks(tokenCount, startTime)
           updateStatusBar('generating', { tokens: tokenCount, tks })
+          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, tks })
         } else if (sev.type === 'content_block_delta' && sev.delta?.text) {
           const deltaText = sev.delta.text
           lastText += deltaText
           scheduleRender()
-          tokenCount += deltaText.length; if (!startTime) startTime = Date.now()
-          const elapsed2 = (Date.now()-startTime)/1000
-          const tks2 = elapsed2>0?(tokenCount/elapsed2).toFixed(1):'—'
+          tokenCount += deltaText.length
+          const tks2 = _calcTks(tokenCount, startTime)
           updateStatusBar('generating', { tokens: tokenCount, tks: tks2 })
+          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, tks: tks2 })
         } else if (sev.type === 'content_block_delta' && sev.delta?.thinking) {
           lastThinking += sev.delta.thinking
           document.getElementById(respId+'-think').style.display = 'block'
           document.getElementById(respId+'-think-body').textContent = lastThinking + '▌'
           updateStatusBar('thinking')
+          updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount })
         } else if (sev.usage) {
-          // Server-reported final stats — use real token counts and tps
-          const bar = document.getElementById('agentStats'); bar.style.display = 'flex'
+          inputTokens = sev.usage.prompt_tokens || inputTokens
+          outputTokens = sev.usage.completion_tokens || outputTokens || tokenCount
           const genTps = sev.x_stats?.generation_tps
           const promptTps = sev.x_stats?.prompt_tps
-          if (genTps != null) {
-            document.getElementById('liveStats').textContent = `${sev.usage.completion_tokens || tokenCount} tok · ${genTps} tk/s`
-          }
-          bar.innerHTML = `<div class="stat-chip"><span class="stat-label">Prompt</span><span class="stat-val">${sev.usage.prompt_tokens || 0} tok${promptTps != null ? ' · ' + promptTps + ' tk/s' : ''}</span></div>
-            <div class="stat-chip accent"><span class="stat-label">Generation</span><span class="stat-val">${sev.usage.completion_tokens || 0} tok${genTps != null ? ' · ' + genTps + ' tk/s' : ''}</span></div>
-            ${sev.x_stats?.peak_memory_gb != null ? '<div class="stat-chip"><span class="stat-label">Peak VRAM</span><span class="stat-val">' + sev.x_stats.peak_memory_gb + ' GB</span></div>' : ''}`
+          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks: genTps, promptTps, peakMemory: sev.x_stats?.peak_memory_gb })
+          updateStatusBar('generating', { tokens: outputTokens, tks: genTps })
         }
         break
       }
@@ -735,6 +744,7 @@ async function sendAgentMode(prompt) {
 async function sendStreamMode(prompt, mode) {
   isGenerating = true
   updateStatusBar('initializing')
+  updateAgentStatsBar({ state: 'initializing' })
   const btn = document.getElementById('sendBtn')
   btn.disabled=false; btn.innerHTML='<span class="spinner"></span>Stop'; btn.className='btn-send btn-stop'
   btn.onclick = () => { window.app.chatStreamAbort(); window.app.offStream(); finishGeneration() }
@@ -767,6 +777,7 @@ async function sendStreamMode(prompt, mode) {
   scrollOutput()
 
   let fullText='', thinkText='', respText='', inThinking=false, thinkDone=false, tokenCount=0, startTime=null
+  let streamInputTokens = 0, streamOutputTokens = 0
   window.app.offStream()
 
   window.app.onStreamChunk(chunk => {
@@ -774,7 +785,9 @@ async function sendStreamMode(prompt, mode) {
     if(!delta) return
     if(!startTime) startTime = Date.now()
     fullText += delta; tokenCount += delta.length
-    updateStatusBar(inThinking ? 'thinking' : 'generating', { tokens: tokenCount, tks: ((Date.now()-startTime)/1000)>0?(tokenCount/((Date.now()-startTime)/1000)).toFixed(1):'—' })
+    const tks = _calcTks(tokenCount, startTime)
+    updateStatusBar(inThinking ? 'thinking' : 'generating', { tokens: tokenCount, tks })
+    updateAgentStatsBar({ state: inThinking ? 'thinking' : 'generating', inputTokens: streamInputTokens, outputTokens: tokenCount, tks })
     if(!thinkDone) {
       if(!inThinking && THINK_OPEN.test(fullText)) inThinking=true
       if(inThinking) {
@@ -787,23 +800,16 @@ async function sendStreamMode(prompt, mode) {
     const thinkBody = document.getElementById(respId+'-think-body')
     if(thinkText||inThinking) { thinkEl.style.display='block'; thinkBody.textContent=thinkText+(inThinking?'▌':'') }
     document.getElementById(respId+'-text').innerHTML = renderMd(respText, true)+'<span class="cursor">▌</span>'
-    const elapsed = (Date.now()-startTime)/1000
-    document.getElementById('liveStats').textContent = `${tokenCount} tok · ${elapsed>0?(tokenCount/elapsed).toFixed(1):'—'} tk/s`
     scrollOutput()
   })
 
   window.app.onStreamStats(stats => {
-    const bar = document.getElementById('agentStats'); bar.style.display = 'flex'
-    const promptTps = stats.prompt_tps != null ? stats.prompt_tps : '—'
-    const genTps = stats.generation_tps != null ? stats.generation_tps : '—'
-    const peakMem = stats.peak_memory_gb != null ? stats.peak_memory_gb + ' GB' : '—'
-    // Update live stats with the real server-reported generation speed
-    if (stats.generation_tps != null) {
-      document.getElementById('liveStats').textContent = `${stats.completion_tokens || tokenCount} tok · ${stats.generation_tps} tk/s`
-    }
-    bar.innerHTML = `<div class="stat-chip"><span class="stat-label">Prompt</span><span class="stat-val">${stats.prompt_tokens} tok · ${promptTps} tk/s</span></div>
-      <div class="stat-chip accent"><span class="stat-label">Generation</span><span class="stat-val">${stats.completion_tokens || '—'} tok · ${genTps} tk/s</span></div>
-      <div class="stat-chip"><span class="stat-label">Peak VRAM</span><span class="stat-val">${peakMem}</span></div>`
+    streamInputTokens = stats.prompt_tokens || streamInputTokens
+    streamOutputTokens = stats.completion_tokens || streamOutputTokens || tokenCount
+    const genTps = stats.generation_tps != null ? stats.generation_tps : null
+    const promptTps = stats.prompt_tps != null ? stats.prompt_tps : null
+    updateAgentStatsBar({ state: 'done', inputTokens: streamInputTokens, outputTokens: streamOutputTokens, tks: genTps, promptTps, peakMemory: stats.peak_memory_gb })
+    updateStatusBar('generating', { tokens: streamOutputTokens, tks: genTps })
   })
 
   window.app.onStreamDone(() => {
@@ -811,8 +817,8 @@ async function sendStreamMode(prompt, mode) {
     if(textEl) textEl.innerHTML = renderMd(respText)
     const tb = document.getElementById(respId+'-think-body')
     if(tb && tb.textContent.endsWith('▌')) tb.textContent=tb.textContent.slice(0,-1)
-    document.getElementById('liveStats').textContent = ''
     saveToHistory('assistant', respText)
+    updateAgentStatsBar({ state: 'done', inputTokens: streamInputTokens, outputTokens: streamOutputTokens || tokenCount })
     finishGeneration()
     maybeAutoCompact()
   })
@@ -1776,6 +1782,55 @@ function selectSlashCommand(command) {
 
 // Initialize autocomplete on DOM ready
 document.addEventListener('DOMContentLoaded', initSlashAutocomplete)
+
+// ── helper: calculate tokens per second ────────────────────────────────────────
+function _calcTks(tokens, startTime) {
+  if (!startTime) return '—'
+  const elapsed = (Date.now() - startTime) / 1000
+  return elapsed > 0 ? (tokens / elapsed).toFixed(1) : '—'
+}
+
+// ── unified agent stats bar (above text input) ───────────────────────────────
+function updateAgentStatsBar(opts = {}) {
+  const bar = document.getElementById('agentStats')
+  if (!bar) return
+
+  const { state, inputTokens, outputTokens, tks, promptTps, peakMemory, toolName } = opts
+
+  // Always show the stats bar when agent is active
+  if (state === 'idle' && !inputTokens && !outputTokens) {
+    bar.style.display = 'none'
+    return
+  }
+  bar.style.display = 'flex'
+
+  // State indicator chip
+  const stateMap = {
+    initializing: { icon: '⚡', text: 'Initializing', cls: '' },
+    thinking:     { icon: '🧠', text: 'Thinking', cls: 'thinking' },
+    generating:   { icon: '✍️', text: 'Generating', cls: 'generating' },
+    processing:   { icon: '⚙️', text: 'Processing', cls: 'processing' },
+    tool:         { icon: '🔧', text: toolName || 'Tool', cls: 'tool' },
+    done:         { icon: '✅', text: 'Done', cls: 'done' },
+  }
+  const s = stateMap[state] || stateMap.done
+
+  let html = `<div class="stat-chip state-chip ${s.cls}"><span class="stat-label">Status</span><span class="stat-val">${s.icon} ${s.text}</span></div>`
+
+  // Input tokens
+  html += `<div class="stat-chip"><span class="stat-label">Input</span><span class="stat-val">${inputTokens || 0} tok${promptTps != null ? ' · ' + promptTps + ' tk/s' : ''}</span></div>`
+
+  // Output tokens
+  const tksDisplay = tks != null && tks !== '—' ? ' · ' + tks + ' tk/s' : ''
+  html += `<div class="stat-chip accent"><span class="stat-label">Output</span><span class="stat-val">${outputTokens || 0} tok${tksDisplay}</span></div>`
+
+  // Peak memory if available
+  if (peakMemory != null) {
+    html += `<div class="stat-chip"><span class="stat-label">Peak VRAM</span><span class="stat-val">${peakMemory} GB</span></div>`
+  }
+
+  bar.innerHTML = html
+}
 
 // ── persistent bottom status bar ──────────────────────────────────────────────
 function updateStatusBar(state, opts = {}) {

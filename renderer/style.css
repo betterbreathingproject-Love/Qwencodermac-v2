@@ -234,12 +234,25 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .btn-preview-chat:hover { background: rgba(52,211,153,0.2); border-color: rgba(52,211,153,0.5); }
 
 /* ── stats bar ─────────────────────────────────────────────────────────────── */
-.agent-stats { padding: 6px 12px; border-top: 1px solid var(--border); background: var(--bg2); display: flex; flex-wrap: wrap; gap: 4px; flex-shrink: 0; }
+.agent-stats { padding: 6px 12px; border-top: 1px solid var(--border); background: var(--bg2); display: flex; flex-wrap: wrap; gap: 4px; flex-shrink: 0; align-items: center; }
 .stat-chip { display: flex; flex-direction: column; background: var(--bg3); border: 1px solid var(--border); border-radius: 5px; padding: 3px 7px; }
 .stat-chip.accent { border-color: rgba(124,106,247,0.2); background: rgba(124,106,247,0.05); }
 .stat-label { font-size: 8px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 .stat-val { font-size: 11px; font-weight: 600; color: var(--text); font-family: 'SF Mono', monospace; }
 .stat-chip.accent .stat-val { color: var(--accent2); }
+
+/* state chip variants */
+.stat-chip.state-chip { border-color: rgba(113,113,122,0.3); }
+.stat-chip.state-chip.thinking { border-color: rgba(250,204,21,0.3); background: rgba(250,204,21,0.06); }
+.stat-chip.state-chip.thinking .stat-val { color: var(--yellow); }
+.stat-chip.state-chip.generating { border-color: rgba(74,222,128,0.3); background: rgba(74,222,128,0.06); }
+.stat-chip.state-chip.generating .stat-val { color: var(--green); }
+.stat-chip.state-chip.processing { border-color: rgba(96,165,250,0.3); background: rgba(96,165,250,0.06); }
+.stat-chip.state-chip.processing .stat-val { color: var(--blue); }
+.stat-chip.state-chip.tool { border-color: rgba(124,106,247,0.3); background: rgba(124,106,247,0.06); }
+.stat-chip.state-chip.tool .stat-val { color: var(--accent2); }
+.stat-chip.state-chip.done { border-color: rgba(74,222,128,0.3); background: rgba(74,222,128,0.06); }
+.stat-chip.state-chip.done .stat-val { color: var(--green); }
 
 /* ── editor split + preview ────────────────────────────────────────────────── */
 .editor-split { flex: 1; display: flex; overflow: hidden; }
