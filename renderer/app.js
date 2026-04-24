@@ -584,7 +584,8 @@ async function sendAgentMode(prompt) {
         break
       case 'text-delta':
         lastText = ev.text
-        if (!startTime) { startTime = Date.now(); stopPromptProgress() }
+        if (!startTime) startTime = Date.now()
+        stopPromptProgress()
         tokenCount = lastText.length
         // Extract <think> content from text-delta and route to thinking box
         const thinkContent = extractThinking(lastText)
@@ -641,7 +642,6 @@ async function sendAgentMode(prompt) {
         }
         document.getElementById(respId+'-status').textContent = '🤖 Agent processing...'
         startPromptProgress()
-        scrollOutput()
         scrollOutput()
         break
       }
@@ -735,26 +735,38 @@ async function sendAgentMode(prompt) {
         }
         if (sev.choices?.[0]?.delta?.content) {
           stopPromptProgress()
+          if (!startTime) startTime = Date.now()
           const content = sev.choices[0].delta.content
           lastText += content
+          // Check for <think> tags in accumulated text
+          const thinkInText = extractThinking(lastText)
+          if (thinkInText) {
+            document.getElementById(respId+'-think').style.display = ''
+            document.getElementById(respId+'-think-body').textContent = thinkInText + '▌'
+          }
           scheduleRender()
           tokenCount += content.length
           const tks = _calcTks(tokenCount, startTime)
-          updateStatusBar('generating', { tokens: tokenCount, tks })
           updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, tks, toolCount: _agentToolCount, activity: 'Writing response...' })
         } else if (sev.type === 'content_block_delta' && sev.delta?.text) {
+          stopPromptProgress()
+          if (!startTime) startTime = Date.now()
           const deltaText = sev.delta.text
           lastText += deltaText
+          const thinkInText2 = extractThinking(lastText)
+          if (thinkInText2) {
+            document.getElementById(respId+'-think').style.display = ''
+            document.getElementById(respId+'-think-body').textContent = thinkInText2 + '▌'
+          }
           scheduleRender()
           tokenCount += deltaText.length
           const tks2 = _calcTks(tokenCount, startTime)
-          updateStatusBar('generating', { tokens: tokenCount, tks: tks2 })
           updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, tks: tks2, toolCount: _agentToolCount, activity: 'Writing response...' })
         } else if (sev.type === 'content_block_delta' && sev.delta?.thinking) {
+          stopPromptProgress()
           lastThinking += sev.delta.thinking
           document.getElementById(respId+'-think').style.display = ''
           document.getElementById(respId+'-think-body').textContent = lastThinking + '▌'
-          updateStatusBar('thinking', { activity: 'Reasoning...' })
           updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Reasoning...' })
         } else if (sev.usage) {
           inputTokens = sev.usage.prompt_tokens || inputTokens
@@ -762,7 +774,6 @@ async function sendAgentMode(prompt) {
           const genTps = sev.x_stats?.generation_tps
           const promptTps = sev.x_stats?.prompt_tps
           updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks: genTps, promptTps, peakMemory: sev.x_stats?.peak_memory_gb, toolCount: _agentToolCount })
-          updateStatusBar('generating', { tokens: outputTokens, tks: genTps })
         }
         break
       }
@@ -2265,7 +2276,15 @@ function updateAgentStatsBar(opts = {}) {
   }
   const s = stateMap[state] || stateMap.done
 
-  let html = `<div class="stat-chip state-chip ${s.cls}"><span class="stat-label">Status</span><span class="stat-val">${s.icon} ${s.text}</span></div>`
+  let html = ''
+
+  // Model chip (always show when active)
+  const modelName = loadedModelId ? loadedModelId.split('/').pop() : null
+  if (modelName) {
+    html += `<div class="stat-chip model-chip"><span class="stat-label">Model</span><span class="stat-val">${modelName}</span></div>`
+  }
+
+  html += `<div class="stat-chip state-chip ${s.cls}"><span class="stat-label">Status</span><span class="stat-val">${s.icon} ${s.text}</span></div>`
 
   // Progress chip (shown during prompt eval or when progress is provided)
   if (progress != null) {
@@ -2300,57 +2319,9 @@ function updateAgentStatsBar(opts = {}) {
   bar.innerHTML = html
 }
 
-// ── persistent bottom status bar (minimal — model + state dot + stats) ────────
-function updateStatusBar(state, opts = {}) {
-  const bar = document.getElementById('persistentStatusBar')
-  if (!bar) return
-  const modelEl = bar.querySelector('.psb-model')
-  const stateEl = bar.querySelector('.psb-state')
-  const statsEl = bar.querySelector('.psb-stats')
+// ── persistent bottom status bar — REMOVED ───────────────────────────────────
+// All status info is now in the unified chip bar (updateAgentStatsBar).
+// This is a no-op stub so existing calls don't break.
+function updateStatusBar() {}
 
-  // model name
-  if (modelEl) modelEl.textContent = loadedModelId ? loadedModelId.split('/').pop() : 'No model'
-
-  // state indicator
-  const stateMap = {
-    idle:         { icon: '⏸', text: 'Idle', cls: 'idle' },
-    initializing: { icon: '⚡', text: 'Initializing...', cls: 'init' },
-    thinking:     { icon: '🧠', text: 'Thinking...', cls: 'thinking' },
-    generating:   { icon: '✍️', text: 'Generating...', cls: 'generating' },
-    processing:   { icon: '⚙️', text: 'Processing...', cls: 'processing' },
-    'prompt-eval':{ icon: '📊', text: 'Processing prompt...', cls: 'init' },
-    tool:         { icon: '🔧', text: `Tool: ${opts.toolName || ''}`, cls: 'tool' },
-  }
-  const s = stateMap[state] || stateMap.idle
-  if (stateEl) {
-    stateEl.className = 'psb-state ' + s.cls
-    stateEl.innerHTML = `<span class="psb-state-dot ${s.cls}"></span>${s.icon} ${s.text}`
-  }
-
-  // live stats
-  if (statsEl) {
-    if (opts.tokens && opts.tks) {
-      statsEl.textContent = `${opts.tokens} tok · ${opts.tks} tk/s`
-      statsEl.style.display = ''
-    } else if (state === 'idle') {
-      statsEl.textContent = ''
-      statsEl.style.display = 'none'
-    }
-  }
-}
-
-// Update model name in status bar when model changes
-const _origSetLoadedModel = typeof setLoadedModel === 'function' ? setLoadedModel : null
-if (_origSetLoadedModel) {
-  // Monkey-patch to also update status bar
-  const _realSetLoaded = setLoadedModel
-  setLoadedModel = function(id) {
-    _realSetLoaded(id)
-    updateStatusBar('idle')
-  }
-}
-
-// Init status bar on load
-document.addEventListener('DOMContentLoaded', () => {
-  updateStatusBar('idle')
-})
+// (status bar init removed — all status in chip bar now)

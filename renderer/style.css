@@ -355,49 +355,25 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .search-result-snippet { font-family: 'SF Mono', monospace; font-size: 11px; color: var(--text); margin: 4px 0 0; padding: 4px 6px; background: var(--bg); border-radius: 4px; white-space: pre-wrap; max-height: 60px; overflow: hidden; }
 
 
-/* ── persistent bottom status bar ──────────────────────────────────────────── */
-.persistent-status-bar {
-  position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
-  height: 26px; display: flex; align-items: center; justify-content: space-between;
-  padding: 0 12px; gap: 12px;
-  background: #0d0d0f; border-top: 1px solid var(--border);
-  font-size: 11px; font-family: 'SF Mono', monospace;
-}
-.psb-left, .psb-center, .psb-right { display: flex; align-items: center; gap: 6px; }
-.psb-left { min-width: 160px; }
-.psb-center { flex: 1; justify-content: center; }
-.psb-right { min-width: 120px; justify-content: flex-end; }
-.psb-model-icon { font-size: 12px; }
-.psb-model { color: var(--accent2); font-size: 10px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
-.psb-state { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--muted); font-weight: 500; }
-.psb-state-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-.psb-state-dot.idle { background: #555; }
-.psb-state-dot.init { background: var(--yellow); animation: pulse 1.2s ease-in-out infinite; }
-.psb-state-dot.thinking { background: var(--yellow); animation: pulse 0.8s ease-in-out infinite; }
-.psb-state-dot.generating { background: var(--green); animation: pulse 0.6s ease-in-out infinite; }
-.psb-state-dot.processing { background: var(--blue); animation: pulse 1s ease-in-out infinite; }
-.psb-state-dot.tool { background: var(--accent); animation: pulse 0.8s ease-in-out infinite; }
-.psb-state.generating { color: var(--green); }
-.psb-state.thinking { color: var(--yellow); }
-.psb-state.tool { color: var(--accent2); }
-.psb-state.processing { color: var(--blue); }
-.psb-stats { font-size: 10px; color: var(--green); font-weight: 600; }
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-
-/* progress chip in agent stats bar */
+/* ── progress chip in agent stats bar ───────────────────────────────────────── */
 .stat-chip.progress-chip { min-width: 100px; }
 .stat-chip.progress-chip .progress-mini { width: 100%; height: 3px; background: var(--bg); border-radius: 2px; margin-top: 2px; overflow: hidden; position: relative; }
 .stat-chip.progress-chip .progress-mini-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s ease; }
 .stat-chip.progress-chip .progress-mini-fill.indeterminate { width: 40%; animation: indeterminate 1.4s ease-in-out infinite; position: relative; }
 @keyframes indeterminate { 0% { left: -40%; } 100% { left: 100%; } }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
 /* activity indicator in agent stats bar */
 .agent-activity-log { display: flex; align-items: center; gap: 4px; margin-left: auto; font-size: 10px; color: var(--muted); max-width: 300px; overflow: hidden; }
 .activity-step { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: 3px; background: var(--bg); border: 1px solid var(--border); font-size: 9px; white-space: nowrap; }
 .activity-step.active { border-color: rgba(124,106,247,0.3); color: var(--accent2); }
 
-/* adjust app layout for status bar */
-.app-layout { height: calc(100vh - 40px - 26px); }
+/* model chip in agent stats bar */
+.stat-chip.model-chip { border-color: rgba(124,106,247,0.2); }
+.stat-chip.model-chip .stat-val { color: var(--accent2); font-size: 10px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* app layout — no bottom bar */
+.app-layout { height: calc(100vh - 40px); }
 
 /* ── markdown tables ───────────────────────────────────────────────────────── */
 .md-table-wrap { overflow-x: auto; margin: 10px 0; border-radius: 8px; border: 1px solid var(--border); }
