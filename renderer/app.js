@@ -41,6 +41,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (currentProject) startFileWatcher(currentProject)
   await loadProjectList()
   await loadContextSettings()
+  await restoreActiveSpec()
   checkCompactor()
   checkSearchEngine()
 })
@@ -60,7 +61,6 @@ function switchMainTab(name, btn) {
   document.querySelectorAll('.main-panel').forEach(p => p.classList.remove('active'))
   btn.classList.add('active')
   document.getElementById('mt-'+name).classList.add('active')
-  if(name==='background') loadBackgroundTasks()
 }
 
 // ── permission mode toggle ────────────────────────────────────────────────────
@@ -253,6 +253,7 @@ async function switchProject(id) {
   await renderFileTree(p.directory, document.getElementById('fileTree'))
   startFileWatcher(p.directory)
   await loadContextSettings()
+  await restoreActiveSpec()
   await loadSessions(p.activeSession)
 }
 
@@ -311,7 +312,7 @@ async function newSession(sessionType) {
   await loadSessions(sess.id)
   appendMsg('system', `💬 New ${type} session: ${name}`)
   if (type === 'spec') {
-    showPanel('specs', document.querySelector('[data-panel="specs"]'))
+    showInlineSpecWorkflow()
   }
 }
 
@@ -364,6 +365,22 @@ function clearChatOutput() {
   const todoPanelBody = document.getElementById('todoPanelBody')
   if (todoPanelBody) todoPanelBody.innerHTML = ''
 
+  // Reset the stats bar
+  const statsBar = document.getElementById('agentStats')
+  if (statsBar) { statsBar.style.display = 'none'; statsBar.innerHTML = '' }
+
+  const specResumeHtml = currentSpecDir ? `
+        <button class="build-card build-card-spec" onclick="showInlineSpecWorkflow()">
+          <span class="build-card-icon">📐</span>
+          <span class="build-card-label">Resume Spec</span>
+          <span class="build-card-desc">Continue working on "${currentSpecName || 'spec'}"</span>
+        </button>` : `
+        <button class="build-card build-card-spec" onclick="openSpecPanel()">
+          <span class="build-card-icon">📐</span>
+          <span class="build-card-label">Spec</span>
+          <span class="build-card-desc">Plan first. AI generates requirements, design, and tasks before you code.</span>
+        </button>`
+
   document.getElementById('agentOutput').innerHTML = `
     <div class="build-picker">
       <div class="build-picker-icon">✦</div>
@@ -373,21 +390,9 @@ function clearChatOutput() {
         <button class="build-card build-card-vibe" onclick="startSessionWithType('vibe')">
           <span class="build-card-icon">💬</span>
           <span class="build-card-label">Vibe</span>
-          <span class="build-card-desc">Chat first, then build. Explore ideas and iterate as you discover needs.</span>
+          <span class="build-card-desc">Chat and build. Jump straight in and iterate.</span>
         </button>
-        <button class="build-card build-card-spec" onclick="startSessionWithType('spec')">
-          <span class="build-card-icon">📋</span>
-          <span class="build-card-label">Spec</span>
-          <span class="build-card-desc">Plan first, then build. Create requirements and design before coding starts.</span>
-        </button>
-      </div>
-      <div class="build-picker-hint">
-        <div class="build-picker-hint-label">Great for:</div>
-        <ul class="build-picker-hint-list">
-          <li>Rapid exploration and testing</li>
-          <li>Building when requirements are unclear</li>
-          <li>Implementing a task</li>
-        </ul>
+        ${specResumeHtml}
       </div>
     </div>`
 }
@@ -435,12 +440,6 @@ function renderAttachedImages() {
 }
 
 // ── agent: streaming generation ───────────────────────────────────────────────
-const SYSPROMPTS = {
-  code:'You are an expert coding assistant. Write clean, well-commented code. Use markdown code blocks with language tags.',
-  explain:'You are a code explainer. Break down code clearly.',
-  refactor:'You are a refactoring expert. Improve code quality and performance.',
-  debug:'You are a debugging expert. Identify issues and provide fixes.',
-}
 const THINK_OPEN=/<think>/i, THINK_CLOSE=/<\/think>/i
 
 function sendAgent() {
@@ -466,19 +465,16 @@ function sendAgent() {
   }
 
   if(!loadedModelId) { appendMsg('system','⚠️ Load a model first.'); return }
-  const mode = document.getElementById('agentMode').value
 
   // auto-create session if none
   if (!activeSessionId && activeProjectId) {
     newSession(activeSessionType || 'vibe').then(() => {
-      if (mode === 'agent') sendAgentMode(prompt)
-      else sendStreamMode(prompt, mode)
+      sendAgentMode(prompt)
     })
     return
   }
 
-  if (mode === 'agent') { sendAgentMode(prompt); return }
-  sendStreamMode(prompt, mode)
+  sendAgentMode(prompt)
 }
 
 // ── agent mode (Qwen Code SDK with tools) ─────────────────────────────────────
@@ -519,7 +515,7 @@ async function sendAgentMode(prompt) {
   out.insertAdjacentHTML('beforeend', `<div class="msg-block" id="${respId}">
     <div class="msg-system" id="${respId}-status">🤖 Agent starting in ${currentProject}...</div>
     <div id="${respId}-tools"></div>
-    <details class="msg-thinking" id="${respId}-think" style="display:none" open>
+    <details class="msg-thinking" id="${respId}-think" style="display:none">
       <summary>🧠 Thinking</summary>
       <div class="msg-thinking-body" id="${respId}-think-body"></div>
     </details>
@@ -533,8 +529,30 @@ async function sendAgentMode(prompt) {
   let inputTokens = 0, outputTokens = 0
   window._rawCount = 0
   window.app.offQwenEvents()
-  updateStatusBar('initializing')
-  updateAgentStatsBar({ state: 'initializing' })
+  updateStatusBar('initializing', { progress: -1, activity: 'Starting agent...' })
+  updateAgentStatsBar({ state: 'initializing', progress: -1, activity: 'Starting agent...' })
+
+  let _agentToolCount = 0
+  let _promptProgress = -1
+  let _promptProgressTimer = null
+
+  // Simulated prompt-eval progress: smoothly animates from 0→90% while waiting
+  // for the first token, then jumps to 100% when generation starts.
+  function startPromptProgress() {
+    _promptProgress = 0
+    let elapsed = 0
+    _promptProgressTimer = setInterval(() => {
+      elapsed += 200
+      // Asymptotic curve: approaches 90% but never reaches it
+      _promptProgress = 90 * (1 - Math.exp(-elapsed / 8000))
+      updateStatusBar('prompt-eval', { progress: _promptProgress, activity: 'Evaluating prompt...' })
+      updateAgentStatsBar({ state: 'prompt-eval', inputTokens, outputTokens: tokenCount, progress: _promptProgress, toolCount: _agentToolCount, activity: 'Evaluating prompt...' })
+    }, 200)
+  }
+  function stopPromptProgress() {
+    if (_promptProgressTimer) { clearInterval(_promptProgressTimer); _promptProgressTimer = null }
+    _promptProgress = null
+  }
 
   // Debounced markdown rendering — avoids O(n²) re-render on every delta
   let _mdRenderTimer = null
@@ -557,32 +575,40 @@ async function sendAgentMode(prompt) {
     switch(ev.type) {
       case 'session-start':
         document.getElementById(respId+'-status').textContent = '🤖 Agent running in ' + (ev.cwd||'.')
-        updateStatusBar('initializing')
-        updateAgentStatsBar({ state: 'initializing' })
+        startPromptProgress()
         break
       case 'text-delta':
         lastText = ev.text
-        outputTokens += (ev.text || '').length - (lastText.length - (ev.text || '').length)
-        if (!startTime) startTime = Date.now()
+        if (!startTime) { startTime = Date.now(); stopPromptProgress() }
         tokenCount = lastText.length
+        // Extract <think> content from text-delta and route to thinking box
+        const thinkContent = extractThinking(lastText)
+        if (thinkContent) {
+          const thinkEl2 = document.getElementById(respId+'-think')
+          thinkEl2.style.display = 'block'
+          document.getElementById(respId+'-think-body').textContent = thinkContent + '▌'
+        }
         scheduleRender()
         updateStatusBar('generating', { tokens: tokenCount, tks: _calcTks(tokenCount, startTime) })
-        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, tks: _calcTks(tokenCount, startTime) })
+        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, tks: _calcTks(tokenCount, startTime), toolCount: _agentToolCount, activity: 'Writing response...' })
         break
       case 'thinking-delta':
         lastThinking = ev.text
+        stopPromptProgress()
         const thinkEl = document.getElementById(respId+'-think')
         thinkEl.style.display = 'block'
         document.getElementById(respId+'-think-body').textContent = lastThinking + '▌'
-        updateStatusBar('thinking')
-        updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount })
+        updateStatusBar('thinking', { activity: 'Reasoning...' })
+        updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount, activity: 'Reasoning...' })
         break
       case 'tool-use':
         lastToolName = ev.name || ''
+        _agentToolCount++
+        stopPromptProgress()
         document.getElementById(respId+'-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
         document.getElementById(respId+'-status').textContent = `🔧 Using tool: ${ev.name}`
-        updateStatusBar('tool', { toolName: ev.name })
-        updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: tokenCount })
+        updateStatusBar('tool', { toolName: ev.name, activity: `Running ${ev.name}...` })
+        updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: `Running ${ev.name}...` })
         scrollOutput()
         break
       case 'tool-result': {
@@ -609,8 +635,8 @@ async function sendAgentMode(prompt) {
           if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
         }
         document.getElementById(respId+'-status').textContent = '🤖 Agent processing...'
-        updateStatusBar('processing')
-        updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens: tokenCount })
+        startPromptProgress()
+        scrollOutput()
         scrollOutput()
         break
       }
@@ -627,8 +653,8 @@ async function sendAgentMode(prompt) {
           inputTokens = ev.usage.input_tokens || inputTokens
           outputTokens = ev.usage.output_tokens || outputTokens || tokenCount
         }
-        updateStatusBar('processing')
-        updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens })
+        updateStatusBar('processing', { activity: 'Processing response...' })
+        updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens, toolCount: _agentToolCount, activity: 'Processing response...' })
         scrollOutput()
         break
       }
@@ -636,8 +662,8 @@ async function sendAgentMode(prompt) {
         if (ev.subtype === 'debug') document.getElementById(respId+'-status').textContent = `🔍 ${ev.data}`
         else { document.getElementById(respId+'-status').textContent = ev.subtype === 'init' ? '🤖 Agent initialized' : `⚙️ ${ev.subtype}` }
         // Don't go to idle on system events — agent is still working
-        updateStatusBar('processing')
-        updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens: tokenCount })
+        updateStatusBar('processing', { activity: ev.subtype === 'debug' ? ev.data : ev.subtype })
+        updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: ev.subtype === 'debug' ? ev.data : ev.subtype })
         scrollOutput()
         break
       case 'usage':
@@ -651,8 +677,9 @@ async function sendAgentMode(prompt) {
         document.getElementById(respId+'-status').textContent = ev.is_error ? `❌ ${ev.subtype}: ${ev.result||'error'}` : '✅ Done'
         if (!agentFinished) {
           agentFinished = true
+          stopPromptProgress()
           updateStatusBar('idle')
-          updateAgentStatsBar({ state: 'done', inputTokens, outputTokens: outputTokens || tokenCount })
+          updateAgentStatsBar({ state: 'done', inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount })
           finishGeneration()
         }
         break
@@ -660,8 +687,15 @@ async function sendAgentMode(prompt) {
         document.getElementById(respId+'-status').textContent = '✅ Agent finished'
         const textEl = document.getElementById(respId+'-text')
         if (textEl) textEl.innerHTML = renderMd(lastText)
+        // Finalize thinking box with extracted content
+        const finalThink = extractThinking(lastText)
         const tb = document.getElementById(respId+'-think-body')
-        if (tb && tb.textContent.endsWith('▌')) tb.textContent = tb.textContent.slice(0,-1)
+        if (finalThink && tb) {
+          document.getElementById(respId+'-think').style.display = 'block'
+          tb.textContent = finalThink
+        } else if (tb && tb.textContent.endsWith('▌')) {
+          tb.textContent = tb.textContent.slice(0,-1)
+        }
         if (lastText) saveToHistory('assistant', lastText)
         if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
         showPreviewButton(respId)
@@ -684,14 +718,25 @@ async function sendAgentMode(prompt) {
       case 'raw-stream': {
         const sev = ev.event; if (!sev) break
         if (!startTime) startTime = Date.now()
+        // Handle prompt processing progress
+        if (sev.x_progress) {
+          if (sev.x_progress.stage === 'processing') {
+            // Server confirmed prompt processing — simulated progress handles the animation
+            if (!_promptProgressTimer) startPromptProgress()
+          } else if (sev.x_progress.stage === 'done') {
+            stopPromptProgress()
+          }
+          break
+        }
         if (sev.choices?.[0]?.delta?.content) {
+          stopPromptProgress()
           const content = sev.choices[0].delta.content
           lastText += content
           scheduleRender()
           tokenCount += content.length
           const tks = _calcTks(tokenCount, startTime)
           updateStatusBar('generating', { tokens: tokenCount, tks })
-          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, tks })
+          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, tks, toolCount: _agentToolCount, activity: 'Writing response...' })
         } else if (sev.type === 'content_block_delta' && sev.delta?.text) {
           const deltaText = sev.delta.text
           lastText += deltaText
@@ -699,19 +744,19 @@ async function sendAgentMode(prompt) {
           tokenCount += deltaText.length
           const tks2 = _calcTks(tokenCount, startTime)
           updateStatusBar('generating', { tokens: tokenCount, tks: tks2 })
-          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, tks: tks2 })
+          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, tks: tks2, toolCount: _agentToolCount, activity: 'Writing response...' })
         } else if (sev.type === 'content_block_delta' && sev.delta?.thinking) {
           lastThinking += sev.delta.thinking
           document.getElementById(respId+'-think').style.display = 'block'
           document.getElementById(respId+'-think-body').textContent = lastThinking + '▌'
-          updateStatusBar('thinking')
-          updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount })
+          updateStatusBar('thinking', { activity: 'Reasoning...' })
+          updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Reasoning...' })
         } else if (sev.usage) {
           inputTokens = sev.usage.prompt_tokens || inputTokens
           outputTokens = sev.usage.completion_tokens || outputTokens || tokenCount
           const genTps = sev.x_stats?.generation_tps
           const promptTps = sev.x_stats?.prompt_tps
-          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks: genTps, promptTps, peakMemory: sev.x_stats?.peak_memory_gb })
+          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks: genTps, promptTps, peakMemory: sev.x_stats?.peak_memory_gb, toolCount: _agentToolCount })
           updateStatusBar('generating', { tokens: outputTokens, tks: genTps })
         }
         break
@@ -737,111 +782,6 @@ async function sendAgentMode(prompt) {
     model: loadedModelId,
     images: sentImages.length > 0 ? sentImages : undefined,
     conversationHistory: historyForAgent.length > 0 ? historyForAgent : undefined,
-  })
-}
-
-// ── stream mode (direct chat completions) ─────────────────────────────────────
-async function sendStreamMode(prompt, mode) {
-  isGenerating = true
-  updateStatusBar('initializing')
-  updateAgentStatsBar({ state: 'initializing' })
-  const btn = document.getElementById('sendBtn')
-  btn.disabled=false; btn.innerHTML='<span class="spinner"></span>Stop'; btn.className='btn-send btn-stop'
-  btn.onclick = () => { window.app.chatStreamAbort(); window.app.offStream(); finishGeneration() }
-
-  const out = document.getElementById('agentOutput')
-  if(out.querySelector('.agent-welcome')) out.innerHTML = ''
-
-  if (attachedImgs.length > 0) {
-    const imgHtml = attachedImgs.map(img => `<img class="agent-img-in-chat" src="${img.b64}">`).join('')
-    appendMsg('user', prompt + imgHtml)
-  } else {
-    appendMsg('user', prompt)
-  }
-  saveToHistory('user', prompt)
-  document.getElementById('agentPrompt').value = ''
-
-  const userContent = attachedImgs.length > 0
-    ? [{ type: 'text', text: prompt }, ...attachedImgs.map(img => ({ type: 'image_url', image_url: { url: img.b64 } }))]
-    : prompt
-  attachedImgs = []; renderAttachedImages()
-
-  const respId = 'resp-'+Date.now()
-  out.insertAdjacentHTML('beforeend', `<div class="msg-block" id="${respId}">
-    <details class="msg-thinking" id="${respId}-think" style="display:none" open>
-      <summary>🧠 Thinking</summary>
-      <div class="msg-thinking-body" id="${respId}-think-body"></div>
-    </details>
-    <div class="msg-text" id="${respId}-text"></div>
-  </div>`)
-  scrollOutput()
-
-  let fullText='', thinkText='', respText='', inThinking=false, thinkDone=false, tokenCount=0, startTime=null
-  let streamInputTokens = 0, streamOutputTokens = 0
-  window.app.offStream()
-
-  window.app.onStreamChunk(chunk => {
-    const delta = chunk.choices?.[0]?.delta?.content
-    if(!delta) return
-    if(!startTime) startTime = Date.now()
-    fullText += delta; tokenCount += delta.length
-    const tks = _calcTks(tokenCount, startTime)
-    updateStatusBar(inThinking ? 'thinking' : 'generating', { tokens: tokenCount, tks })
-    updateAgentStatsBar({ state: inThinking ? 'thinking' : 'generating', inputTokens: streamInputTokens, outputTokens: tokenCount, tks })
-    if(!thinkDone) {
-      if(!inThinking && THINK_OPEN.test(fullText)) inThinking=true
-      if(inThinking) {
-        const ci = fullText.indexOf('</think>')
-        if(ci!==-1) { thinkText=fullText.slice(fullText.indexOf('<think>')+7,ci); respText=fullText.slice(ci+8); inThinking=false; thinkDone=true }
-        else thinkText=fullText.slice(fullText.indexOf('<think>')+7)
-      } else respText=fullText
-    } else respText=fullText.slice(fullText.indexOf('</think>')+8)
-    const thinkEl = document.getElementById(respId+'-think')
-    const thinkBody = document.getElementById(respId+'-think-body')
-    if(thinkText||inThinking) { thinkEl.style.display='block'; thinkBody.textContent=thinkText+(inThinking?'▌':'') }
-    document.getElementById(respId+'-text').innerHTML = renderMd(respText, true)+'<span class="cursor">▌</span>'
-    scrollOutput()
-  })
-
-  window.app.onStreamStats(stats => {
-    streamInputTokens = stats.prompt_tokens || streamInputTokens
-    streamOutputTokens = stats.completion_tokens || streamOutputTokens || tokenCount
-    const genTps = stats.generation_tps != null ? stats.generation_tps : null
-    const promptTps = stats.prompt_tps != null ? stats.prompt_tps : null
-    updateAgentStatsBar({ state: 'done', inputTokens: streamInputTokens, outputTokens: streamOutputTokens, tks: genTps, promptTps, peakMemory: stats.peak_memory_gb })
-    updateStatusBar('generating', { tokens: streamOutputTokens, tks: genTps })
-  })
-
-  window.app.onStreamDone(() => {
-    const textEl = document.getElementById(respId+'-text')
-    if(textEl) textEl.innerHTML = renderMd(respText)
-    const tb = document.getElementById(respId+'-think-body')
-    if(tb && tb.textContent.endsWith('▌')) tb.textContent=tb.textContent.slice(0,-1)
-    saveToHistory('assistant', respText)
-    updateAgentStatsBar({ state: 'done', inputTokens: streamInputTokens, outputTokens: streamOutputTokens || tokenCount })
-    finishGeneration()
-    maybeAutoCompact()
-  })
-
-  window.app.onStreamError(err => { appendMsg('system', '❌ '+err); finishGeneration() })
-
-  // build messages with project context and history
-  let sysContent = SYSPROMPTS[mode] || SYSPROMPTS.code
-  if (currentProject) {
-    let ctx = await window.app.buildContext(currentProject)
-    if (ctx && compactorInstalled && projectSettings?.autoCompact) {
-      const compressed = await window.app.compactText(ctx, 'auto')
-      if (compressed.stats?.compressed) ctx = compressed.compressed
-    }
-    if (ctx) sysContent += ctx
-  }
-
-  const maxHist = (projectSettings?.maxHistoryMessages || 40)
-  const histMsgs = conversationHistory.slice(-maxHist).map(m => ({ role: m.role, content: m.content }))
-
-  window.app.chatStream({
-    messages: [{ role: 'system', content: sysContent }, ...histMsgs, { role: 'user', content: userContent }],
-    max_tokens: 4096,
   })
 }
 
@@ -884,7 +824,16 @@ async function sendVision(){
 
 // ── markdown ──────────────────────────────────────────────────────────────────
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
-function stripThinking(t){return t.replace(/<\/?think>/gi,'').trim()}
+function stripThinking(t){return t.replace(/<think>[\s\S]*?<\/think>/gi,'').replace(/<think>[\s\S]*$/gi,'').trim()}
+function extractThinking(t){
+  const parts = []
+  // extract completed think blocks
+  t.replace(/<think>([\s\S]*?)<\/think>/gi, (_, content) => { parts.push(content.trim()); return '' })
+  // extract unclosed (streaming) think block
+  const unclosed = t.match(/<think>([\s\S]*)$/i)
+  if (unclosed) parts.push(unclosed[1].trim())
+  return parts.join('\n\n')
+}
 function stripToolCallMarkup(t){return t.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi,'').replace(/<tool_call>[\s\S]*$/gi,'').trim()}
 
 let _codeBlockId = 0
@@ -1337,11 +1286,11 @@ function renderToolResult(content, isError=false) {
 // ── task graph panel ──────────────────────────────────────────────────────────
 let currentTaskGraph = null
 let selectedTaskNodeId = null
+let currentTasksPath = null
 
-async function loadTaskGraph() {
+async function loadTaskGraph(filePath) {
   if (!currentProject) return
-  // Try to find a Tasks.md in the project
-  const tasksPath = currentProject + '/tasks.md'
+  const tasksPath = filePath || currentTasksPath || currentProject + '/tasks.md'
   const content = await window.app.readFile(tasksPath)
   if (!content) {
     document.getElementById('taskGraphEmpty').style.display = 'block'
@@ -1354,6 +1303,7 @@ async function loadTaskGraph() {
     return
   }
   currentTaskGraph = graph
+  currentTasksPath = tasksPath
   renderTaskGraph(graph)
 }
 
@@ -1402,7 +1352,7 @@ function showTaskDetail(nodeId) {
 
 async function taskGraphRun() {
   if (!currentProject) { appendMsg('system', '⚠️ Open a project first.'); return }
-  const tasksPath = currentProject + '/tasks.md'
+  const tasksPath = currentTasksPath || currentProject + '/tasks.md'
   const result = await window.app.taskGraphExecute(tasksPath)
   if (result.error) { appendMsg('system', '❌ ' + result.error); return }
   document.getElementById('tgPauseBtn').style.display = 'inline-block'
@@ -1450,101 +1400,628 @@ if (window.app.onTaskStatusEvent) {
   })
 }
 
-// ── background tasks panel ────────────────────────────────────────────────────
-async function loadBackgroundTasks() {
-  const tasks = await window.app.bgTaskList()
-  if (tasks.error) return
-  renderBackgroundTasks(tasks)
-}
+// ── spec workflow panel (AI-powered) ──────────────────────────────────────────
+let currentSpecDir = null
+let currentSpecName = null
+let specGenerating = false
 
-function renderBackgroundTasks(tasks) {
-  const container = document.getElementById('bgTaskList')
-  if (!tasks || !tasks.length) {
-    container.innerHTML = '<div class="model-empty">No background tasks running.</div>'
+async function restoreActiveSpec() {
+  if (!window.app.specList) return
+  const specs = await window.app.specList()
+  if (!specs || specs.length === 0) {
+    currentSpecDir = null
+    currentSpecName = null
     return
   }
-  container.innerHTML = tasks.map(t => {
-    const elapsed = t.endTime ? ((t.endTime - t.startTime) / 1000).toFixed(1) + 's' : formatElapsed(t.startTime)
-    return `<div class="bg-task-card">
-      <div class="bg-task-header">
-        <span class="bg-task-status ${t.status}">${t.status}</span>
-        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.taskNode?.title || t.id)}</span>
-        <span class="bg-task-elapsed">${elapsed}</span>
-      </div>
-      <div style="display:flex;gap:4px;margin-top:4px">
-        ${t.status === 'running' ? `<button class="btn-sm" onclick="cancelBgTask('${t.id}')" style="font-size:10px;padding:2px 6px">Cancel</button>` : ''}
-        ${t.output ? `<button class="btn-sm" onclick="viewBgTaskOutput('${t.id}')" style="font-size:10px;padding:2px 6px">View Output</button>` : ''}
-      </div>
-    </div>`
+  // Restore the most recently modified spec
+  const latest = specs[0]
+  currentSpecDir = latest.specDir
+  currentSpecName = latest.name
+}
+
+function openSpecPanel() {
+  // Show spec workflow inline in the main chat area
+  showInlineSpecWorkflow()
+}
+
+async function showInlineSpecWorkflow() {
+  const out = document.getElementById('agentOutput')
+  // Clear the build picker if present
+  const picker = out.querySelector('.build-picker')
+  if (picker) picker.remove()
+  // Remove any existing inline spec
+  const existing = out.querySelector('.inline-spec-workflow')
+  if (existing) existing.remove()
+
+  // Fetch existing specs for the switcher
+  let specs = []
+  if (window.app.specList) {
+    specs = await window.app.specList() || []
+  }
+
+  const specOptionsHtml = specs.map(s => {
+    const selected = s.specDir === currentSpecDir ? 'selected' : ''
+    const phase = s.currentPhase || 'requirements'
+    return `<option value="${esc(s.specDir)}" data-name="${esc(s.name)}" ${selected}>${esc(s.name)} — ${phase}</option>`
   }).join('')
+
+  const switcherHtml = specs.length > 0 ? `
+    <div class="inline-spec-switcher" id="inlineSpecSwitcher">
+      <select class="inline-spec-select" id="inlineSpecSelect">
+        <option value="">— Select a spec —</option>
+        ${specOptionsHtml}
+      </select>
+      <button class="inline-spec-new-btn" id="inlineSpecNewBtn">＋ New</button>
+    </div>` : ''
+
+  const html = `
+  <div class="inline-spec-workflow" id="inlineSpecWorkflow">
+    ${switcherHtml}
+
+    <!-- create new spec -->
+    <div class="inline-spec-create" id="inlineSpecCreate" ${currentSpecDir ? 'style="display:none"' : ''}>
+      <div class="inline-spec-header">
+        <span class="inline-spec-icon">📐</span>
+        <span class="inline-spec-title">Create a Spec</span>
+      </div>
+      <div class="inline-spec-desc">Plan before you build. The AI will generate requirements, design, and tasks for you.</div>
+      <input type="text" id="inlineSpecName" class="inline-spec-input" placeholder="feature-name">
+      <textarea id="inlineSpecDescription" class="inline-spec-textarea" placeholder="Describe what you want to build..." rows="3"></textarea>
+      <button class="inline-spec-btn" onclick="createInlineSpec()">📐 Create Spec</button>
+    </div>
+
+    <!-- active spec view -->
+    <div class="inline-spec-active" id="inlineSpecActive" style="${currentSpecDir ? '' : 'display:none'}">
+      <div class="inline-spec-name-bar">
+        <span class="inline-spec-icon">📐</span>
+        <span class="inline-spec-name" id="inlineSpecNameLabel">${currentSpecName || ''}</span>
+        <button class="inline-spec-close" onclick="closeInlineSpec()" title="Close spec">✕</button>
+      </div>
+
+      <!-- phase stepper -->
+      <div class="inline-spec-stepper" id="inlineSpecStepper">
+        <div class="inline-spec-step" data-phase="requirements">
+          <div class="inline-spec-step-dot" id="inlineStepDot-requirements"></div>
+          <div class="inline-spec-step-info">
+            <div class="inline-spec-step-label">Requirements</div>
+            <div class="inline-spec-step-status" id="inlineStepStatus-requirements">Pending</div>
+          </div>
+          <button class="spec-gen-btn" id="inlineGenBtn-requirements" onclick="generateInlineSpecPhase('requirements')">✦ Generate</button>
+        </div>
+        <div class="inline-spec-step-line"></div>
+        <div class="inline-spec-step" data-phase="design">
+          <div class="inline-spec-step-dot" id="inlineStepDot-design"></div>
+          <div class="inline-spec-step-info">
+            <div class="inline-spec-step-label">Design</div>
+            <div class="inline-spec-step-status" id="inlineStepStatus-design">Pending</div>
+          </div>
+          <button class="spec-gen-btn" id="inlineGenBtn-design" onclick="generateInlineSpecPhase('design')">✦ Generate</button>
+        </div>
+        <div class="inline-spec-step-line"></div>
+        <div class="inline-spec-step" data-phase="tasks">
+          <div class="inline-spec-step-dot" id="inlineStepDot-tasks"></div>
+          <div class="inline-spec-step-info">
+            <div class="inline-spec-step-label">Tasks</div>
+            <div class="inline-spec-step-status" id="inlineStepStatus-tasks">Pending</div>
+          </div>
+          <button class="spec-gen-btn" id="inlineGenBtn-tasks" onclick="generateInlineSpecPhase('tasks')">✦ Generate</button>
+        </div>
+        <div class="inline-spec-step-line"></div>
+        <div class="inline-spec-step" data-phase="implementation">
+          <div class="inline-spec-step-dot" id="inlineStepDot-implementation"></div>
+          <div class="inline-spec-step-info">
+            <div class="inline-spec-step-label">Implementation</div>
+            <div class="inline-spec-step-status" id="inlineStepStatus-implementation">Pending</div>
+          </div>
+          <button class="spec-gen-btn" id="inlineGenBtn-implementation" onclick="startInlineSpecImplementation()">▶ Build</button>
+        </div>
+      </div>
+
+      <!-- artifact viewer -->
+      <div class="inline-spec-artifact" id="inlineSpecArtifact">
+        <div class="inline-spec-artifact-empty" id="inlineSpecArtifactEmpty">Select a phase above to view or generate its content.</div>
+        <div class="inline-spec-artifact-content" id="inlineSpecArtifactContent" style="display:none">
+          <div class="inline-spec-artifact-header" id="inlineSpecArtifactHeader"></div>
+          <div class="inline-spec-artifact-body" id="inlineSpecArtifactBody"></div>
+        </div>
+      </div>
+    </div>
+  </div>`
+  out.insertAdjacentHTML('afterbegin', html)
+
+  // Wire up switcher events
+  const selectEl = document.getElementById('inlineSpecSelect')
+  if (selectEl) {
+    selectEl.addEventListener('change', () => {
+      const specDir = selectEl.value
+      if (!specDir) return
+      const opt = selectEl.selectedOptions[0]
+      const name = opt?.dataset?.name || ''
+      switchToSpec(specDir, name)
+    })
+  }
+  const newBtn = document.getElementById('inlineSpecNewBtn')
+  if (newBtn) {
+    newBtn.addEventListener('click', () => {
+      currentSpecDir = null
+      currentSpecName = null
+      if (selectEl) selectEl.value = ''
+      document.getElementById('inlineSpecCreate').style.display = ''
+      document.getElementById('inlineSpecActive').style.display = 'none'
+      // Clear artifact viewer and reset stepper
+      const artifactContent = document.getElementById('inlineSpecArtifactContent')
+      const artifactEmpty = document.getElementById('inlineSpecArtifactEmpty')
+      if (artifactContent) artifactContent.style.display = 'none'
+      if (artifactEmpty) artifactEmpty.style.display = ''
+      // Clear any previous chat messages below the spec workflow
+      const out = document.getElementById('agentOutput')
+      const workflow = out.querySelector('.inline-spec-workflow')
+      if (workflow) {
+        while (workflow.nextSibling) workflow.nextSibling.remove()
+      }
+    })
+  }
+
+  scrollOutput()
+  if (currentSpecDir) refreshInlineSpecStepper()
 }
 
-function formatElapsed(startTime) {
-  const s = Math.floor((Date.now() - startTime) / 1000)
-  if (s < 60) return s + 's'
-  return Math.floor(s / 60) + 'm ' + (s % 60) + 's'
+async function switchToSpec(specDir, name) {
+  currentSpecDir = specDir
+  currentSpecName = name
+  document.getElementById('inlineSpecCreate').style.display = 'none'
+  document.getElementById('inlineSpecActive').style.display = ''
+  document.getElementById('inlineSpecNameLabel').textContent = name
+  // Reset artifact viewer
+  document.getElementById('inlineSpecArtifactContent').style.display = 'none'
+  document.getElementById('inlineSpecArtifactEmpty').style.display = ''
+  await refreshInlineSpecStepper()
 }
 
-async function cancelBgTask(taskId) {
-  await window.app.bgTaskCancel(taskId)
-  await loadBackgroundTasks()
+async function refreshInlineSpecSwitcher() {
+  const selectEl = document.getElementById('inlineSpecSelect')
+  if (!selectEl || !window.app.specList) return
+  const specs = await window.app.specList() || []
+  selectEl.innerHTML = '<option value="">— Select a spec —</option>' +
+    specs.map(s => {
+      const selected = s.specDir === currentSpecDir ? 'selected' : ''
+      const phase = s.currentPhase || 'requirements'
+      return `<option value="${esc(s.specDir)}" data-name="${esc(s.name)}" ${selected}>${esc(s.name)} — ${phase}</option>`
+    }).join('')
 }
 
-async function viewBgTaskOutput(taskId) {
-  const output = await window.app.bgTaskOutput(taskId)
-  const viewer = document.getElementById('bgTaskOutputViewer')
-  viewer.style.display = 'block'
-  viewer.textContent = output || '(no output)'
-}
-
-// Listen for background task events
-if (window.app.onBgTaskEvent) {
-  window.app.onBgTaskEvent(() => { loadBackgroundTasks() })
-}
-
-// ── spec workflow panel ───────────────────────────────────────────────────────
-let currentSpecDir = null
-
-function updateSpecPhaseIndicator(currentPhase) {
-  const phases = ['requirements', 'design', 'tasks', 'implementation']
-  const badges = document.querySelectorAll('.spec-phase-badge')
-  const currentIdx = phases.indexOf(currentPhase)
-  badges.forEach(badge => {
-    const phase = badge.dataset.phase
-    const idx = phases.indexOf(phase)
-    badge.className = 'spec-phase-badge'
-    if (idx < currentIdx) badge.classList.add('completed')
-    else if (idx === currentIdx) badge.classList.add('current')
-    else badge.classList.add('future')
-  })
-}
-
-async function specAdvancePhase() {
-  if (!currentSpecDir) { appendMsg('system', '⚠️ No spec active.'); return }
-  const newPhase = await window.app.specAdvance(currentSpecDir)
-  if (newPhase.error) { appendMsg('system', '❌ ' + newPhase.error); return }
-  updateSpecPhaseIndicator(newPhase)
-}
-
-async function createNewSpec() {
-  const nameInput = document.getElementById('newSpecName')
+async function createInlineSpec() {
+  const nameInput = document.getElementById('inlineSpecName')
+  const descInput = document.getElementById('inlineSpecDescription')
   const name = (nameInput?.value || '').trim()
+  const description = (descInput?.value || '').trim()
   if (!name) { appendMsg('system', '⚠️ Enter a feature name.'); return }
   if (!currentProject) { appendMsg('system', '⚠️ Open a project first.'); return }
   const result = await window.app.specInit(name)
   if (result.error) { appendMsg('system', '❌ ' + result.error); return }
   currentSpecDir = result.specDir
+  currentSpecName = name
+  if (description) {
+    await window.app.specSaveArtifact(currentSpecDir, 'requirements', `# ${name}\n\n## Description\n${description}\n`)
+  }
+  document.getElementById('inlineSpecCreate').style.display = 'none'
+  document.getElementById('inlineSpecActive').style.display = ''
+  document.getElementById('inlineSpecNameLabel').textContent = name
+  await refreshInlineSpecStepper()
+  // Update the switcher dropdown with the new spec
+  await refreshInlineSpecSwitcher()
+  appendMsg('system', `📐 Spec "${name}" created. Generating requirements...`)
+  // Auto-start generating requirements immediately
+  generateInlineSpecPhase('requirements')
+}
+
+function closeInlineSpec() {
+  currentSpecDir = null
+  currentSpecName = null
+  const workflow = document.getElementById('inlineSpecWorkflow')
+  if (workflow) workflow.remove()
+}
+
+async function refreshInlineSpecStepper() {
+  if (!currentSpecDir) return
+  const artifacts = await window.app.specArtifacts(currentSpecDir)
+  if (artifacts.error) return
+  const config = await window.app.specConfig(currentSpecDir)
+  const currentPhase = config.currentPhase || 'requirements'
+  const phases = ['requirements', 'design', 'tasks', 'implementation']
+  const currentIdx = phases.indexOf(currentPhase)
+
+  for (const phase of phases) {
+    const dot = document.getElementById('inlineStepDot-' + phase)
+    const status = document.getElementById('inlineStepStatus-' + phase)
+    const btn = document.getElementById('inlineGenBtn-' + phase)
+    if (!dot || !status) continue
+    const idx = phases.indexOf(phase)
+    const hasArtifact = !!artifacts[phase]
+
+    dot.className = 'inline-spec-step-dot'
+    status.className = 'inline-spec-step-status'
+
+    if (hasArtifact) {
+      dot.classList.add('completed')
+      status.classList.add('done')
+      status.textContent = '✓ Generated'
+      if (btn && phase !== 'implementation') { btn.textContent = '👁 View'; btn.disabled = false; btn.onclick = () => viewInlineSpecArtifact(phase) }
+    } else if (idx === currentIdx) {
+      dot.classList.add('active')
+      status.textContent = 'Ready to generate'
+      if (btn && phase !== 'implementation') { btn.textContent = '✦ Generate'; btn.disabled = false; btn.onclick = () => generateInlineSpecPhase(phase) }
+    } else {
+      status.textContent = idx < currentIdx ? 'Skipped' : 'Pending'
+      if (btn && phase !== 'implementation') {
+        // Enable the next phase after current, disable anything further out
+        const canGenerate = idx <= currentIdx + 1
+        btn.disabled = !canGenerate
+        btn.textContent = '✦ Generate'
+        btn.onclick = canGenerate ? () => generateInlineSpecPhase(phase) : null
+      }
+    }
+  }
+
+  const lines = document.querySelectorAll('.inline-spec-step-line')
+  lines.forEach((line, i) => {
+    line.className = 'inline-spec-step-line'
+    if (artifacts[phases[i]]) line.classList.add('completed')
+  })
+
+  const implBtn = document.getElementById('inlineGenBtn-implementation')
+  if (implBtn) {
+    const ready = artifacts.requirements && artifacts.design && artifacts.tasks
+    implBtn.disabled = !ready
+  }
+}
+
+async function viewInlineSpecArtifact(phase) {
+  if (!currentSpecDir) return
+  const artifacts = await window.app.specArtifacts(currentSpecDir)
+  if (artifacts.error || !artifacts[phase]) return
+  const labels = { requirements: '📋 Requirements', design: '🏗 Design', tasks: '📝 Tasks' }
+  document.getElementById('inlineSpecArtifactEmpty').style.display = 'none'
+  document.getElementById('inlineSpecArtifactContent').style.display = ''
+  const headerEl = document.getElementById('inlineSpecArtifactHeader')
+  headerEl.innerHTML = `${labels[phase] || phase} <button class="btn-sm" id="inlineRegenBtn" style="margin-left:auto;font-size:9px;padding:2px 6px">✦ Regenerate</button>`
+  document.getElementById('inlineRegenBtn').onclick = () => generateInlineSpecPhase(phase)
+  document.getElementById('inlineSpecArtifactBody').innerHTML = renderMd(artifacts[phase])
+}
+
+async function generateInlineSpecPhase(phase) {
+  if (!currentSpecDir || !loadedModelId || specGenerating) return
+  specGenerating = true
+
+  // Disable ALL phase buttons during generation
+  const allPhases = ['requirements', 'design', 'tasks', 'implementation']
+  for (const p of allPhases) {
+    const b = document.getElementById('inlineGenBtn-' + p)
+    if (b) b.disabled = true
+  }
+
+  const btn = document.getElementById('inlineGenBtn-' + phase)
+  const status = document.getElementById('inlineStepStatus-' + phase)
+  const dot = document.getElementById('inlineStepDot-' + phase)
+  if (btn) { btn.textContent = '⏳ Generating...'; btn.classList.add('generating') }
+  if (status) { status.textContent = 'Generating...'; status.className = 'inline-spec-step-status generating' }
+  if (dot) { dot.className = 'inline-spec-step-dot active' }
+
+  try {
+    const artifacts = await window.app.specArtifacts(currentSpecDir)
+    let ctx = ''
+    if (currentProject) {
+      ctx = await window.app.buildContext(currentProject) || ''
+    }
+
+    let prompt
+    const desc = artifacts.requirements?.match(/## Description\n([\s\S]*?)(?=\n##|\n$|$)/)?.[1]?.trim() || ''
+    if (phase === 'requirements') {
+      prompt = SPEC_PROMPTS.requirements(currentSpecName, desc, ctx)
+    } else if (phase === 'design') {
+      prompt = SPEC_PROMPTS.design(currentSpecName, artifacts.requirements || '', ctx)
+    } else if (phase === 'tasks') {
+      prompt = SPEC_PROMPTS.tasks(currentSpecName, artifacts.requirements || '', artifacts.design || '')
+    }
+
+    const result = await window.app.chat({
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 4096,
+    })
+
+    if (result.error) {
+      appendMsg('system', `❌ Spec generation failed: ${result.error}`)
+    } else {
+      let content = result.choices?.[0]?.message?.content || ''
+      // Strip <think> tags
+      content = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+      // Strip plain-text thinking preamble — everything before the first markdown heading
+      if (!/^#/m.test(content.split('\n')[0]) && /^#/m.test(content)) {
+        content = content.slice(content.search(/^#/m)).trim()
+      }
+      await window.app.specSaveArtifact(currentSpecDir, phase, content)
+      await window.app.specAdvance(currentSpecDir)
+      appendMsg('system', `✅ ${phase.charAt(0).toUpperCase() + phase.slice(1)} generated for "${currentSpecName}"`)
+      viewInlineSpecArtifact(phase)
+
+      // If tasks were generated, write Tasks.md and load into task graph
+      if (phase === 'tasks' && currentProject) {
+        const tasksPath = currentProject + '/.kiro/specs/' + currentSpecName + '/tasks.md'
+        try {
+          await loadTaskGraph(tasksPath)
+          showPanel('tasks', document.querySelector('[data-panel="tasks"]'))
+          appendMsg('system', `📋 Tasks loaded into task graph.`)
+        } catch (e) {
+          // task graph load is best-effort
+        }
+      }
+    }
+  } catch (e) {
+    appendMsg('system', `❌ Error: ${e.message}`)
+  }
+
+  if (btn) { btn.classList.remove('generating') }
+  specGenerating = false
+  await refreshInlineSpecStepper()
+}
+
+async function startInlineSpecImplementation() {
+  if (!currentSpecDir || !currentProject) return
+  const artifacts = await window.app.specArtifacts(currentSpecDir)
+  if (!artifacts.tasks) { appendMsg('system', '⚠️ Generate tasks first.'); return }
+  const prompt = `I have a spec for "${currentSpecName}". Here are the implementation tasks:\n\n${artifacts.tasks}\n\nPlease start implementing these tasks in order. The requirements are:\n\n${artifacts.requirements || '(none)'}\n\nThe design is:\n\n${artifacts.design || '(none)'}`
+  document.getElementById('agentPrompt').value = prompt
+  appendMsg('system', `📐 Spec tasks loaded. Hit Send to start implementation.`)
+}
+
+async function createNewSpec() {
+  const nameInput = document.getElementById('newSpecName')
+  const descInput = document.getElementById('specDescription')
+  const name = (nameInput?.value || '').trim()
+  const description = (descInput?.value || '').trim()
+  if (!name) { appendMsg('system', '⚠️ Enter a feature name.'); return }
+  if (!currentProject) { appendMsg('system', '⚠️ Open a project first.'); return }
+  const result = await window.app.specInit(name)
+  if (result.error) { appendMsg('system', '❌ ' + result.error); return }
+  currentSpecDir = result.specDir
+  currentSpecName = name
+  // Save description as metadata
+  if (description) {
+    await window.app.specSaveArtifact(currentSpecDir, 'requirements', `# ${name}\n\n## Description\n${description}\n`)
+  }
   nameInput.value = ''
-  updateSpecPhaseIndicator(result.currentPhase || 'requirements')
-  document.getElementById('specEmpty').style.display = 'none'
-  appendMsg('system', `📐 Spec "${name}" created.`)
+  descInput.value = ''
+  document.getElementById('specCreate').style.display = 'none'
+  document.getElementById('specActive').style.display = 'flex'
+  document.getElementById('specNameLabel').textContent = name
+  await refreshSpecStepper()
+  appendMsg('system', `📐 Spec "${name}" created. Generate requirements to get started.`)
+}
+
+function closeSpec() {
+  currentSpecDir = null
+  currentSpecName = null
+  document.getElementById('specCreate').style.display = ''
+  document.getElementById('specActive').style.display = 'none'
+  document.getElementById('specArtifactContent').style.display = 'none'
+  document.getElementById('specArtifactEmpty').style.display = ''
+}
+
+async function refreshSpecStepper() {
+  if (!currentSpecDir) return
+  const artifacts = await window.app.specArtifacts(currentSpecDir)
+  if (artifacts.error) return
+  const config = await window.app.specConfig(currentSpecDir)
+  const currentPhase = config.currentPhase || 'requirements'
+  const phases = ['requirements', 'design', 'tasks', 'implementation']
+  const currentIdx = phases.indexOf(currentPhase)
+
+  for (const phase of phases) {
+    const dot = document.getElementById('stepDot-' + phase)
+    const status = document.getElementById('stepStatus-' + phase)
+    const btn = document.getElementById('genBtn-' + phase)
+    const idx = phases.indexOf(phase)
+    const hasArtifact = !!artifacts[phase]
+
+    // Reset classes
+    dot.className = 'spec-step-dot'
+    status.className = 'spec-step-status'
+
+    if (hasArtifact) {
+      dot.classList.add('completed')
+      status.classList.add('done')
+      status.textContent = '✓ Generated'
+      if (btn && phase !== 'implementation') { btn.textContent = '👁 View'; btn.disabled = false; btn.onclick = () => viewSpecArtifact(phase) }
+    } else if (idx === currentIdx) {
+      dot.classList.add('active')
+      status.textContent = 'Ready to generate'
+      if (btn && phase !== 'implementation') { btn.textContent = '✦ Generate'; btn.disabled = false; btn.onclick = () => generateSpecPhase(phase) }
+    } else {
+      status.textContent = idx < currentIdx ? 'Skipped' : 'Pending'
+      if (btn && phase !== 'implementation') { btn.disabled = idx > currentIdx + 1 }
+    }
+  }
+
+  // Update connecting lines
+  const lines = document.querySelectorAll('.spec-step-line')
+  lines.forEach((line, i) => {
+    line.className = 'spec-step-line'
+    if (artifacts[phases[i]]) line.classList.add('completed')
+  })
+
+  // Implementation button
+  const implBtn = document.getElementById('genBtn-implementation')
+  if (implBtn) {
+    const ready = artifacts.requirements && artifacts.design && artifacts.tasks
+    implBtn.disabled = !ready
+  }
+}
+
+async function viewSpecArtifact(phase) {
+  if (!currentSpecDir) return
+  const artifacts = await window.app.specArtifacts(currentSpecDir)
+  if (artifacts.error || !artifacts[phase]) return
+  const labels = { requirements: '📋 Requirements', design: '🏗 Design', tasks: '📝 Tasks' }
+  document.getElementById('specArtifactEmpty').style.display = 'none'
+  document.getElementById('specArtifactContent').style.display = ''
+  document.getElementById('specArtifactHeader').innerHTML = `${labels[phase] || phase} <button class="btn-sm" id="sidebarRegenBtn" style="margin-left:auto;font-size:9px;padding:2px 6px">✦ Regenerate</button>`
+  document.getElementById('sidebarRegenBtn').onclick = () => generateSpecPhase(phase)
+  document.getElementById('specArtifactBody').innerHTML = renderMd(artifacts[phase])
+}
+
+const SPEC_PROMPTS = {
+  requirements: (name, desc, ctx) => `You are a senior product manager. Generate a detailed requirements document in markdown for a feature called "${name}".
+${desc ? `\nFeature description: ${desc}` : ''}
+${ctx ? `\nProject context:\n${ctx}` : ''}
+
+Include:
+- Overview and goals
+- User stories (as a... I want... so that...)
+- Functional requirements (numbered)
+- Non-functional requirements (performance, security, accessibility)
+- Acceptance criteria
+- Out of scope items
+
+IMPORTANT: Output ONLY the markdown document. Do NOT include any thinking process, reasoning steps, or preamble. Start directly with the markdown content.`,
+
+  design: (name, requirements, ctx) => `You are a senior software architect. Generate a technical design document in markdown for a feature called "${name}".
+
+Requirements document:
+${requirements}
+${ctx ? `\nProject context:\n${ctx}` : ''}
+
+Include:
+- Architecture overview
+- Component design (with responsibilities)
+- Data models / schemas
+- API design (endpoints, request/response)
+- Error handling strategy
+- Testing strategy
+- Dependencies and risks
+
+IMPORTANT: Output ONLY the markdown document. Do NOT include any thinking process, reasoning steps, or preamble. Start directly with the markdown content.`,
+
+  tasks: (name, requirements, design) => `You are a senior engineering lead. Generate an implementation task list in markdown for a feature called "${name}".
+
+Requirements:
+${requirements}
+
+Design:
+${design}
+
+Generate a structured task list using this exact format:
+- [ ] 1 Task title
+  - [ ] 1.1 Subtask title
+  - [ ] 1.2 Subtask title
+- [ ] 2 Next task title
+
+Include tasks for:
+- Setup and scaffolding
+- Core implementation (broken into logical pieces)
+- Tests (unit and integration)
+- Documentation updates
+
+Order tasks by dependency — things that must be done first come first. Each task should be small enough to complete in 1-2 hours.
+
+IMPORTANT: Output ONLY the markdown task list. Do NOT include any thinking process, reasoning steps, or preamble. Start directly with the task list.`,
+}
+
+async function generateSpecPhase(phase) {
+  if (!currentSpecDir || !loadedModelId || specGenerating) return
+  specGenerating = true
+
+  const btn = document.getElementById('genBtn-' + phase)
+  const status = document.getElementById('stepStatus-' + phase)
+  const dot = document.getElementById('stepDot-' + phase)
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating...'; btn.classList.add('generating') }
+  if (status) { status.textContent = 'Generating...'; status.className = 'spec-step-status generating' }
+  if (dot) { dot.className = 'spec-step-dot active' }
+
+  try {
+    const artifacts = await window.app.specArtifacts(currentSpecDir)
+    let ctx = ''
+    if (currentProject) {
+      ctx = await window.app.buildContext(currentProject) || ''
+    }
+
+    let prompt
+    const desc = artifacts.requirements?.match(/## Description\n([\s\S]*?)(?=\n##|\n$|$)/)?.[1]?.trim() || ''
+    if (phase === 'requirements') {
+      prompt = SPEC_PROMPTS.requirements(currentSpecName, desc, ctx)
+    } else if (phase === 'design') {
+      prompt = SPEC_PROMPTS.design(currentSpecName, artifacts.requirements || '', ctx)
+    } else if (phase === 'tasks') {
+      prompt = SPEC_PROMPTS.tasks(currentSpecName, artifacts.requirements || '', artifacts.design || '')
+    }
+
+    // Call the AI via the chat endpoint (non-streaming for simplicity)
+    const result = await window.app.chat({
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 4096,
+    })
+
+    if (result.error) {
+      appendMsg('system', `❌ Spec generation failed: ${result.error}`)
+    } else {
+      let content = result.choices?.[0]?.message?.content || ''
+      // Strip thinking tags if present
+      content = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+      // Strip plain-text thinking preamble before first markdown heading
+      if (!/^#/m.test(content.split('\n')[0]) && /^#/m.test(content)) {
+        content = content.slice(content.search(/^#/m)).trim()
+      }
+      await window.app.specSaveArtifact(currentSpecDir, phase, content)
+      // Advance phase
+      await window.app.specAdvance(currentSpecDir)
+      appendMsg('system', `✅ ${phase.charAt(0).toUpperCase() + phase.slice(1)} generated for "${currentSpecName}"`)
+      viewSpecArtifact(phase)
+    }
+  } catch (e) {
+    appendMsg('system', `❌ Error: ${e.message}`)
+  }
+
+  if (btn) { btn.classList.remove('generating') }
+  specGenerating = false
+  await refreshSpecStepper()
+}
+
+async function startSpecImplementation() {
+  if (!currentSpecDir || !currentProject) return
+  const artifacts = await window.app.specArtifacts(currentSpecDir)
+  if (!artifacts.tasks) { appendMsg('system', '⚠️ Generate tasks first.'); return }
+  // Switch to agent tab and send the tasks as a prompt
+  switchMainTab('agent', document.querySelector('[data-tab="agent"]'))
+  const prompt = `I have a spec for "${currentSpecName}". Here are the implementation tasks:\n\n${artifacts.tasks}\n\nPlease start implementing these tasks in order. The requirements are:\n\n${artifacts.requirements || '(none)'}\n\nThe design is:\n\n${artifacts.design || '(none)'}`
+  document.getElementById('agentPrompt').value = prompt
+  appendMsg('system', `📐 Spec tasks loaded into agent. Hit Send to start implementation.`)
 }
 
 async function loadSpecPanel() {
   if (!currentProject) return
   if (currentSpecDir) {
+    document.getElementById('specCreate').style.display = 'none'
+    document.getElementById('specActive').style.display = 'flex'
+    document.getElementById('specNameLabel').textContent = currentSpecName || 'Spec'
+    await refreshSpecStepper()
+  }
+}
+
+// 10.2 — /spec command handler (updated)
+async function handleSpecCommand(args) {
+  if (args) {
+    if (!currentProject) { appendMsg('system', '⚠️ Open a project first.'); return }
+    const result = await window.app.specInit(args)
+    if (result.error) { appendMsg('system', '❌ ' + result.error); return }
+    currentSpecDir = result.specDir
+    currentSpecName = args
+    showInlineSpecWorkflow()
+    appendMsg('system', `📐 Spec "${esc(args)}" initialized.`)
+  } else {
+    if (!currentSpecDir) { appendMsg('system', 'ℹ️ No spec active. Use /spec <name> to start one.'); return }
+    showInlineSpecWorkflow()
     const phase = await window.app.specPhase(currentSpecDir)
-    if (!phase.error) updateSpecPhaseIndicator(phase)
+    if (phase.error) { appendMsg('system', '❌ ' + phase.error); return }
+    appendMsg('system', `📐 Current spec: "${currentSpecName}" — phase: ${phase}`)
   }
 }
 
@@ -1586,7 +2063,6 @@ const SLASH_COMMANDS = new Map([
   ['spec',   handleSpecCommand],
   ['search', handleSearchCommand],
   ['tasks',  handleTasksCommand],
-  ['bg',     handleBgCommand],
   ['help',   handleHelpCommand],
 ])
 
@@ -1595,29 +2071,10 @@ const SLASH_COMMAND_INFO = [
   { command: 'spec',   description: 'Manage spec workflows — /spec <name> or /spec' },
   { command: 'search', description: 'AST code search — /search <pattern>' },
   { command: 'tasks',  description: 'Task graph control — /tasks [run|pause|resume]' },
-  { command: 'bg',     description: 'Background tasks — /bg [list|cancel <id>]' },
   { command: 'help',   description: 'Show all available commands' },
 ]
 
-// 10.2 — /spec command handler
-async function handleSpecCommand(args) {
-  if (args) {
-    // 10.2.1 — /spec <name>: init spec, switch to specs panel, show confirmation
-    if (!currentProject) { appendMsg('system', '⚠️ Open a project first.'); return }
-    const result = await window.app.specInit(args)
-    if (result.error) { appendMsg('system', '❌ ' + result.error); return }
-    currentSpecDir = result.specDir
-    updateSpecPhaseIndicator(result.currentPhase || 'requirements')
-    showPanel('specs', document.querySelector('[data-panel="specs"]'))
-    appendMsg('system', `📐 Spec "${esc(args)}" initialized. Phase: ${result.currentPhase || 'requirements'}`)
-  } else {
-    // 10.2.2 — /spec (no args): show current phase
-    if (!currentSpecDir) { appendMsg('system', 'ℹ️ No spec active. Use /spec <name> to start one.'); return }
-    const phase = await window.app.specPhase(currentSpecDir)
-    if (phase.error) { appendMsg('system', '❌ ' + phase.error); return }
-    appendMsg('system', `📐 Current spec phase: ${phase}`)
-  }
-}
+// /spec handler is defined above in the spec workflow section
 
 // 10.3 — /search command handler
 async function handleSearchCommand(args) {
@@ -1674,27 +2131,6 @@ async function handleTasksCommand(args) {
     } else {
       appendMsg('system', '📋 No task graph loaded. Open a Tasks.md file.')
     }
-  }
-}
-
-// 10.5 — /bg command handler
-async function handleBgCommand(args) {
-  const parts = args.split(/\s+/)
-  const sub = (parts[0] || '').toLowerCase()
-  if (sub === 'cancel' && parts[1]) {
-    // 10.5.2 — /bg cancel <id>
-    await window.app.bgTaskCancel(parts[1])
-    appendMsg('system', `🛑 Background task ${esc(parts[1])} cancelled.`)
-  } else {
-    // 10.5.1 — /bg or /bg list
-    const tasks = await window.app.bgTaskList()
-    if (tasks.error) { appendMsg('system', '❌ ' + tasks.error); return }
-    if (!tasks || !tasks.length) { appendMsg('system', 'ℹ️ No background tasks.'); return }
-    const lines = tasks.map(t => {
-      const elapsed = t.endTime ? ((t.endTime - t.startTime) / 1000).toFixed(1) + 's' : formatElapsed(t.startTime)
-      return `  ${t.status === 'running' ? '🔵' : t.status === 'completed' ? '🟢' : t.status === 'failed' ? '🔴' : '⚪'} ${esc(t.id)} — ${esc(t.taskNode?.title || 'task')} (${t.status}, ${elapsed})`
-    })
-    appendMsg('system', `⚡ Background tasks:\n${lines.join('\n')}`)
   }
 }
 
@@ -1795,7 +2231,7 @@ function updateAgentStatsBar(opts = {}) {
   const bar = document.getElementById('agentStats')
   if (!bar) return
 
-  const { state, inputTokens, outputTokens, tks, promptTps, peakMemory, toolName } = opts
+  const { state, inputTokens, outputTokens, tks, promptTps, peakMemory, toolName, progress, activity, toolCount } = opts
 
   // Always show the stats bar when agent is active
   if (state === 'idle' && !inputTokens && !outputTokens) {
@@ -1807,6 +2243,7 @@ function updateAgentStatsBar(opts = {}) {
   // State indicator chip
   const stateMap = {
     initializing: { icon: '⚡', text: 'Initializing', cls: '' },
+    'prompt-eval':{ icon: '📊', text: 'Processing prompt', cls: 'thinking' },
     thinking:     { icon: '🧠', text: 'Thinking', cls: 'thinking' },
     generating:   { icon: '✍️', text: 'Generating', cls: 'generating' },
     processing:   { icon: '⚙️', text: 'Processing', cls: 'processing' },
@@ -1817,6 +2254,14 @@ function updateAgentStatsBar(opts = {}) {
 
   let html = `<div class="stat-chip state-chip ${s.cls}"><span class="stat-label">Status</span><span class="stat-val">${s.icon} ${s.text}</span></div>`
 
+  // Progress chip (shown during prompt eval or when progress is provided)
+  if (progress != null) {
+    const pct = progress < 0 ? '...' : Math.round(progress) + '%'
+    const fillClass = progress < 0 ? 'indeterminate' : ''
+    const fillWidth = progress < 0 ? '' : `width:${Math.min(100, progress)}%`
+    html += `<div class="stat-chip progress-chip"><span class="stat-label">Progress</span><span class="stat-val">${pct}</span><div class="progress-mini"><div class="progress-mini-fill ${fillClass}" style="${fillWidth}"></div></div></div>`
+  }
+
   // Input tokens
   html += `<div class="stat-chip"><span class="stat-label">Input</span><span class="stat-val">${inputTokens || 0} tok${promptTps != null ? ' · ' + promptTps + ' tk/s' : ''}</span></div>`
 
@@ -1824,9 +2269,19 @@ function updateAgentStatsBar(opts = {}) {
   const tksDisplay = tks != null && tks !== '—' ? ' · ' + tks + ' tk/s' : ''
   html += `<div class="stat-chip accent"><span class="stat-label">Output</span><span class="stat-val">${outputTokens || 0} tok${tksDisplay}</span></div>`
 
+  // Tool count if available
+  if (toolCount != null && toolCount > 0) {
+    html += `<div class="stat-chip"><span class="stat-label">Tools</span><span class="stat-val">🔧 ${toolCount}</span></div>`
+  }
+
   // Peak memory if available
   if (peakMemory != null) {
     html += `<div class="stat-chip"><span class="stat-label">Peak VRAM</span><span class="stat-val">${peakMemory} GB</span></div>`
+  }
+
+  // Activity log (right-aligned)
+  if (activity) {
+    html += `<div class="agent-activity-log"><span class="activity-step active">${activity}</span></div>`
   }
 
   bar.innerHTML = html
@@ -1839,6 +2294,10 @@ function updateStatusBar(state, opts = {}) {
   const modelEl = bar.querySelector('.psb-model')
   const stateEl = bar.querySelector('.psb-state')
   const statsEl = bar.querySelector('.psb-stats')
+  const progressEl = document.getElementById('psbProgress')
+  const progressBar = document.getElementById('psbProgressBar')
+  const progressText = document.getElementById('psbProgressText')
+  const activityEl = document.getElementById('psbActivity')
 
   // model name
   if (modelEl) modelEl.textContent = loadedModelId ? loadedModelId.split('/').pop() : 'No model'
@@ -1850,12 +2309,43 @@ function updateStatusBar(state, opts = {}) {
     thinking:     { icon: '🧠', text: 'Thinking...', cls: 'thinking' },
     generating:   { icon: '✍️', text: 'Generating...', cls: 'generating' },
     processing:   { icon: '⚙️', text: 'Processing...', cls: 'processing' },
+    'prompt-eval':{ icon: '📊', text: 'Processing prompt...', cls: 'init' },
     tool:         { icon: '🔧', text: `Tool: ${opts.toolName || ''}`, cls: 'tool' },
   }
   const s = stateMap[state] || stateMap.idle
   if (stateEl) {
     stateEl.className = 'psb-state ' + s.cls
     stateEl.innerHTML = `<span class="psb-state-dot ${s.cls}"></span>${s.icon} ${s.text}`
+  }
+
+  // progress bar
+  if (progressEl && progressBar && progressText) {
+    if (opts.progress != null) {
+      progressEl.style.display = 'flex'
+      if (opts.progress < 0) {
+        // indeterminate
+        progressBar.className = 'psb-progress-bar indeterminate'
+        progressBar.style.setProperty('--progress', '0%')
+        progressText.textContent = '...'
+      } else {
+        progressBar.className = 'psb-progress-bar'
+        progressBar.style.setProperty('--progress', Math.min(100, opts.progress) + '%')
+        progressText.textContent = Math.round(opts.progress) + '%'
+      }
+    } else if (state === 'idle' || state === 'generating' || state === 'done') {
+      progressEl.style.display = 'none'
+    }
+  }
+
+  // activity text
+  if (activityEl) {
+    if (opts.activity) {
+      activityEl.style.display = ''
+      activityEl.textContent = opts.activity
+    } else if (state === 'idle') {
+      activityEl.style.display = 'none'
+      activityEl.textContent = ''
+    }
   }
 
   // live stats

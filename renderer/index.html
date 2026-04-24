@@ -159,25 +159,76 @@
       <!-- specs panel -->
       <div class="side-panel" id="sp-specs">
         <div class="sp-header"><span class="section-label">SPEC WORKFLOW</span></div>
-        <div class="spec-phases" id="specPhases" style="padding:8px;display:flex;gap:4px;border-bottom:1px solid var(--border)">
-          <span class="spec-phase-badge" data-phase="requirements">Requirements</span>
-          <span class="spec-phase-badge" data-phase="design">Design</span>
-          <span class="spec-phase-badge" data-phase="tasks">Tasks</span>
-          <span class="spec-phase-badge" data-phase="implementation">Impl</span>
+
+        <!-- create new spec -->
+        <div class="spec-create" id="specCreate">
+          <div style="padding:12px;display:flex;flex-direction:column;gap:8px">
+            <div style="font-size:11px;color:var(--muted)">Create a spec to plan before you build. The AI will generate requirements, design, and tasks for you.</div>
+            <input type="text" id="newSpecName" class="cs-input cs-wide" placeholder="feature-name" style="width:100%;box-sizing:border-box">
+            <textarea id="specDescription" class="cs-input cs-wide" placeholder="Describe what you want to build..." rows="3" style="width:100%;box-sizing:border-box;resize:vertical;font-family:inherit"></textarea>
+            <button class="btn-primary" onclick="createNewSpec()" style="width:100%">📐 Create Spec</button>
+          </div>
         </div>
-        <div class="spec-controls" style="padding:6px 8px;border-bottom:1px solid var(--border);display:flex;gap:4px">
-          <button class="btn-sm" id="specAdvanceBtn" onclick="specAdvancePhase()">Advance Phase →</button>
-        </div>
-        <div class="spec-artifacts" id="specArtifacts" style="flex:1;overflow-y:auto;padding:8px">
-          <div class="model-empty" id="specEmpty">No spec active. Type /spec &lt;name&gt; or click New Spec.</div>
-        </div>
-        <div class="spec-new" style="padding:8px;border-top:1px solid var(--border)">
-          <div style="display:flex;gap:4px">
-            <input type="text" id="newSpecName" class="cs-input cs-wide" placeholder="feature-name" style="flex:1">
-            <button class="btn-sm" onclick="createNewSpec()">New Spec</button>
+
+        <!-- active spec view -->
+        <div class="spec-active" id="specActive" style="display:none;flex:1;display:flex;flex-direction:column;overflow:hidden">
+          <!-- spec name -->
+          <div class="spec-name-bar" style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px">
+            <span class="spec-name-icon">📐</span>
+            <span class="spec-name-label" id="specNameLabel" style="font-size:12px;font-weight:600;flex:1"></span>
+            <button class="btn-sm" onclick="closeSpec()" style="font-size:10px;padding:2px 6px" title="Close spec">✕</button>
+          </div>
+
+          <!-- phase stepper -->
+          <div class="spec-stepper" id="specStepper" style="padding:10px 12px;border-bottom:1px solid var(--border)">
+            <div class="spec-step" data-phase="requirements">
+              <div class="spec-step-dot" id="stepDot-requirements"></div>
+              <div class="spec-step-info">
+                <div class="spec-step-label">Requirements</div>
+                <div class="spec-step-status" id="stepStatus-requirements">Pending</div>
+              </div>
+              <button class="spec-gen-btn" id="genBtn-requirements" onclick="generateSpecPhase('requirements')" title="Generate with AI">✦ Generate</button>
+            </div>
+            <div class="spec-step-line"></div>
+            <div class="spec-step" data-phase="design">
+              <div class="spec-step-dot" id="stepDot-design"></div>
+              <div class="spec-step-info">
+                <div class="spec-step-label">Design</div>
+                <div class="spec-step-status" id="stepStatus-design">Pending</div>
+              </div>
+              <button class="spec-gen-btn" id="genBtn-design" onclick="generateSpecPhase('design')" title="Generate with AI">✦ Generate</button>
+            </div>
+            <div class="spec-step-line"></div>
+            <div class="spec-step" data-phase="tasks">
+              <div class="spec-step-dot" id="stepDot-tasks"></div>
+              <div class="spec-step-info">
+                <div class="spec-step-label">Tasks</div>
+                <div class="spec-step-status" id="stepStatus-tasks">Pending</div>
+              </div>
+              <button class="spec-gen-btn" id="genBtn-tasks" onclick="generateSpecPhase('tasks')" title="Generate with AI">✦ Generate</button>
+            </div>
+            <div class="spec-step-line"></div>
+            <div class="spec-step" data-phase="implementation">
+              <div class="spec-step-dot" id="stepDot-implementation"></div>
+              <div class="spec-step-info">
+                <div class="spec-step-label">Implementation</div>
+                <div class="spec-step-status" id="stepStatus-implementation">Pending</div>
+              </div>
+              <button class="spec-gen-btn" id="genBtn-implementation" onclick="startSpecImplementation()" title="Start building">▶ Build</button>
+            </div>
+          </div>
+
+          <!-- artifact viewer -->
+          <div class="spec-artifact-viewer" id="specArtifactViewer" style="flex:1;overflow-y:auto;padding:8px">
+            <div class="model-empty" id="specArtifactEmpty">Select a phase above to view or generate its content.</div>
+            <div class="spec-artifact-content" id="specArtifactContent" style="display:none">
+              <div class="spec-artifact-header" id="specArtifactHeader"></div>
+              <div class="spec-artifact-body" id="specArtifactBody"></div>
+            </div>
           </div>
         </div>
       </div>
+
     </aside>
 
     <!-- main area -->
@@ -187,7 +238,6 @@
         <button class="ed-tab active" data-tab="agent" onclick="switchMainTab('agent',this)">💻 Agent</button>
         <button class="ed-tab" data-tab="editor" onclick="switchMainTab('editor',this)">📝 Editor</button>
         <button class="ed-tab" data-tab="vision" onclick="switchMainTab('vision',this)">👁 Vision</button>
-        <button class="ed-tab" data-tab="background" onclick="switchMainTab('background',this)">⚡ Background</button>
       </div>
 
       <!-- AGENT TAB -->
@@ -230,21 +280,13 @@
                 <button class="build-card build-card-vibe" onclick="startSessionWithType('vibe')">
                   <span class="build-card-icon">💬</span>
                   <span class="build-card-label">Vibe</span>
-                  <span class="build-card-desc">Chat first, then build. Explore ideas and iterate as you discover needs.</span>
+                  <span class="build-card-desc">Chat and build. Jump straight in and iterate.</span>
                 </button>
-                <button class="build-card build-card-spec" onclick="startSessionWithType('spec')">
-                  <span class="build-card-icon">📋</span>
+                <button class="build-card build-card-spec" onclick="openSpecPanel()">
+                  <span class="build-card-icon">📐</span>
                   <span class="build-card-label">Spec</span>
-                  <span class="build-card-desc">Plan first, then build. Create requirements and design before coding starts.</span>
+                  <span class="build-card-desc">Plan first. AI generates requirements, design, and tasks before you code.</span>
                 </button>
-              </div>
-              <div class="build-picker-hint">
-                <div class="build-picker-hint-label">Great for:</div>
-                <ul class="build-picker-hint-list">
-                  <li>Rapid exploration and testing</li>
-                  <li>Building when requirements are unclear</li>
-                  <li>Implementing a task</li>
-                </ul>
               </div>
             </div>
           </div>
@@ -261,13 +303,6 @@
           <!-- input -->
           <div class="agent-input-area">
             <div class="agent-input-row">
-              <select id="agentMode" class="mode-select">
-                <option value="code">💻 Code</option>
-                <option value="explain">🔍 Explain</option>
-                <option value="refactor">♻️ Refactor</option>
-                <option value="debug">🐛 Debug</option>
-                <option value="agent">🤖 Agent (tools + files)</option>
-              </select>
               <button class="perm-toggle auto" id="permToggle" onclick="togglePermMode()" title="Toggle auto-approve / ask before changes">🔓 Auto</button>
             </div>
             <div class="agent-input-box">
@@ -325,16 +360,7 @@
         </div>
       </div>
 
-      <!-- BACKGROUND TAB -->
-      <div class="main-panel" id="mt-background">
-        <div style="display:flex;flex-direction:column;height:100%">
-          <div class="section-label" style="padding:10px 12px;border-bottom:1px solid var(--border)">BACKGROUND TASKS</div>
-          <div id="bgTaskList" style="flex:1;overflow-y:auto;padding:8px">
-            <div class="model-empty">No background tasks running.</div>
-          </div>
-          <div id="bgTaskOutputViewer" style="display:none;max-height:250px;overflow-y:auto;padding:8px;border-top:1px solid var(--border);font-family:'SF Mono',monospace;font-size:11px;color:var(--muted);white-space:pre-wrap"></div>
-        </div>
-      </div>
+
     </div>
   </div>
 
@@ -346,8 +372,13 @@
     </div>
     <div class="psb-center">
       <span class="psb-state idle"><span class="psb-state-dot idle"></span>⏸ Idle</span>
+      <div class="psb-progress" id="psbProgress" style="display:none">
+        <div class="psb-progress-bar" id="psbProgressBar"></div>
+        <span class="psb-progress-text" id="psbProgressText">0%</span>
+      </div>
     </div>
     <div class="psb-right">
+      <span class="psb-activity" id="psbActivity" style="display:none"></span>
       <span class="psb-stats" style="display:none"></span>
     </div>
   </div>
