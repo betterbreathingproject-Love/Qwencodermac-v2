@@ -10,7 +10,7 @@ const { query, isSDKAssistantMessage, isSDKPartialAssistantMessage,
         isSDKSystemMessage, isSDKResultMessage } = require('@qwen-code/sdk')
 const path = require('path')
 const { createPlaywrightServer } = require('./playwright-tool')
-const { createVisionServer, registerImages, clearImages, getImageCount, getImageIds } = require('./vision-tool')
+const { createVisionServer } = require('./vision-tool')
 
 // ── EventSink implementations ─────────────────────────────────────────────────
 
@@ -69,33 +69,55 @@ class QwenBridge {
     this.sink = sink
     this.activeQuery = null
     this.sessionId = null
-    this._playwrightBrowser = null
+    // Per-instance MCP servers — created fresh each run(), cleaned up on close()
+    this._playwrightServer = null
+    this._visionServer = null
   }
 
   send(channel, data) {
     this.sink.send(channel, data)
   }
 
-  async run({ prompt, cwd, permissionMode, model, images }) {
+  /**
+   * @param {object} opts
+   * @param {string} opts.prompt - The user's current message
+   * @param {string} [opts.cwd] - Working directory
+   * @param {string} [opts.permissionMode] - 'auto-edit' or 'default'
+   * @param {string} [opts.model] - Model ID override
+   * @param {Array}  [opts.images] - Attached images [{name, b64}]
+   * @param {Array}  [opts.conversationHistory] - Prior turns [{role, content}]
+   */
+  async run({ prompt, cwd, permissionMode, model, images, conversationHistory }) {
     if (this.activeQuery) {
       try { await this.activeQuery.interrupt() } catch (e) { /* ignore */ }
     }
 
-    // Register images for the vision tool (if any)
+    // Create per-instance MCP servers (isolated browser + image state)
+    this._playwrightServer = createPlaywrightServer()
+    this._visionServer = createVisionServer()
+
+    // Register images on this instance's vision server (if any)
     let imageContext = ''
     if (images && images.length > 0) {
-      const ids = registerImages(images)
+      const ids = this._visionServer._registerImages(images)
       imageContext = `\n\nThe user has attached ${ids.length} image(s) to this message. Image IDs: ${ids.join(', ')}. You MUST use the vision_analyze tool to see and analyze these images. Call vision_analyze with the image_id and a prompt describing what you want to know. Do NOT say you cannot see images — use the tool.`
     } else {
-      clearImages()
+      this._visionServer._clearImages()
     }
 
-    const finalPrompt = prompt + imageContext
-
-    // create Playwright SDK MCP server for browser automation tools (per-instance)
-    const playwrightServer = createPlaywrightServer()
-    // create Vision SDK MCP server for image analysis
-    const visionServer = createVisionServer()
+    // Build the prompt: inject conversation history so the agent has multi-turn context
+    let finalPrompt = ''
+    if (conversationHistory && conversationHistory.length > 0) {
+      // Format prior turns as a conversation transcript the agent can reference
+      const transcript = conversationHistory.map(m => {
+        const role = m.role === 'user' ? 'User' : 'Assistant'
+        return `[${role}]: ${m.content}`
+      }).join('\n\n')
+      finalPrompt = `Here is the conversation so far:\n\n${transcript}\n\n---\n\nNow respond to the latest message:\n\n${prompt}`
+    } else {
+      finalPrompt = prompt
+    }
+    finalPrompt += imageContext
 
     const opts = {
       cwd: cwd || process.cwd(),
@@ -134,8 +156,8 @@ When the user attaches images, you MUST use vision_analyze to see them. You cann
         (permissionMode === 'auto-edit' ? `\n\nIMPORTANT: You are running in auto-edit mode. When you use the question/ask tool and receive an empty or default response, this does NOT mean the user cancelled. It means the system auto-approved your action. Proceed with your best judgment — do NOT repeat that the user cancelled. Never say "the user cancelled the question" — just continue working.` : ''),
       },
       mcpServers: {
-        playwright: playwrightServer,
-        vision: visionServer,
+        playwright: this._playwrightServer,
+        vision: this._visionServer,
       },
       allowedTools: [
         'browser_navigate', 'browser_screenshot', 'browser_click', 'browser_type',
@@ -237,26 +259,22 @@ When the user attaches images, you MUST use vision_analyze to see them. You cann
   }
 
   /**
-   * Close this QwenBridge instance and clean up its own Playwright browser.
-   * Each instance tracks its own browser — no global singleton.
+   * Close this QwenBridge instance and clean up its per-instance resources.
    */
   async close() {
     if (this.activeQuery) {
       try { await this.activeQuery.close() } catch (e) { /* ignore */ }
     }
-    if (this._playwrightBrowser) {
-      await this._playwrightBrowser.close().catch(() => {})
-      this._playwrightBrowser = null
+    // Clean up per-instance Playwright browser
+    if (this._playwrightServer && this._playwrightServer._closeBrowser) {
+      await this._playwrightServer._closeBrowser().catch(() => {})
     }
-  }
-
-  /**
-   * Track a Playwright browser instance for this QwenBridge.
-   * Called by the Playwright tool when a browser is launched.
-   * @param {object} browser - Playwright Browser instance
-   */
-  setPlaywrightBrowser(browser) {
-    this._playwrightBrowser = browser
+    this._playwrightServer = null
+    // Clean up per-instance vision image store
+    if (this._visionServer && this._visionServer._clearImages) {
+      this._visionServer._clearImages()
+    }
+    this._visionServer = null
   }
 }
 

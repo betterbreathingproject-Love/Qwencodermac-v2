@@ -175,10 +175,10 @@ ipcMain.handle('chat-stream-abort', () => {
 })
 
 // ── IPC: Qwen Code agent ─────────────────────────────────────────────────────
-ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, model, images }) => {
+ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, model, images, conversationHistory }) => {
   if (!qwenBridge) return { error: 'not ready' }
   // run async, events stream via qwen-event channel
-  qwenBridge.run({ prompt, cwd: cwd || currentProject, permissionMode, model, images }).catch(() => {})
+  qwenBridge.run({ prompt, cwd: cwd || currentProject, permissionMode, model, images, conversationHistory }).catch(() => {})
   return { ok: true }
 })
 ipcMain.handle('qwen-interrupt', async () => { await qwenBridge?.interrupt(); return { ok: true } })

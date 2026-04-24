@@ -503,6 +503,7 @@ async function sendAgentMode(prompt) {
   if(out.querySelector('.agent-welcome')) out.innerHTML = ''
 
   appendMsg('user', esc(prompt))
+  saveToHistory('user', prompt)
   document.getElementById('agentPrompt').value = ''
 
   // show attached images in the user message bubble
@@ -533,6 +534,22 @@ async function sendAgentMode(prompt) {
   window.app.offQwenEvents()
   updateStatusBar('initializing')
 
+  // Debounced markdown rendering — avoids O(n²) re-render on every delta
+  let _mdRenderTimer = null
+  let _mdDirty = false
+  function scheduleRender() {
+    _mdDirty = true
+    if (_mdRenderTimer) return // already scheduled
+    _mdRenderTimer = requestAnimationFrame(() => {
+      _mdRenderTimer = null
+      if (_mdDirty) {
+        _mdDirty = false
+        document.getElementById(respId+'-text').innerHTML = renderMd(lastText, true) + '<span class="cursor">▌</span>'
+        scrollOutput()
+      }
+    })
+  }
+
   window.app.onQwenEvent(ev => {
     if (agentFinished && ev.type !== 'session-end') return
     switch(ev.type) {
@@ -542,9 +559,8 @@ async function sendAgentMode(prompt) {
         break
       case 'text-delta':
         lastText = ev.text
-        document.getElementById(respId+'-text').innerHTML = renderMd(lastText, true) + '<span class="cursor">▌</span>'
+        scheduleRender()
         updateStatusBar('generating')
-        scrollOutput()
         break
       case 'thinking-delta':
         lastThinking = ev.text
@@ -552,7 +568,6 @@ async function sendAgentMode(prompt) {
         thinkEl.style.display = 'block'
         document.getElementById(respId+'-think-body').textContent = lastThinking + '▌'
         updateStatusBar('thinking')
-        scrollOutput()
         break
       case 'tool-use':
         lastToolName = ev.name || ''
@@ -633,6 +648,8 @@ async function sendAgentMode(prompt) {
         const tb = document.getElementById(respId+'-think-body')
         if (tb && tb.textContent.endsWith('▌')) tb.textContent = tb.textContent.slice(0,-1)
         document.getElementById('liveStats').textContent = ''
+        // Save agent response to conversation history
+        if (lastText) saveToHistory('assistant', lastText)
         // Refresh file tree after agent finishes
         if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
         // Show a preview button if agent created an HTML file
@@ -657,28 +674,25 @@ async function sendAgentMode(prompt) {
         if (sev.choices?.[0]?.delta?.content) {
           const content = sev.choices[0].delta.content
           lastText += content
-          document.getElementById(respId+'-text').innerHTML = renderMd(lastText, true) + '<span class="cursor">▌</span>'
+          scheduleRender()
           tokenCount += content.length; if (!startTime) startTime = Date.now()
           const elapsed = (Date.now()-startTime)/1000
           const tks = elapsed>0?(tokenCount/elapsed).toFixed(1):'—'
           document.getElementById('liveStats').textContent = `${tokenCount} tok · ${tks} tk/s`
           updateStatusBar('generating', { tokens: tokenCount, tks })
-          scrollOutput()
         } else if (sev.type === 'content_block_delta' && sev.delta?.text) {
           const deltaText = sev.delta.text
           lastText += deltaText
-          document.getElementById(respId+'-text').innerHTML = renderMd(lastText, true) + '<span class="cursor">▌</span>'
+          scheduleRender()
           tokenCount += deltaText.length; if (!startTime) startTime = Date.now()
           const elapsed2 = (Date.now()-startTime)/1000
           const tks2 = elapsed2>0?(tokenCount/elapsed2).toFixed(1):'—'
           updateStatusBar('generating', { tokens: tokenCount, tks: tks2 })
-          scrollOutput()
         } else if (sev.type === 'content_block_delta' && sev.delta?.thinking) {
           lastThinking += sev.delta.thinking
           document.getElementById(respId+'-think').style.display = 'block'
           document.getElementById(respId+'-think-body').textContent = lastThinking + '▌'
           updateStatusBar('thinking')
-          scrollOutput()
         } else if (sev.usage) {
           // Server-reported final stats — use real token counts and tps
           const bar = document.getElementById('agentStats'); bar.style.display = 'flex'
@@ -703,12 +717,17 @@ async function sendAgentMode(prompt) {
     renderAttachedImages()
   }
 
+  // Send conversation history so the agent has multi-turn context
+  const maxHist = (projectSettings?.maxHistoryMessages || 40)
+  const historyForAgent = conversationHistory.slice(-maxHist).map(m => ({ role: m.role, content: m.content }))
+
   window.app.qwenRun({
     prompt,
     cwd: currentProject || undefined,
     permissionMode: permMode,
     model: loadedModelId,
     images: sentImages.length > 0 ? sentImages : undefined,
+    conversationHistory: historyForAgent.length > 0 ? historyForAgent : undefined,
   })
 }
 

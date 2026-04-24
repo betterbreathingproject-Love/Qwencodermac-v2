@@ -146,7 +146,7 @@ describe('Multi-instance QwenBridge', () => {
     assert.notEqual(bridge1.sessionId, bridge2.sessionId)
   })
 
-  it('each instance tracks its own Playwright browser', async () => {
+  it('each instance tracks its own Playwright browser via per-instance servers', async () => {
     const sink1 = { send: () => {} }
     const sink2 = { send: () => {} }
 
@@ -156,24 +156,30 @@ describe('Multi-instance QwenBridge', () => {
     let browser1Closed = false
     let browser2Closed = false
 
-    const mockBrowser1 = { close: async () => { browser1Closed = true } }
-    const mockBrowser2 = { close: async () => { browser2Closed = true } }
+    // Simulate what run() does: assign per-instance MCP servers with cleanup handles
+    bridge1._playwrightServer = {
+      _closeBrowser: async () => { browser1Closed = true },
+      _getBrowser: () => ({})
+    }
+    bridge1._visionServer = { _clearImages: () => {} }
 
-    bridge1.setPlaywrightBrowser(mockBrowser1)
-    bridge2.setPlaywrightBrowser(mockBrowser2)
+    bridge2._playwrightServer = {
+      _closeBrowser: async () => { browser2Closed = true },
+      _getBrowser: () => ({})
+    }
+    bridge2._visionServer = { _clearImages: () => {} }
 
     // Close only bridge1 — bridge2's browser should remain open
     await bridge1.close()
 
     assert.equal(browser1Closed, true)
     assert.equal(browser2Closed, false)
-    assert.equal(bridge1._playwrightBrowser, null)
-    assert.equal(bridge2._playwrightBrowser, mockBrowser2)
+    assert.equal(bridge1._playwrightServer, null)
 
     // Now close bridge2
     await bridge2.close()
     assert.equal(browser2Closed, true)
-    assert.equal(bridge2._playwrightBrowser, null)
+    assert.equal(bridge2._playwrightServer, null)
   })
 
   it('close() handles no Playwright browser gracefully', async () => {
