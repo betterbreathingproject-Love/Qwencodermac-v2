@@ -384,6 +384,18 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .psb-stats { font-size: 10px; color: var(--green); font-weight: 600; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
+/* progress chip in agent stats bar */
+.stat-chip.progress-chip { min-width: 100px; }
+.stat-chip.progress-chip .progress-mini { width: 100%; height: 3px; background: var(--bg); border-radius: 2px; margin-top: 2px; overflow: hidden; position: relative; }
+.stat-chip.progress-chip .progress-mini-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s ease; }
+.stat-chip.progress-chip .progress-mini-fill.indeterminate { width: 40%; animation: indeterminate 1.4s ease-in-out infinite; position: relative; }
+@keyframes indeterminate { 0% { left: -40%; } 100% { left: 100%; } }
+
+/* activity indicator in agent stats bar */
+.agent-activity-log { display: flex; align-items: center; gap: 4px; margin-left: auto; font-size: 10px; color: var(--muted); max-width: 300px; overflow: hidden; }
+.activity-step { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: 3px; background: var(--bg); border: 1px solid var(--border); font-size: 9px; white-space: nowrap; }
+.activity-step.active { border-color: rgba(124,106,247,0.3); color: var(--accent2); }
+
 /* adjust app layout for status bar */
 .app-layout { height: calc(100vh - 40px - 26px); }
 

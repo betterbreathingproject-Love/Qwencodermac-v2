@@ -539,13 +539,18 @@ async function sendAgentMode(prompt) {
   // Simulated prompt-eval progress: smoothly animates from 0→90% while waiting
   // for the first token, then jumps to 100% when generation starts.
   function startPromptProgress() {
+    // Always stop any existing timer first to reset cleanly
+    if (_promptProgressTimer) { clearInterval(_promptProgressTimer); _promptProgressTimer = null }
     _promptProgress = 0
     let elapsed = 0
+    // Immediately show 0% so the UI resets visually
+    updateStatusBar('prompt-eval')
+    updateAgentStatsBar({ state: 'prompt-eval', inputTokens, outputTokens: tokenCount, progress: 0, toolCount: _agentToolCount, activity: 'Evaluating prompt...' })
     _promptProgressTimer = setInterval(() => {
       elapsed += 200
       // Asymptotic curve: approaches 90% but never reaches it
       _promptProgress = 90 * (1 - Math.exp(-elapsed / 8000))
-      updateStatusBar('prompt-eval', { progress: _promptProgress, activity: 'Evaluating prompt...' })
+      updateStatusBar('prompt-eval')
       updateAgentStatsBar({ state: 'prompt-eval', inputTokens, outputTokens: tokenCount, progress: _promptProgress, toolCount: _agentToolCount, activity: 'Evaluating prompt...' })
     }, 200)
   }
@@ -585,7 +590,7 @@ async function sendAgentMode(prompt) {
         const thinkContent = extractThinking(lastText)
         if (thinkContent) {
           const thinkEl2 = document.getElementById(respId+'-think')
-          thinkEl2.style.display = 'block'
+          thinkEl2.style.display = ''
           document.getElementById(respId+'-think-body').textContent = thinkContent + '▌'
         }
         scheduleRender()
@@ -596,7 +601,7 @@ async function sendAgentMode(prompt) {
         lastThinking = ev.text
         stopPromptProgress()
         const thinkEl = document.getElementById(respId+'-think')
-        thinkEl.style.display = 'block'
+        thinkEl.style.display = ''
         document.getElementById(respId+'-think-body').textContent = lastThinking + '▌'
         updateStatusBar('thinking', { activity: 'Reasoning...' })
         updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount, activity: 'Reasoning...' })
@@ -644,7 +649,7 @@ async function sendAgentMode(prompt) {
         let html = ''
         for (const block of (ev.blocks || [])) {
           if (block.type === 'text') html += renderMd(block.text)
-          else if (block.type === 'thinking') { document.getElementById(respId+'-think').style.display = 'block'; document.getElementById(respId+'-think-body').textContent = block.text }
+          else if (block.type === 'thinking') { document.getElementById(respId+'-think').style.display = ''; document.getElementById(respId+'-think-body').textContent = block.text }
           else if (block.type === 'tool_use') document.getElementById(respId+'-tools').insertAdjacentHTML('beforeend', renderToolUse(block.name, block.input, 'done'))
           else if (block.type === 'tool_result') { const td = document.getElementById(respId+'-tools'); const lt = td.querySelector('.tool-block:last-child'); if (lt) lt.insertAdjacentHTML('beforeend', renderToolResult(block.content, block.is_error)) }
         }
@@ -691,7 +696,7 @@ async function sendAgentMode(prompt) {
         const finalThink = extractThinking(lastText)
         const tb = document.getElementById(respId+'-think-body')
         if (finalThink && tb) {
-          document.getElementById(respId+'-think').style.display = 'block'
+          document.getElementById(respId+'-think').style.display = ''
           tb.textContent = finalThink
         } else if (tb && tb.textContent.endsWith('▌')) {
           tb.textContent = tb.textContent.slice(0,-1)
@@ -747,7 +752,7 @@ async function sendAgentMode(prompt) {
           updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, tks: tks2, toolCount: _agentToolCount, activity: 'Writing response...' })
         } else if (sev.type === 'content_block_delta' && sev.delta?.thinking) {
           lastThinking += sev.delta.thinking
-          document.getElementById(respId+'-think').style.display = 'block'
+          document.getElementById(respId+'-think').style.display = ''
           document.getElementById(respId+'-think-body').textContent = lastThinking + '▌'
           updateStatusBar('thinking', { activity: 'Reasoning...' })
           updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Reasoning...' })
@@ -824,10 +829,18 @@ async function sendVision(){
 
 // ── markdown ──────────────────────────────────────────────────────────────────
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
-function stripThinking(t){return t.replace(/<think>[\s\S]*?<\/think>/gi,'').replace(/<think>[\s\S]*$/gi,'').trim()}
+function stripThinking(t){
+  // Remove complete <think>...</think> blocks (case-insensitive)
+  t = t.replace(/<think>([\s\S]*?)<\/think>/gi, '')
+  // Remove unclosed <think> block at end (streaming)
+  t = t.replace(/<think>[\s\S]*$/gi, '')
+  // Remove any orphaned </think> tags
+  t = t.replace(/<\/think>/gi, '')
+  return t.trim()
+}
 function extractThinking(t){
   const parts = []
-  // extract completed think blocks
+  // extract completed think blocks (case-insensitive, handles <Think>...</Think>)
   t.replace(/<think>([\s\S]*?)<\/think>/gi, (_, content) => { parts.push(content.trim()); return '' })
   // extract unclosed (streaming) think block
   const unclosed = t.match(/<think>([\s\S]*)$/i)
@@ -2287,17 +2300,13 @@ function updateAgentStatsBar(opts = {}) {
   bar.innerHTML = html
 }
 
-// ── persistent bottom status bar ──────────────────────────────────────────────
+// ── persistent bottom status bar (minimal — model + state dot + stats) ────────
 function updateStatusBar(state, opts = {}) {
   const bar = document.getElementById('persistentStatusBar')
   if (!bar) return
   const modelEl = bar.querySelector('.psb-model')
   const stateEl = bar.querySelector('.psb-state')
   const statsEl = bar.querySelector('.psb-stats')
-  const progressEl = document.getElementById('psbProgress')
-  const progressBar = document.getElementById('psbProgressBar')
-  const progressText = document.getElementById('psbProgressText')
-  const activityEl = document.getElementById('psbActivity')
 
   // model name
   if (modelEl) modelEl.textContent = loadedModelId ? loadedModelId.split('/').pop() : 'No model'
@@ -2316,36 +2325,6 @@ function updateStatusBar(state, opts = {}) {
   if (stateEl) {
     stateEl.className = 'psb-state ' + s.cls
     stateEl.innerHTML = `<span class="psb-state-dot ${s.cls}"></span>${s.icon} ${s.text}`
-  }
-
-  // progress bar
-  if (progressEl && progressBar && progressText) {
-    if (opts.progress != null) {
-      progressEl.style.display = 'flex'
-      if (opts.progress < 0) {
-        // indeterminate
-        progressBar.className = 'psb-progress-bar indeterminate'
-        progressBar.style.setProperty('--progress', '0%')
-        progressText.textContent = '...'
-      } else {
-        progressBar.className = 'psb-progress-bar'
-        progressBar.style.setProperty('--progress', Math.min(100, opts.progress) + '%')
-        progressText.textContent = Math.round(opts.progress) + '%'
-      }
-    } else if (state === 'idle' || state === 'generating' || state === 'done') {
-      progressEl.style.display = 'none'
-    }
-  }
-
-  // activity text
-  if (activityEl) {
-    if (opts.activity) {
-      activityEl.style.display = ''
-      activityEl.textContent = opts.activity
-    } else if (state === 'idle') {
-      activityEl.style.display = 'none'
-      activityEl.textContent = ''
-    }
   }
 
   // live stats
