@@ -1,0 +1,580 @@
+"""
+MLX Vision Server — OpenAI-compatible API with vision + tool calling support.
+Serves at http://localhost:8090/v1
+"""
+
+import os, base64, tempfile, time, uuid, json, asyncio, re, sys, threading
+from pathlib import Path
+from typing import Optional, Union, Any
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+# ── model state ───────────────────────────────────────────────────────────────
+_model = None
+_processor = None
+_config = None
+_model_id = None
+_model_path = None
+_chat_template = None
+_models_root = Path.home() / ".lmstudio" / "models"
+_inference_lock = threading.Lock()  # MLX is not thread-safe — serialize all inference
+
+
+def find_models():
+    models = []
+    for cfg_path in sorted(_models_root.rglob("config.json")):
+        rel = cfg_path.parent.relative_to(_models_root)
+        try:
+            with open(cfg_path) as f:
+                cfg = json.load(f)
+            model_type = cfg.get("model_type", "unknown")
+            has_vision = "vision_config" in cfg or "image_token_id" in cfg
+            models.append({
+                "id": str(rel),
+                "path": str(cfg_path.parent),
+                "model_type": model_type,
+                "vision": has_vision,
+            })
+        except Exception:
+            pass
+    return models
+
+
+def load_model(model_path: str):
+    global _model, _processor, _config, _model_id, _model_path, _chat_template
+    from mlx_vlm import load
+    from mlx_vlm.utils import load_config
+    print(f"[server] Loading {model_path} ...")
+    _model, _processor = load(model_path)
+    _config = load_config(model_path)
+    _model_path = model_path
+
+    raw_id = str(Path(model_path).relative_to(_models_root))
+
+    # The Qwen SDK uses model ID regex to determine modality support.
+    # It recognizes "qwen3-vl-*" as vision-capable. All models on this
+    # server are Qwen vision models, so always alias to qwen3-vl-*.
+    _model_id = f"qwen3-vl-{raw_id.replace('/', '-')}"
+    print(f"[server] Reporting model as: {_model_id}")
+
+    # load Jinja chat template for tool calling support
+    _chat_template = None
+    jinja_path = Path(model_path) / "chat_template.jinja"
+    if jinja_path.exists():
+        _chat_template = jinja_path.read_text()
+        print(f"[server] Loaded chat_template.jinja (tool calling enabled)")
+    else:
+        # try tokenizer_config.json
+        tok_cfg_path = Path(model_path) / "tokenizer_config.json"
+        if tok_cfg_path.exists():
+            with open(tok_cfg_path) as f:
+                tok_cfg = json.load(f)
+            if tok_cfg.get("chat_template"):
+                _chat_template = tok_cfg["chat_template"]
+                print(f"[server] Loaded chat_template from tokenizer_config.json")
+    if not _chat_template:
+        print(f"[server] WARNING: No chat template found — tool calling will not work")
+    print(f"[server] Ready: {_model_id}")
+
+
+# ── app ───────────────────────────────────────────────────────────────────────
+app = FastAPI(title="MLX Vision Server")
+app.add_middleware(
+    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+)
+
+
+# ── schemas ───────────────────────────────────────────────────────────────────
+class Message(BaseModel):
+    role: str
+    content: Optional[Union[str, list]] = None
+    tool_calls: Optional[list] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None
+
+
+class ToolFunction(BaseModel):
+    name: str
+    description: Optional[str] = None
+    parameters: Optional[dict] = None
+
+
+class Tool(BaseModel):
+    type: str = "function"
+    function: ToolFunction
+
+
+class ChatRequest(BaseModel):
+    model: Optional[str] = None
+    messages: list[Message]
+    max_tokens: Optional[int] = 512
+    temperature: Optional[float] = 0.7
+    stream: Optional[bool] = False
+    tools: Optional[list[Tool]] = None
+    tool_choice: Optional[Any] = None
+
+
+class LoadRequest(BaseModel):
+    model_path: str
+
+
+# ── tool call parsing ─────────────────────────────────────────────────────────
+_TOOL_CALL_RE = re.compile(
+    r'<tool_call>\s*<function=([^>]+)>(.*?)</function>\s*</tool_call>',
+    re.DOTALL
+)
+_PARAM_RE = re.compile(
+    r'<parameter=([^>]+)>\n?(.*?)\n?</parameter>',
+    re.DOTALL
+)
+
+
+def parse_tool_calls(text: str):
+    """Parse Qwen-format <tool_call> blocks into OpenAI tool_calls format."""
+    tool_calls = []
+    for match in _TOOL_CALL_RE.finditer(text):
+        func_name = match.group(1).strip()
+        body = match.group(2)
+        args = {}
+        for pm in _PARAM_RE.finditer(body):
+            param_name = pm.group(1).strip()
+            param_value = pm.group(2).strip()
+            # try to parse as JSON value, fall back to string
+            try:
+                args[param_name] = json.loads(param_value)
+            except (json.JSONDecodeError, ValueError):
+                args[param_name] = param_value
+        tool_calls.append({
+            "id": f"call_{uuid.uuid4().hex[:12]}",
+            "type": "function",
+            "function": {
+                "name": func_name,
+                "arguments": json.dumps(args),
+            }
+        })
+    return tool_calls
+
+
+def strip_tool_calls(text: str) -> str:
+    """Remove <tool_call> blocks from text to get the content portion."""
+    cleaned = _TOOL_CALL_RE.sub('', text).strip()
+    return cleaned
+
+
+def strip_thinking(text: str) -> str:
+    """Remove <think>...</think> blocks from text."""
+    return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+def extract_text_and_images(messages: list[Message]):
+    """Return (last_user_text, [image_paths]) from a message list."""
+    images, text = [], ""
+    for msg in messages:
+        if msg.role != "user":
+            continue
+        if isinstance(msg.content, str):
+            text = msg.content
+        elif isinstance(msg.content, list):
+            parts_text = []
+            for part in msg.content:
+                p = part if isinstance(part, dict) else part.dict()
+                if p.get("type") == "text":
+                    parts_text.append(p.get("text", ""))
+                elif p.get("type") == "image_url":
+                    url = (p.get("image_url") or {}).get("url", "")
+                    if url.startswith("data:image"):
+                        header, b64 = url.split(",", 1)
+                        ext = header.split("/")[1].split(";")[0]
+                        img_bytes = base64.b64decode(b64)
+                        # Resize large images to prevent MLX OOM
+                        img_bytes = _resize_image(img_bytes, max_dim=768)
+                        tmp = tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False)
+                        tmp.write(img_bytes)
+                        tmp.flush()
+                        tmp.close()
+                        images.append(tmp.name)
+                    elif url:
+                        images.append(url)
+            text = " ".join(parts_text)
+    return text, images
+
+
+def _resize_image(img_bytes: bytes, max_dim: int = 768) -> bytes:
+    """Resize image if either dimension exceeds max_dim. Returns raw bytes."""
+    try:
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(img_bytes))
+        w, h = img.size
+        if w <= max_dim and h <= max_dim:
+            return img_bytes
+        # Scale down preserving aspect ratio
+        scale = max_dim / max(w, h)
+        new_w, new_h = int(w * scale), int(h * scale)
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+        buf = io.BytesIO()
+        fmt = img.format or "PNG"
+        if fmt.upper() == "JPEG" or img.mode == "RGB":
+            img.save(buf, format="JPEG", quality=85)
+        else:
+            if img.mode == "RGBA":
+                img.save(buf, format="PNG")
+            else:
+                img.save(buf, format="PNG")
+        print(f"[server] Resized image {w}x{h} → {new_w}x{new_h}", file=sys.stderr)
+        return buf.getvalue()
+    except ImportError:
+        print("[server] PIL not available, skipping image resize", file=sys.stderr)
+        return img_bytes
+    except Exception as e:
+        print(f"[server] Image resize failed: {e}", file=sys.stderr)
+        return img_bytes
+
+
+def get_system_prompt(messages):
+    for msg in messages:
+        if msg.role == "system":
+            return msg.content if isinstance(msg.content, str) else ""
+    return None
+
+
+def _cleanup_images(images):
+    for img in images:
+        if img.startswith(tempfile.gettempdir()):
+            try: os.unlink(img)
+            except: pass
+
+
+# ── prompt building ───────────────────────────────────────────────────────────
+def _build_prompt_with_tools(req: ChatRequest):
+    """Build prompt using the Jinja chat template directly, with tools support."""
+    from jinja2 import Environment, BaseLoader
+
+    # convert messages to template format
+    tmpl_messages = []
+    for msg in req.messages:
+        m = {"role": msg.role}
+        if msg.content is not None:
+            if isinstance(msg.content, list):
+                # flatten multimodal content to text for tool-calling path
+                parts = []
+                for p in msg.content:
+                    pp = p if isinstance(p, dict) else p.dict()
+                    if pp.get("type") == "text":
+                        parts.append(pp["text"])
+                m["content"] = " ".join(parts)
+            else:
+                m["content"] = msg.content
+        else:
+            m["content"] = ""
+        if msg.tool_calls:
+            m["tool_calls"] = msg.tool_calls
+        if msg.tool_call_id:
+            # tool result message — Qwen template expects role="tool"
+            m["role"] = "tool"
+        tmpl_messages.append(m)
+
+    # convert tools to template format
+    tmpl_tools = None
+    if req.tools:
+        tmpl_tools = []
+        for t in req.tools:
+            tmpl_tools.append({
+                "type": "function",
+                "function": {
+                    "name": t.function.name,
+                    "description": t.function.description or "",
+                    "parameters": t.function.parameters or {},
+                }
+            })
+
+    env = Environment(loader=BaseLoader(), keep_trailing_newline=True)
+    env.globals["raise_exception"] = lambda msg: (_ for _ in ()).throw(Exception(msg))
+    template = env.from_string(_chat_template)
+
+    prompt = template.render(
+        messages=tmpl_messages,
+        tools=tmpl_tools,
+        add_generation_prompt=True,
+        enable_thinking=True,
+    )
+    return prompt
+
+
+def _build_prompt_and_kwargs(req: ChatRequest):
+    """Build prompt — uses Jinja template when tools present, mlx_vlm otherwise."""
+    _, images = extract_text_and_images(req.messages)
+
+    has_tools = bool(req.tools) and bool(_chat_template)
+
+    if has_tools:
+        prompt = _build_prompt_with_tools(req)
+        print(f"[server] Built prompt with tools ({len(req.tools)} tools), len={len(prompt)}", file=sys.stderr)
+    else:
+        from mlx_vlm.prompt_utils import apply_chat_template
+        text, _ = extract_text_and_images(req.messages)
+        system = get_system_prompt(req.messages)
+        prompt = apply_chat_template(
+            _processor, _config, text,
+            num_images=len(images),
+            system_prompt=system,
+        )
+
+    kwargs = dict(max_tokens=req.max_tokens or 1024, verbose=False)
+    if images:
+        kwargs["image"] = images[0] if len(images) == 1 else images
+    return prompt, kwargs, images
+
+
+# ── routes ────────────────────────────────────────────────────────────────────
+@app.get("/v1/models")
+def list_models():
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": f"qwen3-vl-{m['id'].replace('/', '-')}",
+                "path": m["path"],
+                "object": "model",
+                "owned_by": "mlx",
+                "model_type": m["model_type"],
+                "vision": True,
+                "capabilities": ["tool_use", "image_input"],
+                "architecture": {
+                    "input_modalities": ["text", "image"],
+                    "output_modalities": ["text"],
+                },
+            }
+            for m in find_models()
+        ],
+    }
+
+
+@app.post("/admin/load")
+def admin_load(req: LoadRequest):
+    try:
+        load_model(req.model_path)
+        return {"status": "ok", "model_id": _model_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/admin/status")
+def admin_status():
+    models = find_models()
+    # alias all model IDs to qwen3-vl-* for SDK vision support
+    for m in models:
+        m["id"] = f"qwen3-vl-{m['id'].replace('/', '-')}"
+    return {"loaded": _model_id, "models": models}
+
+
+@app.post("/v1/chat/completions")
+async def chat_completions(req: ChatRequest):
+    if _model is None:
+        raise HTTPException(503, "No model loaded.")
+
+    has_tools = bool(req.tools)
+    _, images_check = extract_text_and_images(req.messages)
+    has_images = bool(images_check)
+    # clean up the check images (they'll be re-extracted in _build_prompt_and_kwargs)
+    _cleanup_images(images_check)
+
+    # Clear MLX cache before vision requests to free memory
+    if has_images:
+        try:
+            import mlx.core as mx
+            mx.metal.clear_cache()
+            print(f"[server] Cleared MLX cache for vision request", file=sys.stderr)
+        except Exception:
+            pass
+
+    # debug logging
+    for msg in req.messages:
+        if isinstance(msg.content, list):
+            types = [p.get("type") if isinstance(p, dict) else "?" for p in msg.content]
+            print(f"[server] msg role={msg.role} content_parts={types}", file=sys.stderr)
+        else:
+            clen = len(str(msg.content)) if msg.content else 0
+            print(f"[server] msg role={msg.role} content=str({clen} chars)", file=sys.stderr)
+    if has_tools:
+        tool_names = [t.function.name for t in req.tools]
+        print(f"[server] tools={tool_names}", file=sys.stderr)
+
+    # ── streaming ─────────────────────────────────────────────────────────────
+    if req.stream:
+        from mlx_vlm import stream_generate
+
+        prompt, kwargs, images = _build_prompt_and_kwargs(req)
+        cid = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+        created = int(time.time())
+
+        async def event_stream():
+            loop = asyncio.get_event_loop()
+            queue: asyncio.Queue = asyncio.Queue()
+            full_text_parts = []
+
+            def run_stream():
+                try:
+                    _inference_lock.acquire()
+                    gen = stream_generate(_model, _processor, prompt, **kwargs)
+                    last_result = None
+                    for chunk in gen:
+                        text = chunk.text if hasattr(chunk, 'text') else str(chunk)
+                        if text:
+                            loop.call_soon_threadsafe(queue.put_nowait, ("token", text))
+                        last_result = chunk
+                    if last_result and hasattr(last_result, 'prompt_tps'):
+                        loop.call_soon_threadsafe(queue.put_nowait, ("stats", last_result))
+                except Exception as e:
+                    loop.call_soon_threadsafe(queue.put_nowait, ("error", str(e)))
+                finally:
+                    # Clear cache after streaming to free memory for next request
+                    try:
+                        import mlx.core as mx
+                        mx.metal.clear_cache()
+                    except Exception:
+                        pass
+                    _inference_lock.release()
+                    loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
+
+            loop.run_in_executor(None, run_stream)
+
+            accumulated = ""
+            while True:
+                kind, data = await queue.get()
+                if kind == "token":
+                    accumulated += data
+                    full_text_parts.append(data)
+                    chunk_data = {
+                        "id": cid, "object": "chat.completion.chunk",
+                        "created": created, "model": _model_id,
+                        "choices": [{"index": 0, "delta": {"content": data}, "finish_reason": None}],
+                    }
+                    yield f"data: {json.dumps(chunk_data)}\n\n"
+                elif kind == "stats":
+                    stats_chunk = {
+                        "id": cid, "object": "chat.completion.chunk",
+                        "created": created, "model": _model_id,
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": None}],
+                        "usage": {
+                            "prompt_tokens": getattr(data, "prompt_tokens", 0),
+                            "completion_tokens": getattr(data, "generation_tokens", 0),
+                            "total_tokens": getattr(data, "total_tokens", 0),
+                        },
+                        "x_stats": {
+                            "prompt_tps": round(getattr(data, "prompt_tps", 0), 2),
+                            "generation_tps": round(getattr(data, "generation_tps", 0), 2),
+                            "peak_memory_gb": round(getattr(data, "peak_memory", 0), 3),
+                        },
+                    }
+                    yield f"data: {json.dumps(stats_chunk)}\n\n"
+                elif kind == "error":
+                    yield f"event: error\ndata: {json.dumps({'error': data})}\n\n"
+                    break
+                elif kind == "done":
+                    # check for tool calls in accumulated text
+                    full_text = "".join(full_text_parts)
+                    if has_tools:
+                        tool_calls = parse_tool_calls(full_text)
+                        if tool_calls:
+                            # send a final chunk with tool_calls
+                            tc_chunk = {
+                                "id": cid, "object": "chat.completion.chunk",
+                                "created": created, "model": _model_id,
+                                "choices": [{
+                                    "index": 0,
+                                    "delta": {"tool_calls": tool_calls},
+                                    "finish_reason": "tool_calls",
+                                }],
+                            }
+                            yield f"data: {json.dumps(tc_chunk)}\n\n"
+                            yield "data: [DONE]\n\n"
+                            break
+
+                    final = {
+                        "id": cid, "object": "chat.completion.chunk",
+                        "created": created, "model": _model_id,
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                    }
+                    yield f"data: {json.dumps(final)}\n\n"
+                    yield "data: [DONE]\n\n"
+                    break
+
+            _cleanup_images(images)
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    # ── non-streaming ─────────────────────────────────────────────────────────
+    from mlx_vlm import generate
+
+    prompt, kwargs, images = _build_prompt_and_kwargs(req)
+
+    def _run_generate():
+        with _inference_lock:
+            result = generate(_model, _processor, prompt, **kwargs)
+            # Clear cache after vision inference to free memory
+            if images:
+                try:
+                    import mlx.core as mx
+                    mx.metal.clear_cache()
+                except Exception:
+                    pass
+            return result
+
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(None, _run_generate)
+    except Exception as e:
+        _cleanup_images(images)
+        raise HTTPException(500, f"Inference error: {str(e)}")
+    _cleanup_images(images)
+
+    response_text = result.text if hasattr(result, "text") else str(result)
+
+    # check for tool calls in the response
+    tool_calls = []
+    finish_reason = "stop"
+    content = response_text
+
+    if has_tools:
+        tool_calls = parse_tool_calls(response_text)
+        if tool_calls:
+            finish_reason = "tool_calls"
+            content = strip_thinking(strip_tool_calls(response_text)) or None
+
+    message = {"role": "assistant", "content": content}
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+
+    return {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": _model_id,
+        "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
+        "usage": {
+            "prompt_tokens": getattr(result, "prompt_tokens", 0),
+            "completion_tokens": getattr(result, "generation_tokens", 0),
+            "total_tokens": getattr(result, "total_tokens", 0),
+        },
+        "x_stats": {
+            "prompt_tps": round(getattr(result, "prompt_tps", 0), 2),
+            "generation_tps": round(getattr(result, "generation_tps", 0), 2),
+            "peak_memory_gb": round(getattr(result, "peak_memory", 0), 3),
+        },
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn, argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=8090)
+    parser.add_argument("--model", type=str, default=None)
+    args = parser.parse_args()
+    if args.model:
+        load_model(args.model)
+    uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="info", loop="asyncio")

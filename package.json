@@ -1,0 +1,59 @@
+{
+  "name": "qwencoder-mac-studio",
+  "version": "1.0.0",
+  "description": "QwenCoder Mac Studio — local MLX vision server + vibe coding",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --mac --dir",
+    "dist": "electron-builder --mac",
+    "test": "node --test 'test/*.test.js'"
+  },
+  "build": {
+    "appId": "com.qwencoder.macstudio",
+    "productName": "QwenCoder Mac Studio",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "playwright-tool.js",
+      "compactor-builtin.js",
+      "server.py",
+      "renderer/**/*",
+      "assets/**/*",
+      "node_modules/@qwen-code/sdk/**/*",
+      "node_modules/openai/**/*",
+      "node_modules/playwright/**/*",
+      "node_modules/playwright-core/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "server.py",
+        "to": "server.py"
+      }
+    ]
+  },
+  "dependencies": {
+    "@qwen-code/sdk": "^0.1.6",
+    "chokidar": "^5.0.0",
+    "node-pty": "^1.1.0",
+    "openai": "^4.0.0",
+    "playwright": "^1.59.1"
+  },
+  "devDependencies": {
+    "electron": "^41.3.0",
+    "electron-builder": "^26.0.12",
+    "fast-check": "^4.7.0"
+  }
+}

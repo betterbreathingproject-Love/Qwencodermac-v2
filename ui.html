@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MLX Vision Server</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f0f0f; color: #e0e0e0; min-height: 100vh; }
+
+  header { background: #1a1a1a; border-bottom: 1px solid #2a2a2a; padding: 18px 28px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 18px; font-weight: 600; color: #fff; }
+  .badge { font-size: 11px; padding: 3px 8px; border-radius: 20px; font-weight: 500; }
+  .badge-vision { background: #1a3a2a; color: #4ade80; border: 1px solid #2a5a3a; }
+  .badge-text { background: #2a2a1a; color: #facc15; border: 1px solid #4a4a1a; }
+  .badge-offline { background: #3a1a1a; color: #f87171; border: 1px solid #5a2a2a; }
+  .badge-online { background: #1a3a2a; color: #4ade80; border: 1px solid #2a5a3a; }
+
+  .layout { display: grid; grid-template-columns: 320px 1fr; height: calc(100vh - 57px); }
+
+  /* sidebar */
+  .sidebar { background: #141414; border-right: 1px solid #2a2a2a; display: flex; flex-direction: column; overflow: hidden; }
+  .sidebar-section { padding: 16px; border-bottom: 1px solid #222; }
+  .sidebar-section h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #666; margin-bottom: 12px; }
+
+  .status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #f87171; flex-shrink: 0; }
+  .status-dot.online { background: #4ade80; }
+  .status-label { font-size: 13px; color: #aaa; }
+  .status-model { font-size: 12px; color: #4ade80; font-family: monospace; word-break: break-all; }
+
+  .model-list { flex: 1; overflow-y: auto; padding: 8px; }
+  .model-card { padding: 10px 12px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; margin-bottom: 4px; transition: all 0.15s; }
+  .model-card:hover { background: #1e1e1e; border-color: #333; }
+  .model-card.active { background: #1a2a1a; border-color: #2a5a3a; }
+  .model-card.loading { opacity: 0.5; pointer-events: none; }
+  .model-name { font-size: 13px; font-weight: 500; color: #ddd; margin-bottom: 4px; word-break: break-all; }
+  .model-meta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .model-type { font-size: 10px; color: #666; font-family: monospace; }
+
+  .load-btn { width: 100%; padding: 9px; background: #1a3a2a; color: #4ade80; border: 1px solid #2a5a3a; border-radius: 7px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; margin-top: 8px; }
+  .load-btn:hover { background: #1f4a32; }
+  .load-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* main */
+  .main { display: flex; flex-direction: column; overflow: hidden; }
+
+  .tabs { display: flex; border-bottom: 1px solid #2a2a2a; background: #141414; }
+  .tab { padding: 12px 20px; font-size: 13px; cursor: pointer; color: #666; border-bottom: 2px solid transparent; transition: all 0.15s; }
+  .tab.active { color: #4ade80; border-bottom-color: #4ade80; }
+  .tab:hover:not(.active) { color: #aaa; }
+
+  .panel { flex: 1; overflow-y: auto; padding: 24px; display: none; }
+  .panel.active { display: block; }
+
+  /* kilocode setup panel */
+  .setup-grid { display: grid; gap: 16px; max-width: 680px; }
+  .setup-card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 10px; padding: 20px; }
+  .setup-card h3 { font-size: 14px; font-weight: 600; color: #fff; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .step-num { width: 22px; height: 22px; border-radius: 50%; background: #1a3a2a; color: #4ade80; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+
+  .field-row { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+  .field-row:last-child { margin-bottom: 0; }
+  .field-label { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 0.06em; }
+  .field-value { display: flex; align-items: center; gap: 8px; }
+  .field-value code { background: #0f0f0f; border: 1px solid #333; border-radius: 5px; padding: 7px 10px; font-size: 13px; font-family: 'SF Mono', monospace; color: #4ade80; flex: 1; word-break: break-all; }
+  .copy-btn { padding: 6px 10px; background: #222; border: 1px solid #333; border-radius: 5px; color: #aaa; font-size: 11px; cursor: pointer; white-space: nowrap; transition: all 0.15s; flex-shrink: 0; }
+  .copy-btn:hover { background: #2a2a2a; color: #fff; }
+  .copy-btn.copied { background: #1a3a2a; color: #4ade80; border-color: #2a5a3a; }
+
+  .checkbox-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #0f0f0f; border: 1px solid #333; border-radius: 5px; }
+  .checkbox-row input { accent-color: #4ade80; width: 14px; height: 14px; }
+  .checkbox-row label { font-size: 13px; color: #ccc; }
+
+  .info-box { background: #0f1a0f; border: 1px solid #1a3a1a; border-radius: 7px; padding: 12px 14px; font-size: 12px; color: #6a9a6a; line-height: 1.6; }
+
+  /* test panel */
+  .test-area { max-width: 680px; display: flex; flex-direction: column; gap: 14px; }
+  .test-area textarea { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 12px; color: #ddd; font-size: 13px; resize: vertical; font-family: inherit; }
+  .test-area textarea:focus { outline: none; border-color: #3a5a3a; }
+  .test-btn { padding: 10px 20px; background: #1a3a2a; color: #4ade80; border: 1px solid #2a5a3a; border-radius: 7px; font-size: 13px; font-weight: 500; cursor: pointer; align-self: flex-start; }
+  .test-btn:hover { background: #1f4a32; }
+  .test-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .test-result { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 14px; font-size: 13px; color: #ccc; white-space: pre-wrap; font-family: 'SF Mono', monospace; min-height: 80px; }
+  .img-preview { max-width: 200px; max-height: 200px; border-radius: 6px; border: 1px solid #333; }
+  .file-label { display: inline-block; padding: 8px 14px; background: #222; border: 1px solid #333; border-radius: 6px; font-size: 12px; color: #aaa; cursor: pointer; }
+  .file-label:hover { background: #2a2a2a; }
+
+  /* spinner */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #333; border-top-color: #4ade80; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 6px; }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>MLX Vision Server</h1>
+  <span id="serverBadge" class="badge badge-offline">● Offline</span>
+  <span id="modelBadge" class="badge badge-text" style="display:none"></span>
+</header>
+
+<div class="layout">
+  <!-- sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <h2>Server Status</h2>
+      <div class="status-row">
+        <div class="status-dot" id="statusDot"></div>
+        <span class="status-label" id="statusLabel">Checking...</span>
+      </div>
+      <div id="loadedModel" class="status-model" style="display:none"></div>
+    </div>
+
+    <div class="sidebar-section" style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
+      <h2>Models</h2>
+      <div class="model-list" id="modelList">
+        <div style="color:#555; font-size:12px; padding:8px;">Loading models...</div>
+      </div>
+      <button class="load-btn" id="loadBtn" disabled onclick="loadSelected()">Load Selected Model</button>
+    </div>
+  </div>
+
+  <!-- main -->
+  <div class="main">
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('setup', this)">Kilo Code Setup</div>
+      <div class="tab" onclick="switchTab('test', this)">Test Vision</div>
+    </div>
+
+    <!-- setup panel -->
+    <div class="panel active" id="panel-setup">
+      <div class="setup-grid">
+        <div class="info-box" id="noModelWarning">
+          ⚠️ No model loaded yet. Select a model from the sidebar and click "Load Selected Model" to get started.
+        </div>
+
+        <div class="setup-card">
+          <h3><span class="step-num">1</span> Start the server</h3>
+          <div class="field-row">
+            <div class="field-label">Run this in your terminal</div>
+            <div class="field-value">
+              <code id="startCmd">python3 server.py</code>
+              <button class="copy-btn" onclick="copyField('startCmd', this)">Copy</button>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field-label">Or preload a model on start</div>
+            <div class="field-value">
+              <code id="startCmdModel">python3 server.py --model &lt;path&gt;</code>
+              <button class="copy-btn" onclick="copyField('startCmdModel', this)">Copy</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="setup-card">
+          <h3><span class="step-num">2</span> In Kilo Code — Add API Profile</h3>
+          <div class="field-row">
+            <div class="field-label">Provider</div>
+            <div class="field-value">
+              <code>OpenAI Compatible</code>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field-label">Base URL</div>
+            <div class="field-value">
+              <code id="baseUrl">http://localhost:8090/v1</code>
+              <button class="copy-btn" onclick="copyField('baseUrl', this)">Copy</button>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field-label">API Key</div>
+            <div class="field-value">
+              <code>mlx</code>
+              <button class="copy-btn" onclick="copyText('mlx', this)">Copy</button>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field-label">Model ID</div>
+            <div class="field-value">
+              <code id="modelId">— load a model first —</code>
+              <button class="copy-btn" id="modelIdCopyBtn" onclick="copyField('modelId', this)" disabled>Copy</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="setup-card">
+          <h3><span class="step-num">3</span> Enable Vision in Kilo Code</h3>
+          <div class="field-row">
+            <div class="field-label">Check this box in the Kilo Code provider settings</div>
+            <div class="checkbox-row">
+              <input type="checkbox" checked disabled id="visionCheck">
+              <label for="visionCheck">Supports Images ✓</label>
+            </div>
+          </div>
+          <div style="margin-top:10px;" class="info-box">
+            This server always advertises <code style="background:none;border:none;padding:0;color:#4ade80;">image_input</code> in capabilities for vision models, so Kilo Code will show the image attachment button automatically.
+          </div>
+        </div>
+
+        <div class="setup-card">
+          <h3><span class="step-num">4</span> Verify connection</h3>
+          <div class="field-row">
+            <div class="field-label">Models endpoint (open in browser)</div>
+            <div class="field-value">
+              <code id="modelsUrl">http://localhost:8090/v1/models</code>
+              <button class="copy-btn" onclick="window.open('http://localhost:8090/v1/models')">Open</button>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field-label">Status endpoint</div>
+            <div class="field-value">
+              <code id="statusUrl">http://localhost:8090/admin/status</code>
+              <button class="copy-btn" onclick="window.open('http://localhost:8090/admin/status')">Open</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- test panel -->
+    <div class="panel" id="panel-test">
+      <div class="test-area">
+        <div>
+          <div style="font-size:12px; color:#666; margin-bottom:8px;">Upload an image to test vision</div>
+          <label class="file-label">
+            📎 Choose image
+            <input type="file" accept="image/*" style="display:none" onchange="previewImage(event)">
+          </label>
+          <img id="imgPreview" class="img-preview" style="display:none; margin-top:10px; display:block;">
+        </div>
+        <textarea id="testPrompt" rows="3" placeholder="Ask something about the image, or just chat...">What do you see in this image?</textarea>
+        <button class="test-btn" id="testBtn" onclick="runTest()">Send</button>
+        <div class="test-result" id="testResult" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = 'http://localhost:8090';
+let selectedModel = null;
+let loadedModel = null;
+let allModels = [];
+let testImageB64 = null;
+
+// ── tab switching ─────────────────────────────────────────────────────────────
+function switchTab(name, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('panel-' + name).classList.add('active');
+}
+
+// ── copy helpers ──────────────────────────────────────────────────────────────
+function copyField(id, btn) {
+  copyText(document.getElementById(id).textContent, btn);
+}
+function copyText(text, btn) {
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+  });
+}
+
+// ── status polling ────────────────────────────────────────────────────────────
+async function pollStatus() {
+  try {
+    const r = await fetch(`${API}/admin/status`, { signal: AbortSignal.timeout(2000) });
+    const data = await r.json();
+
+    document.getElementById('statusDot').classList.add('online');
+    document.getElementById('statusLabel').textContent = 'Server running';
+    document.getElementById('serverBadge').textContent = '● Online';
+    document.getElementById('serverBadge').className = 'badge badge-online';
+
+    allModels = data.models || [];
+    renderModels();
+
+    if (data.loaded && data.loaded !== loadedModel) {
+      loadedModel = data.loaded;
+      updateLoadedModel(loadedModel);
+    }
+  } catch {
+    document.getElementById('statusDot').classList.remove('online');
+    document.getElementById('statusLabel').textContent = 'Server offline';
+    document.getElementById('serverBadge').textContent = '● Offline';
+    document.getElementById('serverBadge').className = 'badge badge-offline';
+    document.getElementById('loadedModel').style.display = 'none';
+    document.getElementById('modelBadge').style.display = 'none';
+    document.getElementById('noModelWarning').style.display = 'block';
+    document.getElementById('noModelWarning').textContent = '⚠️ Server is not running. Open a terminal and run: python3 server.py';
+  }
+}
+
+function updateLoadedModel(modelId) {
+  document.getElementById('loadedModel').textContent = modelId;
+  document.getElementById('loadedModel').style.display = 'block';
+  document.getElementById('noModelWarning').style.display = 'none';
+
+  // update model ID in setup
+  document.getElementById('modelId').textContent = modelId;
+  document.getElementById('modelIdCopyBtn').disabled = false;
+
+  // update start command
+  const model = allModels.find(m => m.id === modelId);
+  if (model) {
+    document.getElementById('startCmdModel').textContent = `python3 server.py --model "${model.path}"`;
+    const badge = document.getElementById('modelBadge');
+    badge.textContent = model.vision ? '👁 Vision' : '💬 Text';
+    badge.className = 'badge ' + (model.vision ? 'badge-vision' : 'badge-text');
+    badge.style.display = 'inline-block';
+  }
+}
+
+// ── model list ────────────────────────────────────────────────────────────────
+function renderModels() {
+  const list = document.getElementById('modelList');
+  if (!allModels.length) {
+    list.innerHTML = '<div style="color:#555;font-size:12px;padding:8px;">No models found in ~/.lmstudio/models</div>';
+    return;
+  }
+  list.innerHTML = allModels.map(m => `
+    <div class="model-card ${m.id === loadedModel ? 'active' : ''}" id="card-${CSS.escape(m.id)}" onclick="selectModel('${m.id}', '${m.path}')">
+      <div class="model-name">${m.id.split('/').pop()}</div>
+      <div class="model-meta">
+        <span class="badge ${m.vision ? 'badge-vision' : 'badge-text'}" style="font-size:10px;">${m.vision ? '👁 Vision' : '💬 Text'}</span>
+        <span class="model-type">${m.model_type}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+function selectModel(id, path) {
+  selectedModel = { id, path };
+  document.querySelectorAll('.model-card').forEach(c => c.classList.remove('active'));
+  const card = document.getElementById('card-' + CSS.escape(id));
+  if (card) card.classList.add('active');
+  document.getElementById('loadBtn').disabled = (id === loadedModel);
+  document.getElementById('loadBtn').textContent = id === loadedModel ? 'Already Loaded' : 'Load Selected Model';
+}
+
+async function loadSelected() {
+  if (!selectedModel) return;
+  const btn = document.getElementById('loadBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Loading...';
+
+  try {
+    const r = await fetch(`${API}/admin/load`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model_path: selectedModel.path }),
+    });
+    const data = await r.json();
+    if (r.ok) {
+      loadedModel = data.model_id;
+      updateLoadedModel(loadedModel);
+      renderModels();
+      btn.textContent = 'Already Loaded';
+    } else {
+      btn.textContent = 'Error: ' + data.detail;
+      btn.disabled = false;
+    }
+  } catch (e) {
+    btn.textContent = 'Failed — is server running?';
+    btn.disabled = false;
+  }
+}
+
+// ── test panel ────────────────────────────────────────────────────────────────
+function previewImage(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    testImageB64 = ev.target.result; // data:image/...;base64,...
+    const img = document.getElementById('imgPreview');
+    img.src = testImageB64;
+    img.style.display = 'block';
+  };
+  reader.readAsDataURL(file);
+}
+
+async function runTest() {
+  const prompt = document.getElementById('testPrompt').value.trim();
+  if (!prompt) return;
+
+  const btn = document.getElementById('testBtn');
+  const result = document.getElementById('testResult');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Generating...';
+  result.style.display = 'block';
+  result.textContent = '...';
+
+  const content = testImageB64
+    ? [
+        { type: 'text', text: prompt },
+        { type: 'image_url', image_url: { url: testImageB64 } },
+      ]
+    : prompt;
+
+  try {
+    const r = await fetch(`${API}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content }],
+        max_tokens: 512,
+      }),
+    });
+    const data = await r.json();
+    if (r.ok) {
+      result.textContent = data.choices[0].message.content;
+    } else {
+      result.textContent = 'Error: ' + (data.detail || JSON.stringify(data));
+    }
+  } catch (e) {
+    result.textContent = 'Failed to connect to server.';
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Send';
+}
+
+// ── init ──────────────────────────────────────────────────────────────────────
+pollStatus();
+setInterval(pollStatus, 4000);
+</script>
+</body>
+</html>
