@@ -14,7 +14,7 @@ const http = require('http')
 const fs = require('fs')
 const path = require('path')
 const { execSync, spawn } = require('child_process')
-const { createPlaywrightServer } = require('./playwright-tool')
+const { createPlaywrightInstance, BROWSER_TOOL_DEFS } = require('./playwright-tool')
 const { createVisionServer, registerImages, clearImages } = require('./vision-tool')
 
 // Re-export the sink classes from qwen-bridge so main.js can use them
@@ -115,11 +115,17 @@ const TOOL_DEFS = [
       },
     },
   },
+  ...BROWSER_TOOL_DEFS,
 ]
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
-function executeTool(name, args, cwd) {
+async function executeTool(name, args, cwd, browserInstance) {
+  // Route browser_* tools to the playwright instance
+  if (name.startsWith('browser_') && browserInstance) {
+    return browserInstance.execute(name, args)
+  }
+
   try {
     switch (name) {
       case 'read_file': {
@@ -214,7 +220,7 @@ class DirectBridge {
     this._aborted = false
     this._activeReq = null
     // MCP servers for playwright/vision
-    this._playwrightServer = null
+    this._browserInstance = null
     this._visionServer = null
   }
 
@@ -225,8 +231,8 @@ class DirectBridge {
   async run({ prompt, cwd, permissionMode, model, images, conversationHistory }) {
     this._aborted = false
 
-    // Set up MCP servers
-    this._playwrightServer = createPlaywrightServer()
+    // Set up browser instance and vision
+    this._browserInstance = createPlaywrightInstance()
     this._visionServer = createVisionServer()
 
     // Register images
@@ -327,7 +333,7 @@ class DirectBridge {
         this.send('qwen-event', { type: 'tool-use', id: tc.id, name: fnName, input: fnArgs })
 
         // Execute
-        const result = executeTool(fnName, fnArgs, cwd)
+        const result = await executeTool(fnName, fnArgs, cwd, this._browserInstance)
         const isError = !!result.error
         const content = result.error || result.result
 
@@ -460,6 +466,8 @@ class DirectBridge {
 Working directory: ${cwd}
 
 You have access to these tools:
+
+**File tools:**
 - read_file: Read file contents
 - write_file: Create or overwrite files
 - edit_file: Make surgical edits to existing files (find and replace)
@@ -467,15 +475,27 @@ You have access to these tools:
 - bash: Execute shell commands
 - search_files: Search for patterns in files using grep
 
+**Browser automation tools (Playwright):**
+- browser_navigate: Go to a URL, returns page title and visible text
+- browser_screenshot: Take a screenshot of the page or an element
+- browser_click: Click an element by CSS selector
+- browser_type: Type text into an input field
+- browser_get_text: Extract visible text from the page or an element
+- browser_get_html: Get HTML content of the page or an element
+- browser_evaluate: Run JavaScript in the page context
+- browser_wait_for: Wait for an element or navigation
+- browser_select_option: Select a dropdown option
+- browser_close: Close the browser when done
+
 When the user asks you to make changes to code:
 1. First read the relevant files to understand the current state
 2. Make changes using write_file or edit_file
 3. If needed, run tests or verify with bash
 
-Be direct and efficient. Make the changes the user asks for.
-${autoEdit ? '\nYou are in auto-edit mode. Proceed with changes without asking for confirmation.' : ''}
+When the user asks you to browse, research, or interact with websites, use the browser tools directly. Call browser_navigate first, then use other browser tools to interact with the page.
 
-You also have access to Playwright browser tools and Vision tools via MCP when needed.`
+Be direct and efficient. Make the changes the user asks for.
+${autoEdit ? '\nYou are in auto-edit mode. Proceed with changes without asking for confirmation.' : ''}`
   }
 
   async interrupt() {
@@ -492,10 +512,10 @@ You also have access to Playwright browser tools and Vision tools via MCP when n
     if (this._activeReq) {
       try { this._activeReq.destroy() } catch {}
     }
-    if (this._playwrightServer && this._playwrightServer._closeBrowser) {
-      await this._playwrightServer._closeBrowser().catch(() => {})
+    if (this._browserInstance) {
+      await this._browserInstance.closeBrowser().catch(() => {})
     }
-    this._playwrightServer = null
+    this._browserInstance = null
     clearImages()
     this._visionServer = null
   }
