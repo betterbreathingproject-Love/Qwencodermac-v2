@@ -238,6 +238,7 @@
         <button class="ed-tab active" data-tab="agent" onclick="switchMainTab('agent',this)">💻 Agent</button>
         <button class="ed-tab" data-tab="editor" onclick="switchMainTab('editor',this)">📝 Editor</button>
         <button class="ed-tab" data-tab="vision" onclick="switchMainTab('vision',this)">👁 Vision</button>
+        <button class="ed-tab" data-tab="tools" onclick="switchMainTab('tools',this)">🔧 Tools</button>
       </div>
 
       <!-- AGENT TAB -->
@@ -357,6 +358,17 @@
           <div class="vision-right">
             <div class="code-output" id="visionOutput"><div class="output-placeholder">Response here...</div></div>
           </div>
+        </div>
+      </div>
+
+      <!-- TOOLS TAB -->
+      <div class="main-panel" id="mt-tools">
+        <div class="tools-layout">
+          <div class="tools-header">
+            <span class="tools-title">🔧 Available Tools</span>
+            <span class="tools-subtitle">Tools the agent can use during conversations</span>
+          </div>
+          <div class="tools-grid" id="toolsGrid"></div>
         </div>
       </div>
 

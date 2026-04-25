@@ -2391,3 +2391,60 @@ function updateAgentStatsBar(opts = {}) {
 function updateStatusBar() {}
 
 // (status bar init removed — all status in chip bar now)
+
+// ── Tools panel ───────────────────────────────────────────────────────────────
+
+const AVAILABLE_TOOLS = [
+  // File tools
+  { name: 'read_file', icon: '📄', category: 'file', desc: 'Read the contents of a file. Returns the full text content.' },
+  { name: 'write_file', icon: '✏️', category: 'file', desc: 'Create or overwrite a file. Creates parent directories as needed.' },
+  { name: 'edit_file', icon: '🔧', category: 'file', desc: 'Surgical find-and-replace edit. Matches an exact string and replaces it.' },
+  { name: 'list_dir', icon: '📂', category: 'file', desc: 'List files and directories. Shows entries with / suffix for folders.' },
+  { name: 'search_files', icon: '🔍', category: 'search', desc: 'Grep for a regex pattern across files. Returns matching lines with paths and line numbers.' },
+  // Shell
+  { name: 'bash', icon: '⚡', category: 'shell', desc: 'Execute a shell command and return output. Used for tests, installs, git, and more.' },
+  // Browser tools
+  { name: 'browser_navigate', icon: '🌐', category: 'browser', desc: 'Navigate to a URL. Returns the page title and visible text content.' },
+  { name: 'browser_screenshot', icon: '📸', category: 'browser', desc: 'Capture a screenshot of the page or a specific element as PNG.' },
+  { name: 'browser_click', icon: '👆', category: 'browser', desc: 'Click an element on the page by CSS selector.' },
+  { name: 'browser_type', icon: '⌨️', category: 'browser', desc: 'Type text into an input field. Can clear first or append.' },
+  { name: 'browser_get_text', icon: '📝', category: 'browser', desc: 'Extract visible text from the full page or a specific element.' },
+  { name: 'browser_get_html', icon: '🏷️', category: 'browser', desc: 'Get the HTML source of the page or a specific element.' },
+  { name: 'browser_evaluate', icon: '🧪', category: 'browser', desc: 'Execute JavaScript in the browser page context and return the result.' },
+  { name: 'browser_wait_for', icon: '⏳', category: 'browser', desc: 'Wait for an element to appear or for navigation to complete.' },
+  { name: 'browser_select_option', icon: '☑️', category: 'browser', desc: 'Select an option from a dropdown element.' },
+  { name: 'browser_close', icon: '🚪', category: 'browser', desc: 'Close the browser and free resources.' },
+]
+
+function renderToolsPanel() {
+  const grid = document.getElementById('toolsGrid')
+  if (!grid) return
+
+  const groups = { file: [], shell: [], search: [], browser: [] }
+  for (const t of AVAILABLE_TOOLS) {
+    (groups[t.category] || []).push(t)
+  }
+
+  const labels = { file: 'File System', shell: 'Shell', search: 'Search', browser: 'Browser Automation (Playwright)' }
+  let html = ''
+
+  for (const [cat, tools] of Object.entries(groups)) {
+    if (tools.length === 0) continue
+    html += `<div class="tools-section-label" style="grid-column:1/-1">${labels[cat] || cat}</div>`
+    for (const t of tools) {
+      html += `<div class="tool-card">
+        <div class="tool-card-header">
+          <span class="tool-card-icon">${t.icon}</span>
+          <span class="tool-card-name">${t.name}</span>
+          <span class="tool-card-badge ${t.category}">${t.category}</span>
+        </div>
+        <div class="tool-card-desc">${t.desc}</div>
+      </div>`
+    }
+  }
+
+  grid.innerHTML = html
+}
+
+// Render on load
+document.addEventListener('DOMContentLoaded', () => { renderToolsPanel() })
