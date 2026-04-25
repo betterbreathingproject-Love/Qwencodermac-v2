@@ -60,6 +60,12 @@ contextBridge.exposeInMainWorld('app', {
   clearSessionMsgs:(pid,sid) => ipcRenderer.invoke('clear-session-messages', pid, sid),
   setSessionMsgs: (pid,sid,m) => ipcRenderer.invoke('set-session-messages', pid, sid, m),
 
+  // session todos & chat snapshot
+  getSessionTodos:  (pid,sid) => ipcRenderer.invoke('get-session-todos', pid, sid),
+  saveSessionTodos: (pid,sid,t) => ipcRenderer.invoke('save-session-todos', pid, sid, t),
+  getSessionSnapshot: (pid,sid) => ipcRenderer.invoke('get-session-chat-snapshot', pid, sid),
+  saveSessionSnapshot:(pid,sid,s) => ipcRenderer.invoke('save-session-chat-snapshot', pid, sid, s),
+
   // context settings
   getSettings:    (id)      => ipcRenderer.invoke('get-settings', id),
   saveSettings:   (id, s)   => ipcRenderer.invoke('save-settings', id, s),

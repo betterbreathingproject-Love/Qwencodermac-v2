@@ -247,8 +247,8 @@ describe('parseRipgrepOutput', () => {
 // --- 4.4.2 Test search against fixture source files ---
 
 describe('builtinSearch', () => {
-  it('finds function declarations in JavaScript fixtures', () => {
-    const results = builtinSearch('function', FIXTURES_DIR, 'javascript');
+  it('finds function declarations in JavaScript fixtures', async () => {
+    const results = await builtinSearch('function', FIXTURES_DIR, 'javascript');
     assert.ok(results.length > 0, 'Should find at least one match');
     for (const r of results) {
       assert.ok(r.file.endsWith('.js'));
@@ -257,45 +257,45 @@ describe('builtinSearch', () => {
     }
   });
 
-  it('finds class declarations in TypeScript fixtures', () => {
-    const results = builtinSearch('class', FIXTURES_DIR, 'typescript');
+  it('finds class declarations in TypeScript fixtures', async () => {
+    const results = await builtinSearch('class', FIXTURES_DIR, 'typescript');
     assert.ok(results.length > 0, 'Should find at least one match');
     for (const r of results) {
       assert.ok(r.file.endsWith('.ts'));
     }
   });
 
-  it('finds def keywords in Python fixtures', () => {
-    const results = builtinSearch('def', FIXTURES_DIR, 'python');
+  it('finds def keywords in Python fixtures', async () => {
+    const results = await builtinSearch('def', FIXTURES_DIR, 'python');
     assert.ok(results.length > 0, 'Should find at least one match');
     for (const r of results) {
       assert.ok(r.file.endsWith('.py'));
     }
   });
 
-  it('finds keys in JSON fixtures', () => {
-    const results = builtinSearch('version', FIXTURES_DIR, 'json');
+  it('finds keys in JSON fixtures', async () => {
+    const results = await builtinSearch('version', FIXTURES_DIR, 'json');
     assert.ok(results.length > 0, 'Should find at least one match');
     for (const r of results) {
       assert.ok(r.file.endsWith('.json'));
     }
   });
 
-  it('returns empty array when no matches', () => {
-    const results = builtinSearch('zzz_nonexistent_pattern_zzz', FIXTURES_DIR, 'javascript');
+  it('returns empty array when no matches', async () => {
+    const results = await builtinSearch('zzz_nonexistent_pattern_zzz', FIXTURES_DIR, 'javascript');
     assert.equal(results.length, 0);
   });
 
-  it('searches all supported file types when no language specified', () => {
-    const results = builtinSearch('class', FIXTURES_DIR, null);
+  it('searches all supported file types when no language specified', async () => {
+    const results = await builtinSearch('class', FIXTURES_DIR, null);
     assert.ok(results.length > 0);
     // Should find matches in both .js and .ts files
     const extensions = new Set(results.map((r) => path.extname(r.file)));
     assert.ok(extensions.size >= 1);
   });
 
-  it('search results have all required fields', () => {
-    const results = builtinSearch('function', FIXTURES_DIR, 'javascript');
+  it('search results have all required fields', async () => {
+    const results = await builtinSearch('function', FIXTURES_DIR, 'javascript');
     for (const r of results) {
       assert.ok(typeof r.file === 'string' && r.file.length > 0, 'file should be non-empty string');
       assert.ok(typeof r.startLine === 'number' && r.startLine > 0, 'startLine should be positive');
@@ -338,29 +338,29 @@ describe('detectBackend', () => {
 // --- astSearch integration (uses whatever backend is available) ---
 
 describe('astSearch', () => {
-  it('accepts a string pattern', () => {
-    const results = astSearch('function', FIXTURES_DIR);
+  it('accepts a string pattern', async () => {
+    const results = await astSearch('function', FIXTURES_DIR);
     assert.ok(Array.isArray(results));
   });
 
-  it('accepts a SearchPattern object', () => {
-    const results = astSearch({ pattern: 'function', language: 'javascript' }, FIXTURES_DIR);
+  it('accepts a SearchPattern object', async () => {
+    const results = await astSearch({ pattern: 'function', language: 'javascript' }, FIXTURES_DIR);
     assert.ok(Array.isArray(results));
   });
 
-  it('throws on invalid pattern', () => {
-    assert.throws(() => astSearch('', FIXTURES_DIR), /non-empty/);
+  it('throws on invalid pattern', async () => {
+    await assert.rejects(() => astSearch('', FIXTURES_DIR), /non-empty/);
   });
 
-  it('throws on unsupported language', () => {
-    assert.throws(
+  it('throws on unsupported language', async () => {
+    await assert.rejects(
       () => astSearch({ pattern: 'fn', language: 'rust' }, FIXTURES_DIR),
       /Unsupported language/
     );
   });
 
-  it('returns results with all required fields', () => {
-    const results = astSearch('function', FIXTURES_DIR);
+  it('returns results with all required fields', async () => {
+    const results = await astSearch('function', FIXTURES_DIR);
     for (const r of results) {
       assert.ok(typeof r.file === 'string');
       assert.ok(typeof r.startLine === 'number');

@@ -9,6 +9,7 @@ let conversationHistory = [] // [{role, content, ts}]
 let projectSettings = null  // context settings for active project
 let compactorInstalled = false
 let permMode = 'auto-edit' // 'auto-edit' or 'default'
+let currentTodos = [] // persisted todo list for active session
 
 // ── init ──────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', async () => {
@@ -270,7 +271,8 @@ async function loadSessions(preferredId) {
     activeSessionType = (sess && sess.type) || 'vibe'
     document.getElementById('sessionSelect').value = target
     conversationHistory = await window.app.getSessionMsgs(activeProjectId, target)
-    restoreChat()
+    await restoreChatFromSnapshot()
+    await restoreTodos()
   } else {
     activeSessionId = null; activeSessionType = 'vibe'; conversationHistory = []; clearChatOutput()
   }
@@ -288,17 +290,22 @@ function renderSessionSelect(sessions) {
 
 async function switchSession(id) {
   if (!id || !activeProjectId) return
+  // Save current session's chat snapshot before switching
+  await saveChatSnapshot()
   activeSessionId = id
   const sessions = await window.app.listSessions(activeProjectId)
   const sess = sessions.find(s => s.id === id)
   activeSessionType = (sess && sess.type) || 'vibe'
   conversationHistory = await window.app.getSessionMsgs(activeProjectId, id)
-  restoreChat()
+  await restoreChatFromSnapshot()
+  await restoreTodos()
   updateSessionInfo()
 }
 
 async function newSession(sessionType) {
   if (!activeProjectId) { appendMsg('system', '⚠️ Select a project first.'); return }
+  // Save current session's chat snapshot before creating new one
+  await saveChatSnapshot()
   const sessions = await window.app.listSessions(activeProjectId)
   const type = sessionType || 'vibe'
   const prefix = type === 'spec' ? 'Spec' : 'Vibe'
@@ -364,6 +371,13 @@ function clearChatOutput() {
   if (todoPanel) { todoPanel.style.display = 'none'; todoPanel.classList.remove('collapsed') }
   const todoPanelBody = document.getElementById('todoPanelBody')
   if (todoPanelBody) todoPanelBody.innerHTML = ''
+  currentTodos = []
+
+  // Clear persisted snapshot and todos for this session
+  if (activeProjectId && activeSessionId) {
+    window.app.saveSessionSnapshot(activeProjectId, activeSessionId, null)
+    window.app.saveSessionTodos(activeProjectId, activeSessionId, [])
+  }
 
   // Reset the stats bar
   const statsBar = document.getElementById('agentStats')
@@ -408,6 +422,50 @@ function restoreChat() {
     }
   }
   scrollOutput()
+}
+
+/** Save the current chat HTML + todo state as a snapshot for the active session */
+async function saveChatSnapshot() {
+  if (!activeProjectId || !activeSessionId) return
+  const out = document.getElementById('agentOutput')
+  if (!out) return
+  // Don't snapshot the empty "Let's build" picker
+  if (out.querySelector('.build-picker')) return
+  const snapshot = out.innerHTML
+  if (snapshot) {
+    await window.app.saveSessionSnapshot(activeProjectId, activeSessionId, snapshot)
+  }
+}
+
+/** Restore chat from a rich HTML snapshot, falling back to plain message replay */
+async function restoreChatFromSnapshot() {
+  if (!activeProjectId || !activeSessionId) {
+    restoreChat()
+    return
+  }
+  const snapshot = await window.app.getSessionSnapshot(activeProjectId, activeSessionId)
+  if (snapshot) {
+    const out = document.getElementById('agentOutput')
+    out.innerHTML = snapshot
+    scrollOutput()
+  } else {
+    restoreChat()
+  }
+}
+
+/** Restore persisted todos for the active session */
+async function restoreTodos() {
+  if (!activeProjectId || !activeSessionId) return
+  const todos = await window.app.getSessionTodos(activeProjectId, activeSessionId)
+  currentTodos = todos || []
+  if (currentTodos.length > 0) {
+    updateTodoPanel(currentTodos, 'restored')
+  } else {
+    const todoPanel = document.getElementById('todoPanel')
+    if (todoPanel) { todoPanel.style.display = 'none' }
+    const todoPanelBody = document.getElementById('todoPanelBody')
+    if (todoPanelBody) todoPanelBody.innerHTML = ''
+  }
 }
 
 async function saveToHistory(role, content) {
@@ -704,6 +762,8 @@ async function sendAgentMode(prompt) {
         if (lastText) saveToHistory('assistant', lastText)
         if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
         showPreviewButton(respId)
+        // Persist the rich chat snapshot (tool blocks, thinking, etc.)
+        saveChatSnapshot()
         if (!agentFinished) {
           agentFinished = true
           updateStatusBar('idle')
@@ -1257,6 +1317,12 @@ function updateTodoPanel(todos, status) {
   if (!panel || !body) return
 
   panel.style.display = 'block'
+
+  // Persist todos to session storage
+  currentTodos = todos
+  if (activeProjectId && activeSessionId) {
+    window.app.saveSessionTodos(activeProjectId, activeSessionId, todos)
+  }
 
   const done = todos.filter(t => t.status === 'completed' || t.status === 'done').length
   const total = todos.length

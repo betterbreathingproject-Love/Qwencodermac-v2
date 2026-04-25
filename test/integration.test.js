@@ -149,8 +149,8 @@ describe('7.2.1 Module-level round-trip for each channel', () => {
     }
   });
 
-  it('ast-search: search project files and get results', () => {
-    const results = astSearch('function', path.join(__dirname, 'fixtures'));
+  it('ast-search: search project files and get results', async () => {
+    const results = await astSearch('function', path.join(__dirname, 'fixtures'));
     assert.ok(Array.isArray(results));
     // fixtures/sample.js should have function declarations
     if (results.length > 0) {

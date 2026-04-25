@@ -3,8 +3,8 @@ const { spawn, execSync } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 const http = require('http')
-const { QwenBridge, WindowSink } = require('./qwen-bridge')
-const { listProjects, createProject, openProject, deleteProject, getHistory, appendHistory, clearHistory, buildProjectContext, getSettings, saveSettings, DEFAULT_SETTINGS, listSessions, createSession, renameSession, deleteSession, getSessionMessages, appendSessionMessage, clearSessionMessages, setSessionMessages } = require('./projects')
+const { DirectBridge, WindowSink } = require('./direct-bridge')
+const { listProjects, createProject, openProject, deleteProject, getHistory, appendHistory, clearHistory, buildProjectContext, getSettings, saveSettings, DEFAULT_SETTINGS, listSessions, createSession, renameSession, deleteSession, getSessionMessages, appendSessionMessage, clearSessionMessages, setSessionMessages, getSessionTodos, saveSessionTodos, getSessionChatSnapshot, saveSessionChatSnapshot } = require('./projects')
 const compactor = require('./compactor')
 const { parseTaskGraph, printTaskGraph } = require('./task-graph')
 const { Orchestrator } = require('./orchestrator')
@@ -90,7 +90,7 @@ function createWindow() {
   })
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'))
   mainWindow.on('closed', () => { stopServer(); mainWindow = null })
-  qwenBridge = new QwenBridge(new WindowSink(mainWindow))
+  qwenBridge = new DirectBridge(new WindowSink(mainWindow))
 }
 
 // ── IPC: server ───────────────────────────────────────────────────────────────
@@ -261,6 +261,12 @@ ipcMain.handle('get-session-messages', (_, projectId, sessionId) => getSessionMe
 ipcMain.handle('append-session-message', (_, projectId, sessionId, message) => appendSessionMessage(projectId, sessionId, message))
 ipcMain.handle('clear-session-messages', (_, projectId, sessionId) => { clearSessionMessages(projectId, sessionId); return { ok: true } })
 ipcMain.handle('set-session-messages', (_, projectId, sessionId, messages) => setSessionMessages(projectId, sessionId, messages))
+
+// ── IPC: session todos & chat snapshot ────────────────────────────────────────
+ipcMain.handle('get-session-todos', (_, projectId, sessionId) => getSessionTodos(projectId, sessionId))
+ipcMain.handle('save-session-todos', (_, projectId, sessionId, todos) => saveSessionTodos(projectId, sessionId, todos))
+ipcMain.handle('get-session-chat-snapshot', (_, projectId, sessionId) => getSessionChatSnapshot(projectId, sessionId))
+ipcMain.handle('save-session-chat-snapshot', (_, projectId, sessionId, snapshot) => saveSessionChatSnapshot(projectId, sessionId, snapshot))
 
 // ── IPC: context settings ─────────────────────────────────────────────────────
 ipcMain.handle('get-settings', (_, projectId) => getSettings(projectId))

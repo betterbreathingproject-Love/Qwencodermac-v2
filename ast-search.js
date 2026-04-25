@@ -2,7 +2,9 @@
 
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
+const fsPromises = require('node:fs/promises');
 const path = require('node:path');
+const { Worker } = require('node:worker_threads');
 
 // --- Language detection ---
 
@@ -21,6 +23,46 @@ function detectLanguage(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   return EXTENSION_MAP[ext] || null;
 }
+
+// --- File content cache with TTL ---
+
+const DEFAULT_CACHE_TTL = 30_000; // 30 seconds
+const BATCH_SIZE = 50; // parallel file read concurrency
+
+class FileCache {
+  constructor(ttl = DEFAULT_CACHE_TTL) {
+    this._cache = new Map();
+    this._ttl = ttl;
+  }
+
+  get(filePath) {
+    const entry = this._cache.get(filePath);
+    if (!entry) return null;
+    if (Date.now() - entry.timestamp > this._ttl) {
+      this._cache.delete(filePath);
+      return null;
+    }
+    return entry.content;
+  }
+
+  set(filePath, content) {
+    this._cache.set(filePath, { content, timestamp: Date.now() });
+  }
+
+  clear() {
+    this._cache.clear();
+  }
+
+  get size() {
+    return this._cache.size;
+  }
+
+  setTTL(ttl) {
+    this._ttl = ttl;
+  }
+}
+
+const fileCache = new FileCache();
 
 // --- Backend detection ---
 
@@ -89,8 +131,6 @@ function validatePattern(pattern, language) {
   }
 
   // Check for invalid regex if used in builtin/ripgrep mode
-  // For ast-grep patterns, most strings are valid structural patterns
-  // We just do basic sanity checks
   if (pattern.includes('\0')) {
     return { valid: false, error: 'Pattern must not contain null bytes' };
   }
@@ -216,47 +256,7 @@ function getGlobsForLanguage(language) {
   }
 }
 
-
-// --- Built-in Node.js fallback ---
-
-function builtinSearch(pattern, cwd, language) {
-  const results = [];
-  let regex;
-  try {
-    regex = new RegExp(pattern, 'g');
-  } catch (_) {
-    // If pattern is not valid regex, use it as a literal string
-    regex = new RegExp(escapeRegex(pattern), 'g');
-  }
-
-  const extensions = language ? getExtensionsForLanguage(language) : SUPPORTED_EXTENSIONS;
-  const files = listFilesRecursive(cwd, extensions);
-
-  for (const filePath of files) {
-    try {
-      const content = fs.readFileSync(filePath, 'utf8');
-      const fileLines = content.split('\n');
-
-      for (let i = 0; i < fileLines.length; i++) {
-        regex.lastIndex = 0;
-        const match = regex.exec(fileLines[i]);
-        if (match) {
-          results.push({
-            file: path.relative(cwd, filePath),
-            startLine: i + 1,
-            endLine: i + 1,
-            snippet: fileLines[i].trimEnd(),
-            matchedPattern: match[0],
-          });
-        }
-      }
-    } catch (_) {
-      // Skip files that can't be read
-    }
-  }
-
-  return results;
-}
+// --- Helper functions ---
 
 function listFilesRecursive(dir, extensions) {
   const results = [];
@@ -306,9 +306,94 @@ function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// --- Main search function ---
+// --- Async built-in search with parallel reads, cache, and worker threads ---
 
-function astSearch(searchPattern, cwd) {
+/**
+ * Read files in parallel batches, using cache when available.
+ * Returns array of { filePath, content, relativePath }.
+ */
+async function readFilesBatched(files, cwd) {
+  const results = [];
+  for (let i = 0; i < files.length; i += BATCH_SIZE) {
+    const batch = files.slice(i, i + BATCH_SIZE);
+    const settled = await Promise.allSettled(
+      batch.map(async (filePath) => {
+        const relativePath = path.relative(cwd, filePath);
+
+        // Check cache first
+        const cached = fileCache.get(filePath);
+        if (cached !== null) {
+          return { filePath, content: cached, relativePath };
+        }
+
+        const content = await fsPromises.readFile(filePath, 'utf8');
+        fileCache.set(filePath, content);
+        return { filePath, content, relativePath };
+      })
+    );
+    for (const result of settled) {
+      if (result.status === 'fulfilled') {
+        results.push(result.value);
+      }
+      // Skip files that can't be read (rejected promises)
+    }
+  }
+  return results;
+}
+
+/**
+ * Run regex matching in a worker thread.
+ * Returns array of search result objects.
+ */
+function runWorkerSearch(files, pattern, flags) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(__dirname, 'search-worker.js'), {
+      workerData: { files, pattern, flags },
+    });
+    worker.on('message', (msg) => resolve(msg.results));
+    worker.on('error', reject);
+    worker.on('exit', (code) => {
+      if (code !== 0) reject(new Error(`Worker exited with code ${code}`));
+    });
+  });
+}
+
+/**
+ * Async builtin search — reads files in parallel batches with caching,
+ * then dispatches regex matching to a worker thread.
+ */
+async function builtinSearch(pattern, cwd, language) {
+  let regexPattern;
+  try {
+    new RegExp(pattern, 'g');
+    regexPattern = pattern;
+  } catch (_) {
+    regexPattern = escapeRegex(pattern);
+  }
+
+  const extensions = language ? getExtensionsForLanguage(language) : SUPPORTED_EXTENSIONS;
+  const filePaths = listFilesRecursive(cwd, extensions);
+
+  if (filePaths.length === 0) return [];
+
+  // Read all files async with caching
+  const fileContents = await readFilesBatched(filePaths, cwd);
+
+  if (fileContents.length === 0) return [];
+
+  // Dispatch regex matching to worker thread
+  const workerFiles = fileContents.map(({ content, relativePath }) => ({
+    content,
+    relativePath,
+  }));
+
+  const results = await runWorkerSearch(workerFiles, regexPattern, 'g');
+  return results;
+}
+
+// --- Main search function (now async) ---
+
+async function astSearch(searchPattern, cwd) {
   const pattern = typeof searchPattern === 'string' ? searchPattern : searchPattern.pattern;
   const language = typeof searchPattern === 'string' ? null : (searchPattern.language || null);
   const fileGlob = typeof searchPattern === 'string' ? null : (searchPattern.fileGlob || null);
@@ -337,15 +422,15 @@ function astSearch(searchPattern, cwd) {
 
 function getSupportedPatterns() {
   return [
-    { construct: 'function_declaration', language: 'javascript', pattern: 'function $NAME($$$PARAMS) { $$$ }', description: 'Match function declarations' },
-    { construct: 'arrow_function', language: 'javascript', pattern: 'const $NAME = ($$$PARAMS) => $BODY', description: 'Match arrow function assignments' },
-    { construct: 'class_declaration', language: 'javascript', pattern: 'class $NAME { $$$ }', description: 'Match class declarations' },
+    { construct: 'function_declaration', language: 'javascript', pattern: 'function $NAME($$PARAMS) { $$ }', description: 'Match function declarations' },
+    { construct: 'arrow_function', language: 'javascript', pattern: 'const $NAME = ($$PARAMS) => $BODY', description: 'Match arrow function assignments' },
+    { construct: 'class_declaration', language: 'javascript', pattern: 'class $NAME { $$ }', description: 'Match class declarations' },
     { construct: 'import_statement', language: 'javascript', pattern: 'import $NAME from "$SOURCE"', description: 'Match default imports' },
     { construct: 'require_call', language: 'javascript', pattern: 'require("$MODULE")', description: 'Match require calls' },
-    { construct: 'async_function', language: 'javascript', pattern: 'async function $NAME($$$PARAMS) { $$$ }', description: 'Match async function declarations' },
-    { construct: 'function_def', language: 'python', pattern: 'def $NAME($$$PARAMS): $$$BODY', description: 'Match Python function definitions' },
-    { construct: 'class_def', language: 'python', pattern: 'class $NAME: $$$BODY', description: 'Match Python class definitions' },
-    { construct: 'interface', language: 'typescript', pattern: 'interface $NAME { $$$ }', description: 'Match TypeScript interface declarations' },
+    { construct: 'async_function', language: 'javascript', pattern: 'async function $NAME($$PARAMS) { $$ }', description: 'Match async function declarations' },
+    { construct: 'function_def', language: 'python', pattern: 'def $NAME($$PARAMS): $$BODY', description: 'Match Python function definitions' },
+    { construct: 'class_def', language: 'python', pattern: 'class $NAME: $$BODY', description: 'Match Python class definitions' },
+    { construct: 'interface', language: 'typescript', pattern: 'interface $NAME { $$ }', description: 'Match TypeScript interface declarations' },
     { construct: 'type_alias', language: 'typescript', pattern: 'type $NAME = $TYPE', description: 'Match TypeScript type aliases' },
   ];
 }
@@ -372,4 +457,7 @@ module.exports = {
   detectLanguage,
   EXTENSION_MAP,
   SUPPORTED_EXTENSIONS,
+  // New exports for cache management
+  fileCache,
+  FileCache,
 };

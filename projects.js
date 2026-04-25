@@ -166,6 +166,40 @@ function setSessionMessages(projectId, sessionId, messages) {
   return messages
 }
 
+// ── todo persistence ──────────────────────────────────────────────────────────
+function getSessionTodos(projectId, sessionId) {
+  const p = sessionPath(projectId, sessionId)
+  try { return JSON.parse(fs.readFileSync(p, 'utf-8')).todos || [] } catch { return [] }
+}
+
+function saveSessionTodos(projectId, sessionId, todos) {
+  const p = sessionPath(projectId, sessionId)
+  let data
+  try { data = JSON.parse(fs.readFileSync(p, 'utf-8')) } catch { data = { name: 'Session', created: Date.now(), messages: [] } }
+  data.todos = todos
+  data.lastUsed = Date.now()
+  ensureDir(path.dirname(p))
+  fs.writeFileSync(p, JSON.stringify(data, null, 2))
+  return todos
+}
+
+// ── chat snapshot persistence ─────────────────────────────────────────────────
+function getSessionChatSnapshot(projectId, sessionId) {
+  const p = sessionPath(projectId, sessionId)
+  try { return JSON.parse(fs.readFileSync(p, 'utf-8')).chatSnapshot || null } catch { return null }
+}
+
+function saveSessionChatSnapshot(projectId, sessionId, snapshot) {
+  const p = sessionPath(projectId, sessionId)
+  let data
+  try { data = JSON.parse(fs.readFileSync(p, 'utf-8')) } catch { data = { name: 'Session', created: Date.now(), messages: [] } }
+  data.chatSnapshot = snapshot
+  data.lastUsed = Date.now()
+  ensureDir(path.dirname(p))
+  fs.writeFileSync(p, JSON.stringify(data, null, 2))
+  return snapshot
+}
+
 // ── legacy history (backward compat) ──────────────────────────────────────────
 function getHistory(projectId) {
   const histPath = path.join(PROJECTS_DIR, projectId, 'history.json')
@@ -245,4 +279,6 @@ module.exports = {
   getSettings, saveSettings, DEFAULT_SETTINGS,
   listSessions, createSession, renameSession, deleteSession,
   getSessionMessages, appendSessionMessage, clearSessionMessages, setSessionMessages,
+  getSessionTodos, saveSessionTodos,
+  getSessionChatSnapshot, saveSessionChatSnapshot,
 }

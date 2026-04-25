@@ -65,13 +65,13 @@ function arbitraryInvalidPattern() {
 describe('Property-based tests for ast-search.js', () => {
   // 4.5.1 Property 8: Search result completeness
   // **Validates: Requirements 5.3**
-  it('Property 8: search result completeness — all fields present', () => {
-    fc.assert(
-      fc.property(
+  it('Property 8: search result completeness — all fields present', async () => {
+    await fc.assert(
+      fc.asyncProperty(
         arbitraryValidSearchPattern(),
         arbitraryLanguage(),
-        (pattern, language) => {
-          const results = builtinSearch(pattern, FIXTURES_DIR, language);
+        async (pattern, language) => {
+          const results = await builtinSearch(pattern, FIXTURES_DIR, language);
 
           for (const result of results) {
             // file must be a non-empty string
