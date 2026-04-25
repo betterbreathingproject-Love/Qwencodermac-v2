@@ -166,14 +166,23 @@ async function executeTool(name, args, cwd, browserInstance) {
         return { result: entries.join('\n') }
       }
       case 'bash': {
-        const out = execSync(args.command, {
-          cwd,
-          encoding: 'utf-8',
-          timeout: 30000,
-          maxBuffer: 1024 * 1024,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        })
-        return { result: out || '(no output)' }
+        try {
+          const out = execSync(args.command, {
+            cwd,
+            encoding: 'utf-8',
+            timeout: 120000,
+            maxBuffer: 2 * 1024 * 1024,
+            stdio: ['pipe', 'pipe', 'pipe'],
+          })
+          return { result: out || '(no output)' }
+        } catch (execErr) {
+          // execSync throws on non-zero exit — capture stdout+stderr
+          const stdout = execErr.stdout || ''
+          const stderr = execErr.stderr || ''
+          const combined = (stdout + '\n' + stderr).trim()
+          const exitCode = execErr.status ?? 1
+          return { error: `Command failed (exit ${exitCode}):\n${combined || execErr.message}` }
+        }
       }
       case 'search_files': {
         const searchPath = args.path ? path.resolve(cwd, args.path) : cwd
@@ -278,7 +287,25 @@ class DirectBridge {
     for (let turn = 0; turn < maxTurns; turn++) {
       if (this._aborted) return
 
-      const { text, toolCalls, usage, finishReason } = await this._streamCompletion(messages, cwd, model)
+      // Retry on transient connection errors (ECONNRESET, ECONNREFUSED)
+      let completion = null
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          completion = await this._streamCompletion(messages, cwd, model)
+          break
+        } catch (err) {
+          const code = err.code || ''
+          const isTransient = code === 'ECONNRESET' || code === 'ECONNREFUSED' || code === 'EPIPE'
+          if (isTransient && attempt < 2) {
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Connection error (${code}), retrying in ${(attempt + 1)}s...` })
+            await new Promise(r => setTimeout(r, (attempt + 1) * 1000))
+            continue
+          }
+          throw err
+        }
+      }
+
+      const { text, toolCalls, usage, finishReason } = completion
 
       // Send usage stats
       if (usage) {
@@ -335,7 +362,12 @@ class DirectBridge {
         // Execute
         const result = await executeTool(fnName, fnArgs, cwd, this._browserInstance)
         const isError = !!result.error
-        const content = result.error || result.result
+        let content = result.error || result.result
+
+        // Truncate large tool outputs to avoid blowing up the context window
+        if (content && content.length > 30000) {
+          content = content.slice(0, 30000) + '\n\n... [truncated — output was ' + (content.length / 1024).toFixed(0) + 'KB]'
+        }
 
         // Emit tool-result event
         this.send('qwen-event', {
