@@ -14,6 +14,9 @@ This feature adds Playwright video recording and Telegram bot integration to Qwe
 - **Recording_Directory**: The local filesystem directory where Playwright video recordings are stored (default: `./recordings`).
 - **Bot_Token**: The Telegram Bot API token used to authenticate with the Telegram API.
 - **Agent_Session**: A single end-to-end run of the DirectBridge agent loop triggered by a Telegram command, including all tool calls and the resulting video recording.
+- **Live_Status_Message**: A Telegram message that is edited in-place (via `editMessageText`) to show real-time agent progress without flooding the chat with new messages.
+- **Tool_Event**: A structured event emitted by the DirectBridge agent loop each time a tool is called, containing the tool name, arguments summary, and result summary.
+- **Progress_Ticker**: The component that listens to Tool_Events during an Agent_Session and updates the Live_Status_Message at a throttled rate.
 
 ## Requirements
 
@@ -127,7 +130,22 @@ This feature adds Playwright video recording and Telegram bot integration to Qwe
 4. THE IPC layer SHALL expose a `telegram:qr-code` handler that returns the QR code data URL or null.
 5. WHEN the Telegram bot receives a message or a job completes, THE IPC layer SHALL emit a `telegram:event` message to the renderer process with the event type and payload.
 
-### Requirement 10: Video Recording Cleanup
+### Requirement 10: Live Agent Status Updates in Telegram
+
+**User Story:** As a user, I want to see a live updating status message in Telegram showing what the agent is currently doing, what it has already done, and what it plans to do next, so that I can follow along remotely without waiting for the job to finish.
+
+#### Acceptance Criteria
+
+1. WHEN an Agent_Session starts, THE Progress_Ticker SHALL send an initial Live_Status_Message to the Telegram chat showing the job prompt and a "starting..." indicator.
+2. WHEN a tool is called during an Agent_Session, THE Progress_Ticker SHALL update the Live_Status_Message via `editMessageText` to reflect the tool name and a one-line summary of its arguments (e.g. `🔧 bash: npm test`, `🌐 browser_navigate: https://example.com`).
+3. THE Live_Status_Message SHALL display three sections: **Done** (completed tool calls with ✅), **Now** (the currently executing tool with a spinner emoji), and **Next** (the agent's stated next step if available from its last text output).
+4. THE Progress_Ticker SHALL throttle `editMessageText` calls to at most one update every 2 seconds to avoid Telegram rate limits (30 edits/minute per chat).
+5. WHEN an Agent_Session completes, THE Progress_Ticker SHALL make a final edit to the Live_Status_Message replacing the spinner with ✅ and appending the total tool call count and elapsed time.
+6. IF an Agent_Session fails, THE Progress_Ticker SHALL make a final edit to the Live_Status_Message replacing the spinner with ❌ and appending the error summary.
+7. THE Live_Status_Message SHALL cap the **Done** section to the 10 most recent completed steps to keep the message a readable length, with a count of earlier steps shown as `(+N more above)`.
+8. WHEN the `/history` command is received, THE Remote_Controller SHALL reply with the full tool call history of the most recent Agent_Session as a formatted text message, including tool name, argument summary, result summary, and timestamp for each step.
+
+### Requirement 11: Video Recording Cleanup
 
 **User Story:** As a user, I want old video recordings to be cleaned up automatically, so that they do not consume excessive disk space.
 
