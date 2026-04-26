@@ -5,6 +5,3 @@ __pycache__/
 dist/
 out/
 node_modules
-
-# Bundled binaries (downloaded during build)
-resources/bin/

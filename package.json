@@ -36,6 +36,7 @@
       "orchestrator.js",
       "task-graph.js",
       "spec-workflow.js",
+      "lsp-manager.js",
       "projects.js",
       "server.py",
       "renderer/**/*",
@@ -53,7 +54,7 @@
       {
         "from": "resources/bin/",
         "to": "bin/",
-        "filter": ["sg", "ast-grep"]
+        "filter": ["sg", "ast-grep", "agent-lsp"]
       }
     ]
   },
