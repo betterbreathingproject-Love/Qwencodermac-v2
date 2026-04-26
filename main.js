@@ -267,6 +267,9 @@ function createWindow() {
   lspManager.on('status-change', ({ oldStatus, newStatus }) => {
     mainWindow?.webContents.send('lsp-status-change', { oldStatus, newStatus })
   })
+  lspManager.on('diagnostics', ({ path: filePath, diagnostics }) => {
+    mainWindow?.webContents.send('lsp-diagnostics', { path: filePath, diagnostics })
+  })
   qwenBridge.setLspManager(lspManager)
   agentPool.setLspStatusGetter(() => lspManager?.getStatus()?.status)
   if (currentProject) {

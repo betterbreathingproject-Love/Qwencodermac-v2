@@ -121,6 +121,8 @@ contextBridge.exposeInMainWorld('app', {
   lspSymbols:        (p)    => ipcRenderer.invoke('lsp-symbols', p),
   onLspStatusChange: (cb)   => ipcRenderer.on('lsp-status-change', (_, d) => cb(d)),
   offLspStatusChange:()     => ipcRenderer.removeAllListeners('lsp-status-change'),
+  onLspDiagnostics:  (cb)   => ipcRenderer.on('lsp-diagnostics', (_, d) => cb(d)),
+  offLspDiagnostics: ()     => ipcRenderer.removeAllListeners('lsp-diagnostics'),
 
   // events
   onTaskStatusEvent:(cb)    => ipcRenderer.on('task-status-event', (_, d) => cb(d)),

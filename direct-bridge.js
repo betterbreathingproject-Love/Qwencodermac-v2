@@ -556,6 +556,27 @@ async function buildProjectContext(cwd, taskGraphPath, lspManager) {
     if (symbolParts.length > 0) {
       parts.push(`## Symbol Outlines\n${symbolParts.join('\n')}`)
     }
+
+    // 4. Active diagnostics — show the agent what's currently broken
+    try {
+      const entryFilePaths = detectEntryPoints(cwd)
+      const diagSummary = await lspManager.getProjectDiagnosticsSummary(entryFilePaths)
+      if (diagSummary.totalErrors > 0 || diagSummary.totalWarnings > 0) {
+        const diagLines = []
+        for (const f of diagSummary.files) {
+          const rel = path.relative(cwd, f.path)
+          for (const e of f.errors) {
+            diagLines.push(`  ❌ ${rel}:${e.line || '?'} — ${e.message}`)
+          }
+          for (const w of f.warnings.slice(0, 3)) { // cap warnings per file
+            diagLines.push(`  ⚠️ ${rel}:${w.line || '?'} — ${w.message}`)
+          }
+        }
+        if (diagLines.length > 0) {
+          parts.push(`## Active Diagnostics (${diagSummary.totalErrors} errors, ${diagSummary.totalWarnings} warnings)\n${diagLines.join('\n')}`)
+        }
+      }
+    } catch { /* diagnostics fetch failed — skip */ }
   }
 
   // Cap total to 4000 chars
@@ -1095,6 +1116,32 @@ class DirectBridge {
     try {
       // Wait for the server to be ready before starting the agent loop
       await this._waitForServer()
+
+      // Gather active diagnostics and inject into context so the agent
+      // is aware of existing errors before it starts working
+      if (this._lspManager?.getStatus().status === 'ready') {
+        try {
+          const entryFiles = detectEntryPoints(workDir)
+          const diagSummary = await this._lspManager.getProjectDiagnosticsSummary(entryFiles)
+          if (diagSummary.totalErrors > 0) {
+            const diagLines = []
+            for (const f of diagSummary.files) {
+              const rel = path.relative(workDir, f.path)
+              for (const e of f.errors) {
+                diagLines.push(`  ${rel}:${e.line || '?'} — ${e.message}`)
+              }
+            }
+            if (diagLines.length > 0) {
+              messages.push({
+                role: 'system',
+                content: `[LSP] The project currently has ${diagSummary.totalErrors} error(s) detected by the language server:\n${diagLines.slice(0, 30).join('\n')}\n\nKeep these in mind — fix them if relevant to the user's request, or avoid making them worse.`,
+              })
+              this.send('qwen-event', { type: 'lsp-activity', action: 'session-diagnostics', count: diagSummary.totalErrors })
+            }
+          }
+        } catch { /* diagnostics pre-fetch failed — proceed without */ }
+      }
+
       await this._agentLoop(messages, workDir, model)
       this.send('qwen-event', { type: 'session-end' })
     } catch (err) {
@@ -1506,6 +1553,48 @@ class DirectBridge {
           }
         }
 
+        // Post-bash diagnostic hook: detect file-writing bash commands and check diagnostics
+        // Catches heredocs (cat > file), redirects (echo > file), sed -i, etc.
+        if (fnName === 'bash' && !isError && this._lspManager?.getStatus().status === 'ready') {
+          const cmd = fnArgs.command || ''
+          const fileWritePatterns = [
+            /cat\s+>\s*(\S+)/,           // cat > file
+            />\s*(\S+)/,                  // echo "x" > file
+            /tee\s+(\S+)/,               // tee file
+            /sed\s+-i[^\s]*\s+.*\s+(\S+)/, // sed -i 's/x/y/' file
+            /cp\s+\S+\s+(\S+)/,          // cp src dest
+            /mv\s+\S+\s+(\S+)/,          // mv src dest
+            /<<\s*'?\w+'?\s*\n?.*?>\s*(\S+)/s, // heredoc > file
+          ]
+          const touchedFiles = new Set()
+          for (const pat of fileWritePatterns) {
+            const m = cmd.match(pat)
+            if (m && m[1]) {
+              const fp = m[1].replace(/['"]/g, '')
+              if (fp && !fp.startsWith('-') && /\.\w+$/.test(fp)) {
+                touchedFiles.add(path.resolve(cwd, fp))
+              }
+            }
+          }
+          for (const fp of touchedFiles) {
+            try {
+              this.send('qwen-event', { type: 'lsp-activity', action: 'diagnostics-check', path: fp })
+              const diags = await Promise.race([
+                this._lspManager.call('lsp_get_diagnostics', { path: fp }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('diagnostic timeout')), 8000))
+              ])
+              if (diags?.errors?.length > 0) {
+                const errorDiags = diags.errors.filter(d => d.severity === 'error')
+                if (errorDiags.length > 0) {
+                  const diagLines = errorDiags.map(d => `  ${d.severity || 'error'}: ${d.message} (line ${d.line || '?'})`).join('\n')
+                  content += `\n\n⚠️ LSP detected errors in ${path.relative(cwd, fp)}:\n${diagLines}`
+                  this.send('qwen-event', { type: 'lsp-activity', action: 'diagnostics-errors', path: fp, count: errorDiags.length })
+                }
+              }
+            } catch { /* skip */ }
+          }
+        }
+
         // Truncate large tool outputs to avoid blowing up the context window.
         // For local models, keep outputs lean to preserve generation quality.
         // read_file gets a higher limit since the model needs full file content to work with it.
@@ -1833,6 +1922,9 @@ When the user asks you to make changes to code:
 When the user asks you to browse, research, or interact with websites, use the browser tools directly. Call browser_navigate first, then use other browser tools to interact with the page.
 
 Be direct and efficient. Make the changes the user asks for. Do NOT just describe what you plan to do — actually do it using tools. If you need to read a file, call read_file. If you need to fix code, call edit_file. Always take action, never just narrate.
+
+**LSP Integration:**
+You have a language server running that automatically checks your edits for errors. After every write_file, edit_file, or file-modifying bash command, the LSP will report any new errors or warnings directly in the tool result. Pay attention to these — if you see "⚠️ Edit introduced errors" or "⚠️ LSP detected errors", fix them before moving on. You can also proactively call lsp_get_diagnostics on any file to check its health.
 
 IMPORTANT: When writing code files, avoid putting backticks, complex template literals, or deeply nested quotes in write_file content. If the file contains such characters, prefer using bash with heredoc syntax instead.
 

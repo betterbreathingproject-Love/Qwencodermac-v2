@@ -1231,6 +1231,8 @@ async function sendAgentMode(prompt, opts = {}) {
           statusLine.textContent = `✅ LSP: ${filePath} — clean`
         } else if (action === 'diagnostics-errors') {
           statusLine.textContent = `⚠️ LSP: ${filePath} — ${ev.count} error${ev.count > 1 ? 's' : ''} found`
+        } else if (action === 'session-diagnostics') {
+          statusLine.textContent = `📋 LSP: ${ev.count} existing error${ev.count > 1 ? 's' : ''} detected — agent is aware`
         }
         break
       }
@@ -3733,6 +3735,45 @@ async function initLspStatus() {
     window.app.lspStatus().then(setLspStatus).catch(() => {})
   })
 
+  // Listen for push diagnostics from the LSP server
+  if (window.app.onLspDiagnostics) {
+    window.app.onLspDiagnostics(({ path: filePath, diagnostics }) => {
+      const errors = diagnostics.filter(d => d.severity === 'error' || d.severity === 1)
+      const warnings = diagnostics.filter(d => d.severity === 'warning' || d.severity === 2)
+      const statusLine = document.getElementById('statusLine')
+      const lspDot = document.getElementById('lspDot')
+
+      // Flash the LSP chip on diagnostic updates
+      if (lspDot && (errors.length > 0 || warnings.length > 0)) {
+        lspDot.style.background = errors.length > 0 ? 'var(--red)' : '#f5a623'
+        lspDot.style.boxShadow = `0 0 6px ${errors.length > 0 ? 'var(--red)' : '#f5a623'}`
+        setTimeout(() => {
+          const colors = { ready: 'var(--green)', starting: '#f5a623', degraded: '#f5a623', error: 'var(--red)', stopped: 'var(--muted)' }
+          lspDot.style.background = colors[currentLspStatus] || 'var(--muted)'
+          lspDot.style.boxShadow = ''
+        }, 2000)
+      }
+
+      // Update status line with diagnostic info
+      if (statusLine && filePath) {
+        const shortPath = filePath.split('/').slice(-2).join('/')
+        if (errors.length > 0) {
+          statusLine.textContent = `⚠️ LSP: ${shortPath} — ${errors.length} error${errors.length > 1 ? 's' : ''}${warnings.length > 0 ? `, ${warnings.length} warning${warnings.length > 1 ? 's' : ''}` : ''}`
+        } else if (warnings.length > 0) {
+          statusLine.textContent = `⚡ LSP: ${shortPath} — ${warnings.length} warning${warnings.length > 1 ? 's' : ''}`
+        }
+      }
+
+      // Store diagnostics for popover display
+      if (!window._lspDiagnosticsMap) window._lspDiagnosticsMap = new Map()
+      if (errors.length > 0 || warnings.length > 0) {
+        window._lspDiagnosticsMap.set(filePath, { errors, warnings })
+      } else {
+        window._lspDiagnosticsMap.delete(filePath)
+      }
+    })
+  }
+
   // Wire click handler for LSP status popover
   const chip = document.getElementById('lspChip')
   if (chip) chip.addEventListener('click', toggleLspPopover)
@@ -3779,6 +3820,18 @@ async function toggleLspPopover() {
     pop.innerHTML += `<div class="lsp-popover-empty" style="color:var(--red)">Error: ${esc(data.errorMessage)}</div>`
   } else {
     pop.innerHTML += '<div class="lsp-popover-empty">No language servers active</div>'
+  }
+
+  // Show active diagnostics in the popover
+  if (window._lspDiagnosticsMap && window._lspDiagnosticsMap.size > 0) {
+    pop.innerHTML += '<div class="lsp-popover-header" style="margin-top:4px">Diagnostics</div>'
+    for (const [fp, { errors, warnings }] of window._lspDiagnosticsMap) {
+      const shortPath = fp.split('/').slice(-2).join('/')
+      const counts = []
+      if (errors.length > 0) counts.push(`${errors.length} error${errors.length > 1 ? 's' : ''}`)
+      if (warnings.length > 0) counts.push(`${warnings.length} warning${warnings.length > 1 ? 's' : ''}`)
+      pop.innerHTML += `<div class="lsp-popover-item"><div><div class="lsp-popover-name" style="color:${errors.length > 0 ? 'var(--red)' : '#f5a623'}">${esc(shortPath)}</div><div class="lsp-popover-langs">${esc(counts.join(', '))}</div></div></div>`
+    }
   }
 
   chip.appendChild(pop)

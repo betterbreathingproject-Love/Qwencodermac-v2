@@ -61,6 +61,8 @@ class LspManager extends EventEmitter {
     this._restarting = false;
     this._initHandler = null;
     this._lastError = null;
+    this._diagnosticsCache = new Map(); // path → { diagnostics, timestamp }
+    this._diagnosticsCacheTTL = 10000;  // 10s TTL for cached diagnostics
   }
 
   /**
@@ -204,8 +206,11 @@ class LspManager extends EventEmitter {
           if (!line) continue;
           try {
             const msg = JSON.parse(line);
-            // Skip server-sent notifications (no id)
-            if (msg.id == null) continue;
+            // Handle server-sent notifications (no id) — diagnostics, progress, etc.
+            if (msg.id == null) {
+              this._handleNotification(msg);
+              continue;
+            }
             // Route id=0 to the init handler during startup
             if (msg.id === 0 && this._initHandler) {
               this._initHandler(msg);
@@ -471,6 +476,98 @@ class LspManager extends EventEmitter {
       this._lastError = `Max restarts (${this._maxRestarts}) reached — agent-lsp keeps crashing`;
       this._setStatus('error');
     }
+  }
+
+  /**
+   * Handle a server-sent JSON-RPC notification (messages with no id).
+   * Emits events so the renderer and agent bridge can react to diagnostics, progress, etc.
+   */
+  _handleNotification(msg) {
+    const method = msg.method || '';
+    const params = msg.params || {};
+
+    if (method === 'textDocument/publishDiagnostics' || method === 'notifications/diagnostics') {
+      const uri = params.uri || '';
+      const filePath = uri.startsWith('file://') ? uri.slice(7) : uri;
+      const diagnostics = params.diagnostics || [];
+
+      // Cache the diagnostics
+      this._diagnosticsCache.set(filePath, {
+        diagnostics,
+        timestamp: Date.now(),
+      });
+
+      this.emit('diagnostics', { path: filePath, diagnostics });
+    } else if (method === 'notifications/progress' || method === '$/progress') {
+      this.emit('progress', params);
+    }
+    // Other notifications are logged for debugging
+    else if (method) {
+      console.info(`[LspManager] Notification: ${method}`);
+    }
+  }
+
+  /**
+   * Get cached diagnostics for a file (avoids round-trip if fresh).
+   * Falls back to calling lsp_get_diagnostics if cache is stale or missing.
+   */
+  async getDiagnostics(filePath) {
+    // Check cache first
+    const cached = this._diagnosticsCache.get(filePath);
+    if (cached && (Date.now() - cached.timestamp) < this._diagnosticsCacheTTL) {
+      return cached.diagnostics;
+    }
+
+    // Fall back to explicit call
+    if (this._status !== 'ready' && this._status !== 'degraded') return [];
+    try {
+      const result = await this.call('lsp_get_diagnostics', { path: filePath });
+      const diags = result?.errors || result?.diagnostics || [];
+      this._diagnosticsCache.set(filePath, { diagnostics: diags, timestamp: Date.now() });
+      return diags;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Gather diagnostics for all recently-touched files in the project.
+   * Returns a summary object: { files: [{ path, errors, warnings }], totalErrors, totalWarnings }
+   */
+  async getProjectDiagnosticsSummary(filePaths) {
+    if (this._status !== 'ready' && this._status !== 'degraded') {
+      return { files: [], totalErrors: 0, totalWarnings: 0 };
+    }
+
+    const files = [];
+    let totalErrors = 0;
+    let totalWarnings = 0;
+
+    for (const fp of filePaths.slice(0, 20)) { // cap to 20 files
+      try {
+        const diags = await this.getDiagnostics(fp);
+        const errors = diags.filter(d => d.severity === 'error' || d.severity === 1);
+        const warnings = diags.filter(d => d.severity === 'warning' || d.severity === 2);
+        if (errors.length > 0 || warnings.length > 0) {
+          files.push({
+            path: fp,
+            errors: errors.map(d => ({ message: d.message, line: d.line || d.range?.start?.line })),
+            warnings: warnings.map(d => ({ message: d.message, line: d.line || d.range?.start?.line })),
+          });
+          totalErrors += errors.length;
+          totalWarnings += warnings.length;
+        }
+      } catch { /* skip file */ }
+    }
+
+    return { files, totalErrors, totalWarnings };
+  }
+
+  /**
+   * Clear the diagnostics cache (e.g. on project switch).
+   */
+  clearDiagnosticsCache() {
+    this._diagnosticsCache.clear();
   }
 
   /**
