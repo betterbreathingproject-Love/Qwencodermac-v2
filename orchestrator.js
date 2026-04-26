@@ -86,6 +86,14 @@ class Orchestrator extends EventEmitter {
 
     this._setState('running');
 
+    // Reset stale in_progress nodes from a previous interrupted session.
+    // When the graph is loaded from a persisted tasks.md, nodes marked [-]
+    // come in as 'in_progress' but no agent is actually running them.
+    // Without this reset, _runLoop sees _hasInProgressNodes() === true,
+    // assumes they're being handled by active dispatches, and breaks out
+    // — causing the orchestrator to hang silently.
+    this._resetStaleInProgressNodes();
+
     // Find start node: ^start marker or first root node
     if (this._state === 'running' && !this._hasInProgressNodes()) {
       const startNodeId = this._findStartNodeId();
@@ -100,6 +108,19 @@ class Orchestrator extends EventEmitter {
 
     // Main execution loop
     await this._runLoop();
+  }
+
+  /**
+   * Reset any in_progress nodes back to not_started.
+   * Called on start() to recover from a previous interrupted session where
+   * the tasks.md was persisted with [-] nodes that have no active dispatch.
+   */
+  _resetStaleInProgressNodes() {
+    for (const [id, node] of this._graph.nodes) {
+      if (node.status === 'in_progress') {
+        this._updateNodeStatus(id, 'not_started');
+      }
+    }
   }
 
   _findStartNodeId() {
