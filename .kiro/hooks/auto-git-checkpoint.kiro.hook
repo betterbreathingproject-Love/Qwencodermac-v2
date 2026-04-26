@@ -1,0 +1,14 @@
+{
+  "enabled": true,
+  "name": "Auto Git Checkpoint",
+  "description": "Automatically commits all changes to git after the agent finishes working, creating a checkpoint that can be reverted if something breaks. Uses a timestamped commit message for easy identification.",
+  "version": "1",
+  "when": {
+    "type": "agentStop"
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "git add -A && git diff --cached --quiet || git commit -m \"checkpoint: agent changes $(date '+%Y-%m-%d %H:%M')\"",
+    "timeout": 15
+  }
+}
