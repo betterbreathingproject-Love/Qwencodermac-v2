@@ -3528,7 +3528,7 @@ function updateStatusBar() {}
 
 // ── LSP status indicator ──────────────────────────────────────────────────────
 
-function setLspStatus({ status, servers = [] }) {
+function setLspStatus({ status, servers = [], errorMessage = null }) {
   const chip = document.getElementById('lspChip')
   const dot  = document.getElementById('lspDot')
   const txt  = document.getElementById('lspText')
@@ -3552,7 +3552,7 @@ function setLspStatus({ status, servers = [] }) {
     ready:    `LSP ready — ${servers.map(s => s.name).join(', ') || 'no language servers'}`,
     starting: 'LSP starting...',
     degraded: 'LSP degraded — no language servers found on PATH',
-    error:    'LSP error — check logs',
+    error:    `LSP error — ${errorMessage || 'check logs'}`,
     stopped:  'LSP not available — install agent-lsp binary',
   }
   chip.title = tooltips[status] || 'LSP unknown'
@@ -3622,6 +3622,8 @@ async function toggleLspPopover() {
       const langs = (srv.languages || []).join(', ') || 'unknown'
       pop.innerHTML += `<div class="lsp-popover-item"><div><div class="lsp-popover-name">${esc(srv.name)}</div><div class="lsp-popover-langs">${esc(langs)}</div></div></div>`
     }
+  } else if (data.status === 'error' && data.errorMessage) {
+    pop.innerHTML += `<div class="lsp-popover-empty" style="color:var(--red)">Error: ${esc(data.errorMessage)}</div>`
   } else {
     pop.innerHTML += '<div class="lsp-popover-empty">No language servers active</div>'
   }

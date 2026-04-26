@@ -1206,6 +1206,19 @@ class DirectBridge {
           continue
         }
 
+        // Detect code blocks in text output — model is writing code as text
+        // instead of using write_file/edit_file tools. Nudge it to use tools.
+        const codeBlockPattern = /```[\w]*\n[\s\S]{200,}/
+        if (text && codeBlockPattern.test(text) && turn < maxTurns - 1) {
+          this.send('qwen-event', { type: 'system', subtype: 'debug', data: 'Code block detected in text output — nudging model to use file tools' })
+          messages.push({ role: 'assistant', content: text })
+          messages.push({
+            role: 'system',
+            content: 'STOP. You just output a code block as text. The user CANNOT copy-paste from chat. You MUST use write_file or edit_file tools to create/modify files. Take the code you just wrote and call write_file NOW to save it to a file. Do NOT repeat the code as text.',
+          })
+          continue
+        }
+
         // If the model described what it plans to do but didn't actually do it,
         // nudge it to take action. Look for planning language without tool calls.
         const planningPatterns = /\b(let me|i('ll| will)|let's|i need to|i should|first.*then|i'm going to)\b/i

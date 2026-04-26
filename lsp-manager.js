@@ -60,6 +60,7 @@ class LspManager extends EventEmitter {
     this._restartTimer = null;
     this._restarting = false;
     this._initHandler = null;
+    this._lastError = null;
   }
 
   /**
@@ -72,6 +73,7 @@ class LspManager extends EventEmitter {
       servers: [...this._servers],
       projectDir: this._projectDir,
       uptime: this._startedAt ? Date.now() - this._startedAt : null,
+      errorMessage: this._lastError || null,
     };
   }
 
@@ -237,6 +239,7 @@ class LspManager extends EventEmitter {
         console.error('[LspManager] Spawn error:', err.message);
         this._process = null;
         this._startedAt = null;
+        this._lastError = err.message;
         // Reject all pending requests
         for (const [id, pending] of this._pendingRequests) {
           pending.reject(new Error('agent-lsp process error'));
@@ -266,11 +269,25 @@ class LspManager extends EventEmitter {
 
       // --- MCP initialization handshake ---
       // agent-lsp requires initialize → notifications/initialized before tools/call
+      // Use a longer timeout (20s) since the binary may need time to start language
+      // servers and index the project on first launch.
       await new Promise((resolve, reject) => {
-        const initTimeout = setTimeout(() => reject(new Error('MCP init timed out')), 10000);
+        const INIT_TIMEOUT_MS = 20000;
+        const initTimeout = setTimeout(() => {
+          console.error(`[LspManager] MCP init timed out after ${INIT_TIMEOUT_MS}ms — agent-lsp may be stuck or slow to start`);
+          reject(new Error(`MCP init timed out after ${INIT_TIMEOUT_MS / 1000}s`));
+        }, INIT_TIMEOUT_MS);
+
+        // If the process exits before init completes, reject immediately
+        const onEarlyExit = (code, signal) => {
+          clearTimeout(initTimeout);
+          reject(new Error(`agent-lsp exited during init (code=${code}, signal=${signal})`));
+        };
+        proc.once('close', onEarlyExit);
 
         // Wait for the initialize response
         const onceReady = (msg) => {
+          proc.removeListener('close', onEarlyExit);
           if (msg.id === 0 && msg.result) {
             clearTimeout(initTimeout);
             // Send initialized notification
@@ -304,6 +321,7 @@ class LspManager extends EventEmitter {
       } else {
         this._setStatus('ready');
       }
+      this._lastError = null;
 
       // Reset restart count on successful start (only for fresh starts, not auto-restarts)
       if (!this._restarting) {
@@ -315,6 +333,7 @@ class LspManager extends EventEmitter {
       console.error('[LspManager] Failed to spawn agent-lsp:', err.message);
       this._process = null;
       this._startedAt = null;
+      this._lastError = err.message;
       this._setStatus('error');
       this.emit('error', { message: err.message });
     }
@@ -449,6 +468,7 @@ class LspManager extends EventEmitter {
       }, backoffDelay);
     } else {
       console.error(`[LspManager] Max restarts (${this._maxRestarts}) reached; giving up`);
+      this._lastError = `Max restarts (${this._maxRestarts}) reached — agent-lsp keeps crashing`;
       this._setStatus('error');
     }
   }
