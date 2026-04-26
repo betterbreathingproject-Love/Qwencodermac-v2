@@ -53,22 +53,22 @@
 ## Task 8: Add Compression Stats Badge to Renderer
 - [x] 8.1 Add module-level `_lastCompactionStats` variable in `renderer/app.js`
 - [x] 8.2 Add `compaction-stats` case to the `onQwenEvent` handler to store stats and trigger stats bar update
-- [~] 8.3 Add compaction stat chip to `updateAgentStatsBar()` showing reduction percentage and engine type icon
-- [~] 8.4 Add tooltip with detailed stats (original tokens, compressed tokens, reduction %, engine, stages) on hover
-- [~] 8.5 Use distinct CSS class for builtin engine badge (amber) vs python engine badge (green)
+- [x] 8.3 Add compaction stat chip to `updateAgentStatsBar()` showing reduction percentage and engine type icon
+- [x] 8.4 Add tooltip with detailed stats (original tokens, compressed tokens, reduction %, engine, stages) on hover
+- [x] 8.5 Use distinct CSS class for builtin engine badge (amber) vs python engine badge (green)
 
 ## Task 9: Property-Based Tests
-- [~] 9.1 Create `test/compactor.property.test.js` with fast-check generators for messages, tool names, content types
-- [~] 9.2 Property 1: Error fallback preserves original content — mock bridge to fail, verify output equals input
-- [~] 9.3 Property 5: Fallback to builtin on Python failure — mock bridge to error, verify `engine: 'builtin'` in result
-- [~] 9.4 Property 7: Content-type detection — generate random tool names and content, verify mapping correctness
-- [~] 9.5 Property 9: Builtin code compression removes comments and collapses blanks
-- [~] 9.6 Property 11: Builtin log compression folds repeated lines
-- [~] 9.7 Property 13: Builtin stats format consistency — verify stats fields for any input
+- [x] 9.1 Create `test/compactor.property.test.js` with fast-check generators for messages, tool names, content types
+- [x] 9.2 Property 1: Error fallback preserves original content — mock bridge to fail, verify output equals input
+- [x] 9.3 Property 5: Fallback to builtin on Python failure — mock bridge to error, verify `engine: 'builtin'` in result
+- [x] 9.4 Property 7: Content-type detection — generate random tool names and content, verify mapping correctness
+- [x] 9.5 Property 9: Builtin code compression removes comments and collapses blanks
+- [x] 9.6 Property 11: Builtin log compression folds repeated lines
+- [x] 9.7 Property 13: Builtin stats format consistency — verify stats fields for any input
 
 ## Task 10: Unit Tests
-- [~] 10.1 Create `test/compactor.test.js` with unit tests for `detectContentType()` examples
-- [~] 10.2 Add unit tests for `rewind_context` tool registration in TOOL_DEFS
-- [~] 10.3 Add unit tests for builtin compactor type-specific strategies (code, json, log, search)
-- [~] 10.4 Add unit tests for compression notice format
-- [~] 10.5 Add unit tests for compactor module fallback behavior with mocked execFile
+- [x] 10.1 Create `test/compactor.test.js` with unit tests for `detectContentType()` examples
+- [x] 10.2 Add unit tests for `rewind_context` tool registration in TOOL_DEFS
+- [x] 10.3 Add unit tests for builtin compactor type-specific strategies (code, json, log, search)
+- [x] 10.4 Add unit tests for compression notice format
+- [x] 10.5 Add unit tests for compactor module fallback behavior with mocked execFile
