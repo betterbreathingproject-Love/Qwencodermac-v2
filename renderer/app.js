@@ -10,6 +10,7 @@ let projectSettings = null  // context settings for active project
 let compactorInstalled = false
 let currentLspStatus = 'stopped' // track LSP status globally
 let permMode = 'auto-edit' // 'auto-edit' or 'default'
+let agentRole = 'general' // current agent role for vibe mode
 let currentTodos = [] // persisted todo list for active session
 
 // ── init ──────────────────────────────────────────────────────────────────────
@@ -83,6 +84,21 @@ function togglePermMode() {
     btn.className = 'perm-toggle auto'
     btn.title = 'Agent auto-approves all changes'
   }
+}
+
+// ── agent role picker ─────────────────────────────────────────────────────────
+const ROLE_DESCRIPTIONS = {
+  'general': 'Full toolset — code, search, browse, LSP diagnostics',
+  'implementation': 'Focused on writing code — LSP diagnostics, definitions, code actions',
+  'explore': 'Read-only exploration — symbols, hover, definitions, references',
+  'context-gather': 'Gather context — symbols, definitions, references, type info',
+  'code-search': 'Search-focused — symbols, references, workspace search, call hierarchy',
+}
+
+function changeAgentRole(role) {
+  agentRole = role
+  const sel = document.getElementById('roleSelect')
+  if (sel) sel.title = ROLE_DESCRIPTIONS[role] || 'Agent role'
 }
 
 // ── server ────────────────────────────────────────────────────────────────────
@@ -1649,6 +1665,7 @@ async function sendAgentMode(prompt, opts = {}) {
     prompt,
     cwd: currentProject || undefined,
     permissionMode: permMode,
+    agentRole: agentRole,
     model: loadedModelId,
     images: sentImages.length > 0 ? sentImages : undefined,
     conversationHistory: historyForAgent.length > 0 ? historyForAgent : undefined,

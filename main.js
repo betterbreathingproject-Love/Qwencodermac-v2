@@ -237,9 +237,13 @@ ipcWatcher.register(ipcMain, ctx)
 ipcLsp.register(ipcMain, ctx)
 
 // ── IPC: Qwen Code agent ─────────────────────────────────────────────────────
-ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, model, images, conversationHistory, samplingParams, taskGraphPath }) => {
+ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, model, images, conversationHistory, samplingParams, taskGraphPath }) => {
   if (!qwenBridge) return { error: 'not ready' }
   if (typeof prompt !== 'string' || !prompt.trim()) return { error: 'prompt is required' }
+  // Apply user-selected agent role (controls LSP tool set and system prompt)
+  if (agentRole && agentRole !== qwenBridge._agentRole) {
+    qwenBridge._agentRole = agentRole
+  }
   qwenBridge.run({ prompt, cwd: cwd || currentProject, permissionMode, model, images, conversationHistory, samplingParams, taskGraphPath }).catch(() => {})
   return { ok: true }
 })

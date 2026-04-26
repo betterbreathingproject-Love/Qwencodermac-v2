@@ -1862,7 +1862,18 @@ class DirectBridge {
 
   _buildSystemPrompt(cwd, permissionMode) {
     const autoEdit = permissionMode === 'auto-edit'
+
+    // Role-specific focus preamble
+    const rolePreambles = {
+      'explore': 'You are in EXPLORE mode. Focus on understanding the codebase — read files, list directories, search for patterns, and use LSP to navigate symbols, definitions, and references. Do NOT modify any files unless explicitly asked. Your job is to investigate and report.',
+      'context-gather': 'You are in CONTEXT GATHER mode. Focus on finding the specific files and code sections relevant to the user\'s question. Use LSP to trace definitions, references, and type information. Provide focused context, not broad overviews.',
+      'code-search': 'You are in CODE SEARCH mode. Focus on finding specific code patterns, function definitions, usages, and call hierarchies. Use LSP workspace symbol search and call hierarchy tools. Report exact file paths, line numbers, and code snippets.',
+      'implementation': 'You are in IMPLEMENTATION mode. Focus on writing and modifying code. Use LSP diagnostics to validate your changes, check definitions before refactoring, and apply code actions when available. Be surgical and verify your work.',
+    }
+    const rolePreamble = rolePreambles[this._agentRole] || ''
+
     return `You are a powerful coding assistant. You help users write, edit, debug, and understand code.
+${rolePreamble ? '\n' + rolePreamble + '\n' : ''}
 
 Working directory: ${cwd}
 

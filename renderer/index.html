@@ -391,6 +391,13 @@
           <div class="agent-input-area">
             <div class="agent-input-row">
               <button class="perm-toggle auto" id="permToggle" onclick="togglePermMode()" title="Toggle auto-approve / ask before changes">🔓 Auto</button>
+              <select class="role-select" id="roleSelect" onchange="changeAgentRole(this.value)" title="Agent role — controls which LSP tools and system prompt the agent uses">
+                <option value="general">⚡ General</option>
+                <option value="implementation">🔨 Implementation</option>
+                <option value="explore">🔍 Explore</option>
+                <option value="context-gather">📚 Context</option>
+                <option value="code-search">🔎 Code Search</option>
+              </select>
             </div>
             <div class="agent-input-box">
               <div class="input-wrap" style="position:relative">

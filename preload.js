@@ -20,7 +20,7 @@ contextBridge.exposeInMainWorld('app', {
   onStreamFinishReason: (cb) => ipcRenderer.on('chat-stream-finish-reason', (_, d) => cb(d)),
 
   // qwen code agent
-  qwenRun:        (p)       => ipcRenderer.invoke('qwen-run', { prompt: p.prompt, cwd: p.cwd, permissionMode: p.permissionMode, model: p.model, images: p.images, conversationHistory: p.conversationHistory, samplingParams: p.samplingParams, taskGraphPath: p.taskGraphPath }),
+  qwenRun:        (p)       => ipcRenderer.invoke('qwen-run', { prompt: p.prompt, cwd: p.cwd, permissionMode: p.permissionMode, agentRole: p.agentRole, model: p.model, images: p.images, conversationHistory: p.conversationHistory, samplingParams: p.samplingParams, taskGraphPath: p.taskGraphPath }),
   qwenInterrupt:  ()        => ipcRenderer.invoke('qwen-interrupt'),
   onQwenEvent:    (cb)      => ipcRenderer.on('qwen-event', (_, d) => cb(d)),
   offQwenEvents:  ()        => ipcRenderer.removeAllListeners('qwen-event'),

@@ -140,6 +140,9 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .perm-toggle.auto { border-color: rgba(52,211,153,0.3); color: #34d399; background: rgba(52,211,153,0.08); }
 .perm-toggle.ask { border-color: rgba(251,191,36,0.3); color: #fbbf24; background: rgba(251,191,36,0.08); }
 .perm-toggle:hover { opacity: 0.85; }
+.role-select { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 5px 8px; font-size: 11px; cursor: pointer; font-weight: 500; transition: all 0.15s; appearance: none; -webkit-appearance: none; padding-right: 20px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 6px center; }
+.role-select:focus { outline: none; border-color: var(--accent); }
+.role-select option { background: var(--bg2); color: var(--text); }
 .live-stats { font-size: 10px; color: var(--muted); font-family: 'SF Mono', monospace; }
 .btn-send { padding: 8px 18px; background: var(--accent); color: #fff; border: none; border-radius: 8px; font-size: 12px; font-weight: 500; cursor: pointer; align-self: flex-end; white-space: nowrap; }
 .btn-send:hover:not(:disabled) { background: var(--accent2); }
