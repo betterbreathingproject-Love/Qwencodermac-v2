@@ -1089,7 +1089,7 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         return { result: entries.join('\n') }
       }
       case 'bash': {
-        if (typeof args.command !== 'string' || !args.command.trim()) return { error: 'command must be a non-empty string' }
+        if (typeof args.command !== 'string' || !args.command.trim()) return { error: 'command must be a non-empty string. Usage: bash({"command": "ls -la"})' }
         // Block obviously dangerous commands
         const dangerous = /\b(rm\s+-rf\s+\/|mkfs|dd\s+if=|:(){ :|fork\s*bomb)\b/i
         if (dangerous.test(args.command)) return { error: 'Command blocked for safety' }
@@ -1120,7 +1120,7 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         return { result: `Updated todo list: ${done}/${todos.length} complete` }
       }
       case 'search_files': {
-        if (typeof args.pattern !== 'string' || !args.pattern.trim()) return { error: 'pattern must be a non-empty string' }
+        if (typeof args.pattern !== 'string' || !args.pattern.trim()) return { error: 'pattern must be a non-empty string. Usage: search_files({"pattern": "searchTerm", "path": ".", "include": "*.js"})' }
         const searchV = validatePath(args.path || '.')
         if (searchV.error) return searchV
         const searchPath = searchV.resolved
@@ -1915,9 +1915,12 @@ class DirectBridge {
 
       // If too many consecutive errors, nudge the model
       if (consecutiveErrors >= 3) {
+        // Build a summary of recent errors to help the model understand what's going wrong
+        const recentToolMsgs = messages.slice(-6).filter(m => m.role === 'tool' && m.content && m.content.includes('must be'))
+        const errorSummary = recentToolMsgs.map(m => m.content.split('.')[0]).join('; ')
         messages.push({
           role: 'system',
-          content: 'WARNING: Multiple consecutive tool errors. Double-check your tool arguments. For file tools (read_file, write_file, edit_file), the "path" parameter must be a non-empty string — e.g. read_file({"path": "src/main.js"}). Use list_dir({"path": "."}) first if you are unsure of file paths.',
+          content: `WARNING: ${consecutiveErrors} consecutive tool errors. Recent errors: ${errorSummary || 'missing required parameters'}.\n\nREMINDER — correct tool call formats:\n- read_file({"path": "file.js"})\n- write_file({"path": "file.js", "content": "..."})\n- edit_file({"path": "file.js", "old_string": "...", "new_string": "..."})\n- search_files({"pattern": "searchTerm", "path": "."})\n- bash({"command": "ls -la"})\n- list_dir({"path": "."})\n\nAll parameters shown above are REQUIRED. Do NOT omit any.`,
         })
         consecutiveErrors = 0
       }
