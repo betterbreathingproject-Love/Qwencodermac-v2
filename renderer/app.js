@@ -1130,7 +1130,9 @@ async function sendAgentMode(prompt, opts = {}) {
               raw = raw.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\\\/g, '\\')
               // Trim trailing incomplete escape or quote
               if (raw.endsWith('\\')) raw = raw.slice(0, -1)
-              if (raw.endsWith('"')) raw = raw.slice(0, -1)
+              // Strip trailing JSON closure: "} or just "
+              if (raw.endsWith('"}')) raw = raw.slice(0, -2)
+              else if (raw.endsWith('"')) raw = raw.slice(0, -1)
 
               if (bodyEl) {
                 // Detect language from file extension for syntax hint

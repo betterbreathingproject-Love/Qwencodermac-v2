@@ -200,6 +200,20 @@ const TOOL_DEFS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'rewind_context',
+      description: 'Retrieve the original uncompressed content for a previously compressed section. Use when you need full detail from a compressed tool result.',
+      parameters: {
+        type: 'object',
+        properties: {
+          key: { type: 'string', description: 'The rewind key from the compression notice' },
+        },
+        required: ['key'],
+      },
+    },
+  },
   ...BROWSER_TOOL_DEFS,
   ...WEB_TOOL_DEFS,
 ]
@@ -1062,6 +1076,14 @@ async function executeTool(name, args, cwd, browserInstance, lspManager) {
           return { result: 'No matches found.' }
         }
       }
+      case 'rewind_context': {
+        if (!args.key) return { error: 'key parameter is required' }
+        const rewindResult = await compactor.rewind(pythonPath, args.key)
+        if (rewindResult.found) {
+          return { result: rewindResult.content }
+        }
+        return { error: rewindResult.error || 'Content no longer available' }
+      }
       default:
         return { error: `Unknown tool: ${name}` }
     }
@@ -1723,12 +1745,35 @@ class DirectBridge {
           }
         }
 
-        // Truncate large tool outputs to avoid blowing up the context window.
-        // For local models, keep outputs lean to preserve generation quality.
-        // read_file gets a higher limit since the model needs full file content to work with it.
+        // Compress large tool outputs to avoid blowing up the context window.
+        // Uses compactor for intelligent compression; falls back to hard truncation on failure.
         const truncateLimit = fnName === 'read_file' ? 24000 : 8000
         if (content && content.length > truncateLimit) {
-          content = content.slice(0, truncateLimit) + '\n\n... [truncated — output was ' + (content.length / 1024).toFixed(0) + 'KB. Use more specific queries or read smaller sections.]'
+          const contentType = detectContentType(fnName, content)
+          let compressed = false
+          try {
+            const compResult = await compactor.compressText(pythonPath, content, contentType)
+            if (compResult.stats?.compressed) {
+              content = compResult.compressed || compResult.text || content
+              // Append compression notice
+              const pct = compResult.stats.reduction_pct ?? 0
+              const origTokens = compResult.stats.original_tokens ?? 0
+              let notice = `\n\n[compressed: ${pct}% reduction, original ${origTokens} tokens`
+              if (compResult.stats.rewind_key) {
+                notice += `, rewind key: ${compResult.stats.rewind_key}`
+              }
+              notice += ']'
+              content += notice
+              compressed = true
+              // Emit compaction-stats event for tool result compression
+              this.send('qwen-event', { type: 'compaction-stats', data: { ...compResult.stats, source: 'tool-result', tool: fnName, contentType } })
+            }
+          } catch {
+            // compressText failed — fall through to hard truncation
+          }
+          if (!compressed) {
+            content = content.slice(0, truncateLimit) + '\n\n... [truncated — output was ' + (content.length / 1024).toFixed(0) + 'KB. Use more specific queries or read smaller sections.]'
+          }
         }
 
         // For screenshots, send the full content (with base64 image) to the renderer
@@ -1941,7 +1986,16 @@ class DirectBridge {
                     toolCalls[idx].function.name = tc.function.name
                   }
                 }
-                if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments
+                if (tc.function?.arguments) {
+                  // Our MLX server sends full JSON args each delta (not fragments),
+                  // so replace rather than append. Detect by checking if it starts with '{'
+                  const incoming = tc.function.arguments
+                  if (incoming.startsWith('{')) {
+                    toolCalls[idx].function.arguments = incoming
+                  } else {
+                    toolCalls[idx].function.arguments += incoming
+                  }
+                }
 
                 // Stream tool call progress to the renderer so users can see
                 // what the agent is generating in real-time (file content, commands, etc.)

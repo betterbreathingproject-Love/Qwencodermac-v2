@@ -24,26 +24,26 @@
 - [x] 3.4 Default to `'auto'` when no mapping or override matches
 
 ## Task 4: Replace `trimMessages` with Compactor in Agent Loop
-- [-] 4.1 Import compactor module in `direct-bridge.js` and resolve `pythonPath` (reuse existing pattern from the codebase)
-- [~] 4.2 Replace the `trimMessages()` call block in `_agentLoop()` with `compactor.compressMessages()` call, passing `{ dedup: true, keepRecent: 4 }`
-- [~] 4.3 Preserve system message and last 4 messages by passing them as options to the compactor
-- [~] 4.4 Add secondary fallback: if compactor result still exceeds `MAX_INPUT_TOKENS`, call `trimMessages()`
-- [~] 4.5 Emit `qwen-event` with `type: 'compaction-stats'` after successful compression
+- [x] 4.1 Import compactor module in `direct-bridge.js` and resolve `pythonPath` (reuse existing pattern from the codebase)
+- [x] 4.2 Replace the `trimMessages()` call block in `_agentLoop()` with `compactor.compressMessages()` call, passing `{ dedup: true, keepRecent: 4 }`
+- [x] 4.3 Preserve system message and last 4 messages by passing them as options to the compactor
+- [x] 4.4 Add secondary fallback: if compactor result still exceeds `MAX_INPUT_TOKENS`, call `trimMessages()`
+- [x] 4.5 Emit `qwen-event` with `type: 'compaction-stats'` after successful compression
 
 ## Task 5: Replace Hard Truncation with Compactor for Tool Results
-- [~] 5.1 Replace the `content.slice(0, truncateLimit)` block with a call to `compactor.compressText(pythonPath, content, contentType)`
-- [~] 5.2 Call `detectContentType(fnName, content)` before compression to determine the content-type hint
-- [~] 5.3 Append compression notice to compressed content: `\n\n[compressed: {reduction_pct}% reduction, original {original_tokens} tokens, rewind key: {key}]`
-- [~] 5.4 Fall back to existing `content.slice(0, truncateLimit)` if `compressText()` fails or returns uncompressed
-- [~] 5.5 Emit `qwen-event` with `type: 'compaction-stats'` for tool result compression
+- [x] 5.1 Replace the `content.slice(0, truncateLimit)` block with a call to `compactor.compressText(pythonPath, content, contentType)`
+- [x] 5.2 Call `detectContentType(fnName, content)` before compression to determine the content-type hint
+- [x] 5.3 Append compression notice to compressed content: `\n\n[compressed: {reduction_pct}% reduction, original {original_tokens} tokens, rewind key: {key}]`
+- [x] 5.4 Fall back to existing `content.slice(0, truncateLimit)` if `compressText()` fails or returns uncompressed
+- [x] 5.5 Emit `qwen-event` with `type: 'compaction-stats'` for tool result compression
 
 ## Task 6: Register `rewind_context` Tool and Handle Calls
-- [~] 6.1 Add `rewind_context` tool definition to `TOOL_DEFS` array with `key` parameter
-- [~] 6.2 Add `rewind_context` case to `executeTool()` switch that calls `compactor.rewind(pythonPath, key)`
-- [~] 6.3 Return error message when rewind key is not found or expired
+- [x] 6.1 Add `rewind_context` tool definition to `TOOL_DEFS` array with `key` parameter
+- [x] 6.2 Add `rewind_context` case to `executeTool()` switch that calls `compactor.rewind(pythonPath, key)`
+- [x] 6.3 Return error message when rewind key is not found or expired
 
 ## Task 7: Upgrade Builtin JS Compactor with Type-Aware Strategies
-- [~] 7.1 Update `compressText()` to accept and dispatch on `contentType` parameter before falling back to head/tail truncation
+- [-] 7.1 Update `compressText()` to accept and dispatch on `contentType` parameter before falling back to head/tail truncation
 - [~] 7.2 Implement code compression: remove single-line comments (`//`, `#`), collapse consecutive blank lines, remove trailing whitespace
 - [~] 7.3 Implement JSON compression: detect repeated array elements, replace with summary `{ count, schema, first }`
 - [~] 7.4 Implement log compression: fold consecutive repeated lines into single line with `[×N]` count

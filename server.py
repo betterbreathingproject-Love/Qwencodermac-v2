@@ -177,6 +177,40 @@ def parse_tool_calls(text: str):
     return tool_calls
 
 
+# ── incremental tool call parsing for streaming ──────────────────────────────
+_FUNC_NAME_RE = re.compile(r'<function=([^>]+)>')
+
+def parse_partial_tool_args(body: str) -> str:
+    """Parse completed <parameter> tags from a partial tool call body into JSON.
+    Returns the JSON-encoded arguments string built so far."""
+    args = {}
+    for pm in _PARAM_RE.finditer(body):
+        param_name = pm.group(1).strip()
+        param_value = pm.group(2).strip()
+        try:
+            args[param_name] = json.loads(param_value)
+        except (json.JSONDecodeError, ValueError):
+            args[param_name] = param_value
+
+    # Also capture a parameter that's still being written (no closing tag yet)
+    # e.g. <parameter=content>partial code here...
+    last_open = body.rfind('<parameter=')
+    if last_open != -1:
+        after = body[last_open:]
+        # Check if this parameter is NOT closed yet
+        close_pos = after.find('</parameter>')
+        if close_pos == -1:
+            # Extract name and partial value
+            name_match = re.match(r'<parameter=([^>]+)>\n?', after)
+            if name_match:
+                param_name = name_match.group(1).strip()
+                partial_val = after[name_match.end():]
+                if param_name not in args:
+                    args[param_name] = partial_val
+
+    return json.dumps(args)
+
+
 def strip_tool_calls(text: str) -> str:
     """Remove <tool_call> blocks from text to get the content portion."""
     cleaned = _TOOL_CALL_RE.sub('', text).strip()
@@ -486,17 +520,144 @@ async def chat_completions(req: ChatRequest):
                 loop.run_in_executor(None, run_stream)
 
                 accumulated = ""
+                _content_sent_len = 0       # how much of accumulated we've sent as content
+                # ── incremental tool call streaming state ─────────────────
+                _in_tool_call = False       # True once we see <tool_call>
+                _tool_call_buf = ""         # raw text inside the tool call block
+                _tc_index = 0               # tool call index counter
+                _tc_id = ""                 # current tool call id
+                _tc_func_name = ""          # function name once detected
+                _tc_name_sent = False       # whether we've sent the name delta
+                _tc_last_args_len = 0       # track how much of args we've sent
+                _tc_completed = []          # list of completed tool call chunks
+                _TOOL_OPEN = "<tool_call>"
+                _TOOL_CLOSE = "</tool_call>"
+                _PARTIAL_TAGS = ("<", "<t", "<to", "<too", "<tool",
+                                 "<tool_", "<tool_c", "<tool_ca",
+                                 "<tool_cal", "<tool_call")
+
                 while True:
                     kind, data = await queue.get()
                     if kind == "token":
                         accumulated += data
                         full_text_parts.append(data)
-                        chunk_data = {
-                            "id": cid, "object": "chat.completion.chunk",
-                            "created": created, "model": _model_id,
-                            "choices": [{"index": 0, "delta": {"content": data}, "finish_reason": None}],
-                        }
-                        yield f"data: {json.dumps(chunk_data)}\n\n"
+
+                        # ── detect tool call boundaries ───────────────────
+                        if not _in_tool_call:
+                            # Check if we've entered a tool call block
+                            tc_start = accumulated.find(_TOOL_OPEN, _content_sent_len)
+                            if tc_start != -1:
+                                _in_tool_call = True
+                                _tc_id = f"call_{uuid.uuid4().hex[:12]}"
+                                _tc_func_name = ""
+                                _tc_name_sent = False
+                                _tc_last_args_len = 0
+                                # Send any unsent content before the tool call tag
+                                unsent = accumulated[_content_sent_len:tc_start]
+                                if unsent:
+                                    chunk_data = {
+                                        "id": cid, "object": "chat.completion.chunk",
+                                        "created": created, "model": _model_id,
+                                        "choices": [{"index": 0, "delta": {"content": unsent}, "finish_reason": None}],
+                                    }
+                                    yield f"data: {json.dumps(chunk_data)}\n\n"
+                                # The tool call text starts — buffer everything after the tag
+                                _tool_call_buf = accumulated[tc_start + len(_TOOL_OPEN):]
+                            else:
+                                # Normal content token — send as content delta
+                                # But check if we might be mid-tag (e.g. "<tool" at end)
+                                tail = accumulated[-11:] if len(accumulated) >= 11 else accumulated
+                                if any(tail.endswith(pt) for pt in _PARTIAL_TAGS):
+                                    # Might be start of <tool_call> — hold this token
+                                    continue
+                                # Send all unsent content
+                                unsent = accumulated[_content_sent_len:]
+                                if unsent:
+                                    chunk_data = {
+                                        "id": cid, "object": "chat.completion.chunk",
+                                        "created": created, "model": _model_id,
+                                        "choices": [{"index": 0, "delta": {"content": unsent}, "finish_reason": None}],
+                                    }
+                                    yield f"data: {json.dumps(chunk_data)}\n\n"
+                                    _content_sent_len = len(accumulated)
+                        else:
+                            # Inside a tool call — buffer the text
+                            _tool_call_buf += data
+
+                            # Check if the tool call is complete
+                            close_pos = _tool_call_buf.find("</function>")
+                            tc_close = _tool_call_buf.find(_TOOL_CLOSE)
+
+                            # Try to extract function name if we haven't yet
+                            if not _tc_func_name:
+                                fn_match = _FUNC_NAME_RE.search(_tool_call_buf)
+                                if fn_match:
+                                    _tc_func_name = fn_match.group(1).strip()
+
+                            # Send incremental tool_calls deltas
+                            if _tc_func_name:
+                                # Get the function body (after <function=name>)
+                                fn_tag_end = _tool_call_buf.find(">", _tool_call_buf.find("<function="))
+                                func_body = _tool_call_buf[fn_tag_end + 1:] if fn_tag_end != -1 else ""
+                                # Strip closing tags from body for parsing
+                                clean_body = func_body.replace("</function>", "").replace("</tool_call>", "")
+                                current_args = parse_partial_tool_args(clean_body)
+
+                                if not _tc_name_sent:
+                                    # First delta: send name + initial args
+                                    tc_delta = {
+                                        "id": cid, "object": "chat.completion.chunk",
+                                        "created": created, "model": _model_id,
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {
+                                                "tool_calls": [{
+                                                    "index": _tc_index,
+                                                    "id": _tc_id,
+                                                    "type": "function",
+                                                    "function": {
+                                                        "name": _tc_func_name,
+                                                        "arguments": current_args,
+                                                    }
+                                                }]
+                                            },
+                                            "finish_reason": None,
+                                        }],
+                                    }
+                                    yield f"data: {json.dumps(tc_delta)}\n\n"
+                                    _tc_name_sent = True
+                                    _tc_last_args_len = len(current_args)
+                                elif len(current_args) > _tc_last_args_len:
+                                    # Subsequent delta: send only the new portion of arguments
+                                    # OpenAI format appends argument fragments
+                                    tc_delta = {
+                                        "id": cid, "object": "chat.completion.chunk",
+                                        "created": created, "model": _model_id,
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {
+                                                "tool_calls": [{
+                                                    "index": _tc_index,
+                                                    "function": {
+                                                        "arguments": current_args,
+                                                    }
+                                                }]
+                                            },
+                                            "finish_reason": None,
+                                        }],
+                                    }
+                                    yield f"data: {json.dumps(tc_delta)}\n\n"
+                                    _tc_last_args_len = len(current_args)
+
+                            # If tool call block is complete, reset for potential next one
+                            if tc_close != -1:
+                                _in_tool_call = False
+                                _tool_call_buf = ""
+                                _tc_index += 1
+                                # Check if there's content after </tool_call>
+                                after_close = accumulated[accumulated.rfind(_TOOL_CLOSE) + len(_TOOL_CLOSE):]
+                                if after_close.strip():
+                                    accumulated = after_close
                     elif kind == "stats":
                         stats_chunk = {
                             "id": cid, "object": "chat.completion.chunk",
@@ -522,16 +683,31 @@ async def chat_completions(req: ChatRequest):
                         if has_tools:
                             tool_calls = parse_tool_calls(full_text)
                             if tool_calls:
-                                tc_chunk = {
-                                    "id": cid, "object": "chat.completion.chunk",
-                                    "created": created, "model": _model_id,
-                                    "choices": [{
-                                        "index": 0,
-                                        "delta": {"tool_calls": tool_calls},
-                                        "finish_reason": "tool_calls",
-                                    }],
-                                }
-                                yield f"data: {json.dumps(tc_chunk)}\n\n"
+                                # If we already streamed tool_calls incrementally,
+                                # just send the finish_reason chunk
+                                if _tc_index > 0:
+                                    finish_chunk = {
+                                        "id": cid, "object": "chat.completion.chunk",
+                                        "created": created, "model": _model_id,
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {},
+                                            "finish_reason": "tool_calls",
+                                        }],
+                                    }
+                                    yield f"data: {json.dumps(finish_chunk)}\n\n"
+                                else:
+                                    # Fallback: send all tool_calls at once (shouldn't happen normally)
+                                    tc_chunk = {
+                                        "id": cid, "object": "chat.completion.chunk",
+                                        "created": created, "model": _model_id,
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {"tool_calls": tool_calls},
+                                            "finish_reason": "tool_calls",
+                                        }],
+                                    }
+                                    yield f"data: {json.dumps(tc_chunk)}\n\n"
                                 yield "data: [DONE]\n\n"
                                 break
 
