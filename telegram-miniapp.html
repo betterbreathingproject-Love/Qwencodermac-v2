@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>QwenCoder Agent</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root {
+  --bg: #0f0f17; --bg2: #181825; --bg3: #1e1e2e;
+  --surface: #232336; --bdr: rgba(255,255,255,.08);
+  --txt: #e2e8f0; --txt2: #8892a4; --txt3: #5a6478;
+  --acc: #4a9eff; --accg: rgba(74,158,255,.12);
+  --grn: #48bb78; --grn-bg: rgba(72,187,120,.1);
+  --red: #f56565; --red-bg: rgba(245,101,101,.1);
+  --org: #ed8936; --org-bg: rgba(237,137,54,.1);
+  --pur: #7c5cd0;
+  --r: 14px; --rs: 10px;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  background: var(--bg); color: var(--txt); min-height: 100vh;
+  -webkit-font-smoothing: antialiased; overflow-x: hidden;
+}
+
+/* ── Header ─────────────────────────────────── */
+.header {
+  position: sticky; top: 0; z-index: 100;
+  background: linear-gradient(180deg, var(--bg2) 0%, rgba(24,24,37,.96) 100%);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--bdr); padding: 16px;
+}
+.header-row { display:flex; align-items:center; gap:10px; }
+.header-logo {
+  width:36px; height:36px; border-radius:10px;
+  background: linear-gradient(135deg, var(--pur), var(--acc));
+  display:flex; align-items:center; justify-content:center;
+  font-size:18px; flex-shrink:0;
+}
+.header-info { flex:1; }
+.header-title { font-size:17px; font-weight:700; }
+.header-sub { font-size:11px; color:var(--txt2); margin-top:1px; }
+.status-pill {
+  font-size:10px; padding:4px 10px; border-radius:20px; font-weight:600;
+  border:1px solid; white-space:nowrap;
+}
+.status-pill.idle { background:var(--grn-bg); color:var(--grn); border-color:rgba(72,187,120,.25); }
+.status-pill.running { background:var(--org-bg); color:var(--org); border-color:rgba(237,137,54,.25); animation:pulse 2s infinite; }
+.status-pill.completed { background:var(--accg); color:var(--acc); border-color:rgba(74,158,255,.25); }
+.status-pill.failed { background:var(--red-bg); color:var(--red); border-color:rgba(245,101,101,.25); }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.6} }
+
+/* ── Tabs ────────────────────────────────────── */
+.tabs { display:flex; gap:4px; padding:12px 16px 0; }
+.tab {
+  flex:1; padding:8px 0; text-align:center; font-size:12px; font-weight:600;
+  color:var(--txt3); background:transparent; border:none; border-radius:8px;
+  cursor:pointer; transition:all .2s;
+}
+.tab.active { background:var(--bg3); color:var(--txt); }
+.tab:active { transform:scale(.97); }
+
+/* ── Content ─────────────────────────────────── */
+.content { padding:16px; }
+.section { margin-bottom:20px; }
+.section-label {
+  font-size:10px; font-weight:700; text-transform:uppercase;
+  letter-spacing:.8px; color:var(--txt3); margin-bottom:8px;
+}
+
+/* ── Run Tab ─────────────────────────────────── */
+.prompt-area {
+  width:100%; min-height:100px; padding:12px; border-radius:var(--rs);
+  background:var(--surface); border:1px solid var(--bdr); color:var(--txt);
+  font-size:14px; font-family:inherit; resize:vertical; outline:none;
+  transition:border-color .2s;
+}
+.prompt-area:focus { border-color:var(--acc); }
+.prompt-area::placeholder { color:var(--txt3); }
+.char-count { text-align:right; font-size:10px; color:var(--txt3); margin-top:4px; }
+
+.quick-prompts { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+.quick-chip {
+  padding:6px 12px; border-radius:20px; font-size:11px; font-weight:600;
+  background:var(--surface); border:1px solid var(--bdr); color:var(--txt2);
+  cursor:pointer; transition:all .2s; white-space:nowrap;
+}
+.quick-chip:active { transform:scale(.95); background:var(--accg); border-color:var(--acc); color:var(--acc); }
+
+.btn {
+  width:100%; padding:14px; border:none; border-radius:var(--rs);
+  font-size:15px; font-weight:700; cursor:pointer;
+  transition:all .2s; margin-top:10px;
+}
+.btn:active { transform:scale(.98); }
+.btn:disabled { opacity:.45; cursor:not-allowed; transform:none; }
+.btn-primary {
+  background:linear-gradient(135deg, var(--pur), var(--acc));
+  color:#fff;
+}
+.btn-danger {
+  background:var(--red-bg); color:var(--red);
+  border:1px solid rgba(245,101,101,.25);
+}
+.btn-secondary {
+  background:var(--surface); color:var(--txt2);
+  border:1px solid var(--bdr);
+}
+
+/* ── Job Card ────────────────────────────────── */
+.job-card {
+  background:var(--surface); border:1px solid var(--bdr);
+  border-radius:var(--r); padding:14px; margin-bottom:12px;
+}
+.job-card-header { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.job-id { font-size:12px; font-weight:700; font-family:"SF Mono",monospace; color:var(--acc); }
+.job-prompt {
+  font-size:13px; color:var(--txt2); line-height:1.5;
+  display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
+}
+.job-meta { display:flex; gap:12px; margin-top:8px; font-size:11px; color:var(--txt3); }
+
+/* ── Log / Output ────────────────────────────── */
+.log-container {
+  background:var(--surface); border:1px solid var(--bdr);
+  border-radius:var(--rs); max-height:300px; overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+}
+.log-entry {
+  padding:8px 12px; border-bottom:1px solid var(--bdr);
+  font-size:12px; line-height:1.5;
+}
+.log-entry:last-child { border-bottom:none; }
+.log-time { color:var(--txt3); font-size:10px; font-family:"SF Mono",monospace; }
+.log-text { color:var(--txt2); margin-top:2px; word-break:break-word; }
+.log-text.tool { color:var(--org); }
+.log-text.error { color:var(--red); }
+.log-text.result { color:var(--grn); }
+
+.empty-state { text-align:center; padding:40px 20px; }
+.empty-icon { font-size:40px; margin-bottom:10px; opacity:.5; }
+.empty-title { font-size:14px; font-weight:600; color:var(--txt2); margin-bottom:4px; }
+.empty-desc { font-size:12px; color:var(--txt3); line-height:1.5; }
+
+/* ── Screenshot ──────────────────────────────── */
+.screenshot-container { text-align:center; }
+.screenshot-img {
+  max-width:100%; border-radius:var(--rs); border:1px solid var(--bdr);
+  margin-top:10px;
+}
+.screenshot-placeholder {
+  padding:40px; background:var(--surface); border:1px dashed var(--bdr);
+  border-radius:var(--rs); color:var(--txt3); margin-top:10px;
+}
+
+/* ── History Tab ─────────────────────────────── */
+.history-list { display:flex; flex-direction:column; gap:8px; }
+.history-item {
+  background:var(--surface); border:1px solid var(--bdr);
+  border-radius:var(--rs); padding:12px; cursor:pointer;
+  transition:all .2s;
+}
+.history-item:active { transform:scale(.98); }
+.history-item-header { display:flex; align-items:center; gap:8px; margin-bottom:4px; }
+.history-item-prompt {
+  font-size:12px; color:var(--txt2); line-height:1.4;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+
+/* ── Spinner ─────────────────────────────────── */
+.spinner {
+  width:20px; height:20px; border:2px solid var(--bg3);
+  border-top-color:var(--acc); border-radius:50%;
+  animation:spin .7s linear infinite; display:inline-block; vertical-align:middle;
+}
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* ── Toast ───────────────────────────────────── */
+.toast {
+  position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+  padding:10px 20px; border-radius:20px; font-size:13px; font-weight:600;
+  z-index:200; opacity:0; transition:opacity .3s; pointer-events:none;
+  background:var(--bg3); color:var(--txt); border:1px solid var(--bdr);
+  box-shadow:0 8px 24px rgba(0,0,0,.4);
+}
+.toast.show { opacity:1; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+// ── Telegram Web App SDK ──────────────────────────────
+const tg = window.Telegram?.WebApp;
+if (tg) {
+  tg.ready();
+  tg.expand();
+  tg.enableClosingConfirmation();
+  if (tg.themeParams?.bg_color) {
+    document.documentElement.style.setProperty('--bg', tg.themeParams.bg_color);
+  }
+}
+
+// ── State ─────────────────────────────────────────────
+const state = {
+  tab: 'run',        // 'run' | 'monitor' | 'history'
+  jobState: 'idle',  // 'idle' | 'running' | 'completed' | 'failed'
+  jobId: null,
+  jobPrompt: '',
+  jobStartedAt: null,
+  prompt: '',
+  logs: [],
+  screenshot: null,
+  screenshotLoading: false,
+  history: [],
+  connected: false,
+};
+
+// ── API Communication ─────────────────────────────────
+// The mini app communicates with the main app via Telegram WebApp.sendData
+// or via a local WebSocket if running in dev mode.
+let ws = null;
+const WS_URL = 'ws://localhost:3847/miniapp';
+
+function connectWS() {
+  try {
+    ws = new WebSocket(WS_URL);
+    ws.onopen = () => { state.connected = true; sendCmd('status'); render(); };
+    ws.onclose = () => { state.connected = false; ws = null; setTimeout(connectWS, 3000); render(); };
+    ws.onerror = () => { ws?.close(); };
+    ws.onmessage = (ev) => {
+      try { handleMessage(JSON.parse(ev.data)); } catch {}
+    };
+  } catch { setTimeout(connectWS, 3000); }
+}
+
+function sendCmd(type, payload = {}) {
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type, ...payload }));
+  } else if (tg) {
+    tg.sendData(JSON.stringify({ type, ...payload }));
+  }
+}
+
+function handleMessage(msg) {
+  switch (msg.type) {
+    case 'status':
+      state.jobState = msg.state || 'idle';
+      state.jobId = msg.jobId || null;
+      state.jobPrompt = msg.prompt || '';
+      state.jobStartedAt = msg.startedAt || null;
+      break;
+    case 'job_started':
+      state.jobState = 'running';
+      state.jobId = msg.jobId;
+      state.jobPrompt = msg.prompt || state.prompt;
+      state.jobStartedAt = Date.now();
+      state.logs = [];
+      state.tab = 'monitor';
+      showToast('Job started');
+      break;
+    case 'job_completed':
+      state.jobState = 'completed';
+      state.history.unshift({ id: state.jobId, prompt: state.jobPrompt, state: 'completed', time: Date.now() });
+      showToast('Job completed ✓');
+      break;
+    case 'job_failed':
+      state.jobState = 'failed';
+      state.logs.push({ time: Date.now(), text: msg.error || 'Job failed', type: 'error' });
+      state.history.unshift({ id: state.jobId, prompt: state.jobPrompt, state: 'failed', time: Date.now() });
+      showToast('Job failed');
+      break;
+    case 'log':
+      state.logs.push({ time: Date.now(), text: msg.text, type: msg.logType || 'info' });
+      break;
+    case 'tool_use':
+      state.logs.push({ time: Date.now(), text: `🔧 ${msg.tool}: ${msg.summary || ''}`, type: 'tool' });
+      break;
+    case 'screenshot':
+      state.screenshot = msg.data; // base64 or URL
+      state.screenshotLoading = false;
+      break;
+    case 'input_request':
+      state.logs.push({ time: Date.now(), text: `❓ Agent asks: ${msg.question}`, type: 'info' });
+      break;
+    case 'history':
+      state.history = msg.items || [];
+      break;
+  }
+  render();
+}
+
+// ── Actions ───────────────────────────────────────────
+function runJob() {
+  const prompt = state.prompt.trim();
+  if (!prompt) return;
+  sendCmd('run', { prompt });
+  state.prompt = '';
+  render();
+}
+
+function stopJob() {
+  sendCmd('stop');
+  state.jobState = 'idle';
+  showToast('Job stopped');
+  render();
+}
+
+function requestScreenshot() {
+  state.screenshotLoading = true;
+  sendCmd('screenshot');
+  render();
+}
+
+function requestStatus() {
+  sendCmd('status');
+}
+
+// ── Quick Prompts ─────────────────────────────────────
+const QUICK_PROMPTS = [
+  'Fix all lint errors',
+  'Add error handling',
+  'Write unit tests',
+  'Refactor for readability',
+  'Add TypeScript types',
+  'Optimize performance',
+];
+
+// ── Rendering ─────────────────────────────────────────
+function render() {
+  const app = document.getElementById('app');
+  app.innerHTML = renderHeader() + renderTabs() + renderContent();
+  bindEvents();
+}
+
+function renderHeader() {
+  const stateLabel = state.jobState.charAt(0).toUpperCase() + state.jobState.slice(1);
+  return `
+    <div class="header">
+      <div class="header-row">
+        <div class="header-logo">⚡</div>
+        <div class="header-info">
+          <div class="header-title">QwenCoder Agent</div>
+          <div class="header-sub">${state.connected ? 'Connected' : 'Connecting...'}</div>
+        </div>
+        <span class="status-pill ${state.jobState}">${stateLabel}</span>
+      </div>
+    </div>`;
+}
+
+function renderTabs() {
+  const tabs = [
+    { id: 'run', label: '▶ Run' },
+    { id: 'monitor', label: '📊 Monitor' },
+    { id: 'history', label: '📋 History' },
+  ];
+  return `<div class="tabs">${tabs.map(t =>
+    `<button class="tab ${state.tab === t.id ? 'active' : ''}" data-tab="${t.id}">${t.label}</button>`
+  ).join('')}</div>`;
+}
+
+function renderContent() {
+  switch (state.tab) {
+    case 'run': return renderRunTab();
+    case 'monitor': return renderMonitorTab();
+    case 'history': return renderHistoryTab();
+    default: return '';
+  }
+}
+
+function renderRunTab() {
+  const isRunning = state.jobState === 'running';
+  return `
+    <div class="content">
+      <div class="section">
+        <div class="section-label">Quick Actions</div>
+        <div class="quick-prompts">
+          ${QUICK_PROMPTS.map(p => `<button class="quick-chip" data-prompt="${esc(p)}">${esc(p)}</button>`).join('')}
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-label">Prompt</div>
+        <textarea class="prompt-area" id="prompt-input" placeholder="Describe what you want the agent to do..."
+          ${isRunning ? 'disabled' : ''}>${esc(state.prompt)}</textarea>
+        <div class="char-count">${state.prompt.length} chars</div>
+      </div>
+      <button class="btn btn-primary" id="btn-run" ${isRunning || !state.prompt.trim() ? 'disabled' : ''}>
+        ${isRunning ? '<span class="spinner"></span> Running...' : '🚀 Run Agent'}
+      </button>
+      ${isRunning ? `<button class="btn btn-danger" id="btn-stop">⏹ Stop Job</button>` : ''}
+    </div>`;
+}
+
+function renderMonitorTab() {
+  if (state.jobState === 'idle' && state.logs.length === 0) {
+    return `
+      <div class="content">
+        <div class="empty-state">
+          <div class="empty-icon">📡</div>
+          <div class="empty-title">No active job</div>
+          <div class="empty-desc">Start a job from the Run tab to see live progress here.</div>
+        </div>
+      </div>`;
+  }
+
+  const jobCard = state.jobId ? `
+    <div class="job-card">
+      <div class="job-card-header">
+        <span class="job-id">${esc(state.jobId)}</span>
+        <span class="status-pill ${state.jobState}">${state.jobState}</span>
+      </div>
+      <div class="job-prompt">${esc(state.jobPrompt)}</div>
+      <div class="job-meta">
+        ${state.jobStartedAt ? `<span>⏱ ${elapsed(state.jobStartedAt)}</span>` : ''}
+        <span>📝 ${state.logs.length} events</span>
+      </div>
+    </div>` : '';
+
+  const logsHtml = state.logs.length > 0 ? `
+    <div class="section">
+      <div class="section-label">Activity Log</div>
+      <div class="log-container" id="log-container">
+        ${state.logs.slice(-50).map(l => `
+          <div class="log-entry">
+            <div class="log-time">${formatTime(l.time)}</div>
+            <div class="log-text ${l.type || ''}">${esc(l.text)}</div>
+          </div>`).join('')}
+      </div>
+    </div>` : '';
+
+  const screenshotSection = `
+    <div class="section">
+      <div class="section-label">Browser</div>
+      <div class="screenshot-container">
+        <button class="btn btn-secondary" id="btn-screenshot" ${state.screenshotLoading ? 'disabled' : ''}>
+          ${state.screenshotLoading ? '<span class="spinner"></span>' : '📸'} Capture Screenshot
+        </button>
+        ${state.screenshot ? `<img class="screenshot-img" src="${state.screenshot}" alt="Screenshot">` :
+          `<div class="screenshot-placeholder">No screenshot yet</div>`}
+      </div>
+    </div>`;
+
+  const actions = state.jobState === 'running' ? `
+    <button class="btn btn-danger" id="btn-stop">⏹ Stop Job</button>` : '';
+
+  return `<div class="content">${jobCard}${logsHtml}${screenshotSection}${actions}</div>`;
+}
+
+function renderHistoryTab() {
+  if (state.history.length === 0) {
+    return `
+      <div class="content">
+        <div class="empty-state">
+          <div class="empty-icon">📋</div>
+          <div class="empty-title">No history yet</div>
+          <div class="empty-desc">Completed and failed jobs will appear here.</div>
+        </div>
+      </div>`;
+  }
+
+  return `
+    <div class="content">
+      <div class="history-list">
+        ${state.history.map(h => `
+          <div class="history-item">
+            <div class="history-item-header">
+              <span class="job-id">${esc(h.id)}</span>
+              <span class="status-pill ${h.state}">${h.state}</span>
+            </div>
+            <div class="history-item-prompt">${esc(h.prompt)}</div>
+            <div class="job-meta"><span>${relTime(h.time)}</span></div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+// ── Event Binding ─────────────────────────────────────
+function bindEvents() {
+  // Tabs
+  document.querySelectorAll('.tab').forEach(el => {
+    el.onclick = () => { state.tab = el.dataset.tab; render(); };
+  });
+  // Prompt input
+  const input = document.getElementById('prompt-input');
+  if (input) {
+    input.oninput = () => { state.prompt = input.value; document.querySelector('.char-count').textContent = state.prompt.length + ' chars'; toggleRunBtn(); };
+    input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runJob(); } };
+  }
+  // Quick prompts
+  document.querySelectorAll('.quick-chip').forEach(el => {
+    el.onclick = () => { state.prompt = el.dataset.prompt; render(); };
+  });
+  // Buttons
+  const btnRun = document.getElementById('btn-run');
+  if (btnRun) btnRun.onclick = runJob;
+  const btnStop = document.getElementById('btn-stop');
+  if (btnStop) btnStop.onclick = stopJob;
+  const btnScreenshot = document.getElementById('btn-screenshot');
+  if (btnScreenshot) btnScreenshot.onclick = requestScreenshot;
+  // Auto-scroll log
+  const logContainer = document.getElementById('log-container');
+  if (logContainer) logContainer.scrollTop = logContainer.scrollHeight;
+}
+
+function toggleRunBtn() {
+  const btn = document.getElementById('btn-run');
+  if (btn) btn.disabled = state.jobState === 'running' || !state.prompt.trim();
+}
+
+// ── Helpers ───────────────────────────────────────────
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function formatTime(ts) {
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
+function elapsed(start) {
+  const s = Math.floor((Date.now() - start) / 1000);
+  if (s < 60) return s + 's';
+  return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+}
+function relTime(ts) {
+  const d = (Date.now() - ts) / 1000;
+  if (d < 60) return 'just now';
+  if (d < 3600) return Math.floor(d / 60) + 'm ago';
+  if (d < 86400) return Math.floor(d / 3600) + 'h ago';
+  return Math.floor(d / 86400) + 'd ago';
+}
+
+// ── Toast ─────────────────────────────────────────────
+let toastTimer = null;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ── Init ──────────────────────────────────────────────
+render();
+connectWS();
+
+// Periodic status refresh
+setInterval(() => {
+  if (state.connected && state.jobState === 'running') {
+    requestStatus();
+    // Update elapsed time display
+    render();
+  }
+}, 10000);
+</script>
+</body>
+</html>

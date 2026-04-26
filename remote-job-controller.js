@@ -12,11 +12,12 @@ class RemoteJobController extends EventEmitter {
    * @param {number|string} opts.chatId - Paired Telegram chat ID
    * @param {object} opts.recordingManager - RecordingManager instance
    */
-  constructor({ telegramBot, chatId, recordingManager }) {
+  constructor({ telegramBot, chatId, recordingManager, miniAppUrl }) {
     super()
     this._bot = telegramBot
     this._chatId = chatId
     this._recordingManager = recordingManager
+    this._miniAppUrl = miniAppUrl || null
     this._state = 'idle'  // 'idle' | 'running' | 'completed' | 'failed'
     this._jobId = null
     this._bridge = null
@@ -173,6 +174,20 @@ class RemoteJobController extends EventEmitter {
           } catch { /* fall through to no-session message */ }
         }
         await this._bot.sendMessage(this._chatId, 'No browser session is active.')
+        break
+      }
+      case 'app': {
+        // Req: Send a Web App button so the user can open the Mini App
+        if (this._miniAppUrl) {
+          await this._bot.sendWebAppButton(
+            this._chatId,
+            '🖥 Open the QwenCoder Agent dashboard:',
+            '⚡ Open Mini App',
+            this._miniAppUrl
+          )
+        } else {
+          await this._bot.sendMessage(this._chatId, 'Mini App is not available. Start the mini app server first.')
+        }
         break
       }
       default:

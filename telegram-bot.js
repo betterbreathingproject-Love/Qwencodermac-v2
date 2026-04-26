@@ -301,6 +301,23 @@ class TelegramBot extends EventEmitter {
    * Generate a pairing token for QR-code-based Telegram chat linking.
    * @returns {{ token: string, qrDataUrl: string, expiresAt: number }}
    */
+  /**
+   * Send a message with an inline Web App button.
+   * @param {number|string} chatId
+   * @param {string} text - Message text
+   * @param {string} buttonText - Button label
+   * @param {string} webAppUrl - Mini App URL
+   */
+  async sendWebAppButton(chatId, text, buttonText, webAppUrl) {
+    return telegramRequest('sendMessage', this._token, {
+      chat_id: chatId,
+      text,
+      reply_markup: JSON.stringify({
+        inline_keyboard: [[{ text: buttonText, web_app: { url: webAppUrl } }]],
+      }),
+    })
+  }
+
   generatePairingToken() {
     const token = crypto.randomBytes(32).toString('hex')
     const createdAt = Date.now()
