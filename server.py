@@ -461,6 +461,16 @@ async def chat_completions(req: ChatRequest):
                     if last_result and hasattr(last_result, 'prompt_tps'):
                         loop.call_soon_threadsafe(queue.put_nowait, ("stats", last_result))
                 except Exception as e:
+                    import traceback
+                    print(f"[server] ❌ Stream inference error ({type(e).__name__}): {e}", file=sys.stderr)
+                    traceback.print_exc(file=sys.stderr)
+                    try:
+                        import mlx.core as mx
+                        mem_active = mx.metal.get_active_memory() / (1024**3)
+                        mem_peak = mx.metal.get_peak_memory() / (1024**3)
+                        print(f"[server] Metal memory — active: {mem_active:.2f} GB, peak: {mem_peak:.2f} GB", file=sys.stderr)
+                    except Exception:
+                        pass
                     loop.call_soon_threadsafe(queue.put_nowait, ("error", str(e)))
                 finally:
                     try:
@@ -558,6 +568,17 @@ async def chat_completions(req: ChatRequest):
         async with sem:
             result = await asyncio.get_event_loop().run_in_executor(None, _run_generate)
     except Exception as e:
+        import traceback
+        print(f"[server] ❌ Inference error ({type(e).__name__}): {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        try:
+            import mlx.core as mx
+            mem_active = mx.metal.get_active_memory() / (1024**3)
+            mem_peak = mx.metal.get_peak_memory() / (1024**3)
+            mem_cache = mx.metal.get_cache_memory() / (1024**3)
+            print(f"[server] Metal memory — active: {mem_active:.2f} GB, peak: {mem_peak:.2f} GB, cache: {mem_cache:.2f} GB", file=sys.stderr)
+        except Exception:
+            pass
         _cleanup_images(images)
         raise HTTPException(500, f"Inference error: {str(e)}")
     _cleanup_images(images)
