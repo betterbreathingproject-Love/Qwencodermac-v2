@@ -211,6 +211,17 @@
             <a href="#" id="tgPairLink" onclick="window.app.openExternal(this.textContent);return false" style="font-size:10px;color:var(--accent2);word-break:break-all"></a>
             <button class="btn-sm" onclick="telegramPair()" style="margin-top:4px">🔗 Generate Pairing Link</button>
           </div>
+          <div id="tgMiniAppSection" style="display:none;margin-top:6px;padding:6px;background:var(--bg2);border-radius:6px;border:1px solid var(--border)">
+            <div style="font-size:10px;font-weight:600;color:var(--text);margin-bottom:4px">📱 Mini App</div>
+            <div id="miniappStatus" style="font-size:10px;color:var(--muted);margin-bottom:4px">Not running</div>
+            <button class="btn-sm" id="miniappStartBtn" onclick="miniappStart()" style="margin-top:2px">🚀 Start Mini App</button>
+            <button class="btn-sm" id="miniappStopBtn" onclick="miniappStop()" style="margin-top:2px;display:none;background:var(--red)">⏹ Stop</button>
+            <div id="miniappUrlSection" style="display:none;margin-top:4px">
+              <div style="font-size:9px;color:var(--muted)">Public URL (use in Telegram):</div>
+              <a href="#" id="miniappUrl" onclick="window.app.openExternal(this.textContent);return false" style="font-size:10px;color:var(--accent2);word-break:break-all"></a>
+              <div style="font-size:9px;color:var(--muted);margin-top:4px">Type <code>/app</code> in Telegram to open it, or set this URL as your bot's Web App in @BotFather.</div>
+            </div>
+          </div>
         </div>
 
         <div class="sp-header" style="margin-top:4px"><span class="section-label">STEERING DOCS</span></div>

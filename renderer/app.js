@@ -1957,11 +1957,14 @@ async function refreshTelegramStatus() {
   const connectBtn = document.getElementById('tgConnectBtn')
   const disconnectBtn = document.getElementById('tgDisconnectBtn')
   const pairSection = document.getElementById('tgPairSection')
+  const miniAppSection = document.getElementById('tgMiniAppSection')
   if (status.connected) {
     el.innerHTML = `<span style="color:var(--green)">● Connected</span> @${status.bot_username}`
     connectBtn.style.display = 'none'
     disconnectBtn.style.display = 'inline-block'
     pairSection.style.display = 'block'
+    miniAppSection.style.display = 'block'
+    refreshMiniappStatus()
   } else {
     el.innerHTML = status.last_error
       ? `<span style="color:var(--red)">● Error:</span> ${status.last_error}`
@@ -1969,6 +1972,52 @@ async function refreshTelegramStatus() {
     connectBtn.style.display = 'inline-block'
     disconnectBtn.style.display = 'none'
     pairSection.style.display = 'none'
+    miniAppSection.style.display = 'none'
+  }
+}
+
+// ── mini app ──────────────────────────────────────────────────────────────────
+async function miniappStart() {
+  const btn = document.getElementById('miniappStartBtn')
+  btn.textContent = '⏳ Starting...'
+  btn.disabled = true
+  try {
+    const res = await window.app.miniappStart()
+    if (res.error) { alert('Failed: ' + res.error); return }
+    refreshMiniappStatus()
+  } catch (e) { alert('Error: ' + e.message) }
+  finally { btn.textContent = '🚀 Start Mini App'; btn.disabled = false }
+}
+
+async function miniappStop() {
+  await window.app.miniappStop()
+  refreshMiniappStatus()
+}
+
+async function refreshMiniappStatus() {
+  const status = await window.app.miniappStatus()
+  const statusEl = document.getElementById('miniappStatus')
+  const startBtn = document.getElementById('miniappStartBtn')
+  const stopBtn = document.getElementById('miniappStopBtn')
+  const urlSection = document.getElementById('miniappUrlSection')
+  const urlEl = document.getElementById('miniappUrl')
+
+  if (status.running) {
+    statusEl.innerHTML = '<span style="color:var(--green)">● Running</span>'
+    startBtn.style.display = 'none'
+    stopBtn.style.display = 'inline-block'
+    if (status.publicUrl) {
+      urlSection.style.display = 'block'
+      urlEl.textContent = status.publicUrl
+    } else {
+      urlSection.style.display = 'block'
+      urlEl.textContent = status.localUrl || 'http://localhost:3847'
+    }
+  } else {
+    statusEl.innerHTML = '<span style="color:var(--muted)">● Not running</span>'
+    startBtn.style.display = 'inline-block'
+    stopBtn.style.display = 'none'
+    urlSection.style.display = 'none'
   }
 }
 

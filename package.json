@@ -65,6 +65,7 @@
   "dependencies": {
     "@qwen-code/sdk": "^0.1.6",
     "chokidar": "^5.0.0",
+    "localtunnel": "^2.0.2",
     "node-pty": "^1.1.0",
     "openai": "^4.0.0",
     "playwright": "^1.59.1",

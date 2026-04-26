@@ -16,6 +16,7 @@ const { LspManager } = require('./lsp-manager')
 const { TelegramBot } = require('./telegram-bot')
 const { RecordingManager } = require('./recording-manager')
 const { RemoteJobController } = require('./remote-job-controller')
+const { MiniAppServer } = require('./telegram-miniapp-server')
 
 nativeTheme.themeSource = 'dark'
 
@@ -26,7 +27,11 @@ let lspManager = null
 let telegramBot = null
 let recordingManager = null
 let remoteJobController = null
+let miniAppServer = null
+let miniAppTunnel = null
+let miniAppPublicUrl = null
 const SERVER_PORT = 8090
+const MINIAPP_PORT = 3847
 const SERVER_URL = `http://127.0.0.1:${SERVER_PORT}`
 
 // ── Subagent system prompts (like oh-my-kiro's multi-agent architecture) ──────
@@ -328,6 +333,7 @@ function createWindow() {
         telegramBot,
         chatId: telegramBot.getPairedChatId(),
         recordingManager,
+        miniAppUrl: miniAppPublicUrl,
       })
     }
     if (remoteJobController) {
@@ -341,6 +347,7 @@ function createWindow() {
       telegramBot,
       chatId,
       recordingManager,
+      miniAppUrl: miniAppPublicUrl,
     })
   })
 
@@ -370,6 +377,68 @@ function createWindow() {
     await telegramBot.stop()
     return { ok: true }
   })
+
+  // ── Mini App IPC handlers ──
+  ipcMain.handle('miniapp-start', async () => {
+    try {
+      // Create a stub controller if none exists yet
+      if (!remoteJobController) {
+        const chatId = telegramBot?.getPairedChatId() || null
+        if (chatId) {
+          remoteJobController = new RemoteJobController({
+            telegramBot,
+            chatId,
+            recordingManager,
+            miniAppUrl: miniAppPublicUrl,
+          })
+        } else {
+          // Create a minimal controller for the mini app to work standalone
+          const { EventEmitter } = require('node:events')
+          remoteJobController = Object.assign(new EventEmitter(), {
+            getJobState: () => 'idle',
+            getJobId: () => null,
+            handleCommand: () => {},
+          })
+        }
+      }
+
+      // Start the HTTP/WS server
+      if (!miniAppServer) {
+        miniAppServer = new MiniAppServer({ jobController: remoteJobController, port: MINIAPP_PORT })
+        miniAppServer.start()
+      }
+
+      // Start the tunnel for public HTTPS access
+      const localtunnel = require('localtunnel')
+      if (!miniAppTunnel) {
+        miniAppTunnel = await localtunnel({ port: MINIAPP_PORT })
+        miniAppPublicUrl = miniAppTunnel.url
+        // Update the controller's mini app URL
+        if (remoteJobController._miniAppUrl !== undefined) {
+          remoteJobController._miniAppUrl = miniAppPublicUrl
+        }
+        miniAppTunnel.on('close', () => { miniAppTunnel = null; miniAppPublicUrl = null })
+      }
+
+      return { ok: true, localUrl: `http://localhost:${MINIAPP_PORT}`, publicUrl: miniAppPublicUrl }
+    } catch (err) {
+      return { error: err.message }
+    }
+  })
+
+  ipcMain.handle('miniapp-stop', async () => {
+    if (miniAppTunnel) { miniAppTunnel.close(); miniAppTunnel = null; miniAppPublicUrl = null }
+    if (miniAppServer) { miniAppServer.stop(); miniAppServer = null }
+    return { ok: true }
+  })
+
+  ipcMain.handle('miniapp-status', async () => {
+    return {
+      running: !!miniAppServer,
+      localUrl: miniAppServer ? `http://localhost:${MINIAPP_PORT}` : null,
+      publicUrl: miniAppPublicUrl || null,
+    }
+  })
 }
 
 // ── lifecycle ─────────────────────────────────────────────────────────────────
@@ -385,6 +454,8 @@ app.on('window-all-closed', () => {
   ipcWatcher.unwatchProject()
   if (lspManager) lspManager.stop().catch(() => {})
   if (telegramBot) telegramBot.stop()
+  if (miniAppTunnel) { miniAppTunnel.close(); miniAppTunnel = null }
+  if (miniAppServer) { miniAppServer.stop(); miniAppServer = null }
   app.quit()
 })
 app.on('activate', () => { if (!mainWindow) createWindow() })
