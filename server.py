@@ -383,7 +383,21 @@ def _build_prompt_with_tools(req: ChatRequest):
         else:
             m["content"] = ""
         if msg.tool_calls:
-            m["tool_calls"] = msg.tool_calls
+            # Ensure tool_call arguments are dicts (not JSON strings) so the
+            # Jinja template's `arguments is mapping` check works correctly.
+            # The template iterates over arguments as key-value pairs.
+            fixed_tool_calls = []
+            for tc in msg.tool_calls:
+                tc_copy = dict(tc) if isinstance(tc, dict) else tc
+                if isinstance(tc_copy, dict):
+                    fn = tc_copy.get("function", {})
+                    if isinstance(fn, dict) and isinstance(fn.get("arguments"), str):
+                        try:
+                            fn["arguments"] = json.loads(fn["arguments"])
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+                fixed_tool_calls.append(tc_copy)
+            m["tool_calls"] = fixed_tool_calls
         if msg.tool_call_id:
             # tool result message — Qwen template expects role="tool"
             m["role"] = "tool"

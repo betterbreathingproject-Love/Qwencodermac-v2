@@ -1636,11 +1636,22 @@ class DirectBridge {
       // Add assistant message with tool_calls to history
       const assistantMsg = { role: 'assistant', content: text || null }
       if (toolCalls.length > 0) {
-        assistantMsg.tool_calls = toolCalls.map(tc => ({
-          id: tc.id,
-          type: 'function',
-          function: { name: tc.function.name, arguments: tc.function.arguments },
-        }))
+        assistantMsg.tool_calls = toolCalls.map(tc => {
+          // Parse arguments from JSON string to object so the Jinja chat template
+          // can iterate over them. The template checks `arguments is mapping` —
+          // if arguments is a string, no parameters are rendered in the history,
+          // causing the model to learn that tool calls don't need parameters.
+          let parsedArgs = tc.function.arguments
+          try {
+            const parsed = JSON.parse(tc.function.arguments)
+            if (parsed && typeof parsed === 'object') parsedArgs = parsed
+          } catch { /* keep as string if parse fails */ }
+          return {
+            id: tc.id,
+            type: 'function',
+            function: { name: tc.function.name, arguments: parsedArgs },
+          }
+        })
       }
       messages.push(assistantMsg)
 
