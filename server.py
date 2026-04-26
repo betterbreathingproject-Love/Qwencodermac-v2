@@ -60,6 +60,27 @@ def find_models():
     return models
 
 
+def _unload_model():
+    """Release the current model and free Metal memory before loading a new one."""
+    global _model, _processor, _config, _model_id, _model_path, _chat_template
+    if _model is not None:
+        print(f"[server] Unloading current model: {_model_id}")
+        _model = None
+        _processor = None
+        _config = None
+        _model_id = None
+        _model_path = None
+        _chat_template = None
+        import gc
+        gc.collect()
+        try:
+            import mlx.core as mx
+            mx.metal.clear_cache()
+        except Exception:
+            pass
+        print(f"[server] Model unloaded, Metal cache cleared")
+
+
 def load_model(model_path: str):
     global _model, _processor, _config, _model_id, _model_path, _chat_template
     from mlx_vlm import load
@@ -414,12 +435,23 @@ def list_models():
 
 
 @app.post("/admin/load")
-def admin_load(req: LoadRequest):
-    try:
-        load_model(req.model_path)
-        return {"status": "ok", "model_id": _model_id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def admin_load(req: LoadRequest):
+    # Acquire the inference semaphore so we don't swap the model while an
+    # inference request is in-flight.  This waits (without blocking the
+    # event loop) until any running inference finishes.
+    sem = _get_inference_semaphore()
+    async with sem:
+        try:
+            # Free the old model *before* loading the new one so both don't
+            # coexist in Metal memory (which causes OOM crashes).
+            _unload_model()
+            # load_model is CPU/IO-heavy — run in a thread so the event loop
+            # stays responsive and the server doesn't appear to crash.
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, load_model, req.model_path)
+            return {"status": "ok", "model_id": _model_id}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/admin/status")
