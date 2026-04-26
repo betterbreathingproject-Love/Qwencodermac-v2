@@ -215,6 +215,8 @@ class TelegramBot extends EventEmitter {
       bot_username: this._botUsername,
       polling: this._polling,
       last_error: this._lastError,
+      has_token: !!this._token,
+      token_masked: this._token ? this._token.slice(0, 6) + '...' + this._token.slice(-4) : null,
     }
   }
 

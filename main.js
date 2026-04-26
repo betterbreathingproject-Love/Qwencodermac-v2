@@ -358,8 +358,13 @@ function createWindow() {
   })
 
   ipcMain.handle('telegram-status', async () => {
-    if (!telegramBot) return { connected: false, bot_username: null, polling: false, last_error: null }
+    if (!telegramBot) return { connected: false, bot_username: null, polling: false, last_error: null, has_token: false, token_masked: null }
     return telegramBot.getStatus()
+  })
+
+  ipcMain.handle('telegram-get-token', async () => {
+    if (!telegramBot) return { token: null }
+    return { token: telegramBot._token || null }
   })
 
   ipcMain.handle('telegram-start', async (event, token) => {

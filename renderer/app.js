@@ -1941,6 +1941,7 @@ async function telegramConnect() {
 async function telegramDisconnect() {
   await window.app.telegramStop()
   await refreshTelegramStatus()
+  // Keep the token in the input so user can reconnect easily
 }
 
 async function telegramPair() {
@@ -1958,6 +1959,14 @@ async function refreshTelegramStatus() {
   const disconnectBtn = document.getElementById('tgDisconnectBtn')
   const pairSection = document.getElementById('tgPairSection')
   const miniAppSection = document.getElementById('tgMiniAppSection')
+  const tokenInput = document.getElementById('tg-token')
+
+  // Pre-fill the token input if we have a saved token
+  if (!tokenInput.value && status.has_token) {
+    const saved = await window.app.telegramGetToken()
+    if (saved.token) tokenInput.value = saved.token
+  }
+
   if (status.connected) {
     el.innerHTML = `<span style="color:var(--green)">● Connected</span> @${status.bot_username}`
     connectBtn.style.display = 'none'

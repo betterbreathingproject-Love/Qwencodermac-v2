@@ -195,7 +195,7 @@ describe('TelegramBot.getStatus', () => {
     const bot = new TelegramBot()
     const status = bot.getStatus()
     const keys = Object.keys(status).sort()
-    assert.deepStrictEqual(keys, ['bot_username', 'connected', 'last_error', 'polling'])
+    assert.deepStrictEqual(keys, ['bot_username', 'connected', 'has_token', 'last_error', 'polling', 'token_masked'])
   })
 })
 
