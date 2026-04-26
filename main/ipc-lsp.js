@@ -10,7 +10,7 @@ function register(ipcMain, { getLspManager }) {
     const mgr = getLspManager()
     if (!mgr || mgr.getStatus().status !== 'ready') return { symbols: [] }
     try {
-      return await mgr.call('lsp_get_document_symbols', { path: filePath })
+      return await mgr.call('lsp_get_document_symbols', { file_path: filePath })
     } catch {
       return { symbols: [] }
     }

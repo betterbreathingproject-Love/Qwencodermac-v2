@@ -431,7 +431,7 @@ describe('LspManager - call() with mock stdio', () => {
     const request = JSON.parse(written.replace('\n', ''));
     assert.equal(request.jsonrpc, '2.0');
     assert.equal(request.method, 'tools/call');
-    assert.deepStrictEqual(request.params, { name: 'lsp_get_document_symbols', arguments: { path: 'src/main.js' } });
+    assert.deepStrictEqual(request.params, { name: 'get_document_symbols', arguments: { path: 'src/main.js' } });
 
     const response = JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { symbols: ['fn1'] } }) + '\n';
     fakeProc.pushStdout(response);

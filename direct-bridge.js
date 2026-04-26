@@ -201,9 +201,11 @@ const LSP_TOOL_DEFS = {
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'File path to get symbols for' },
+          file_path: { type: 'string', description: 'Absolute path to the source file' },
+          format: { type: 'string', description: 'Output format: "outline" for compact markdown, default returns JSON' },
         },
-        required: ['path'],
+        required: ['file_path'],
+        additionalProperties: false,
       },
     },
   },
@@ -215,11 +217,12 @@ const LSP_TOOL_DEFS = {
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'File path' },
-          line: { type: 'number', description: 'Line number (0-indexed)' },
-          character: { type: 'number', description: 'Character offset (0-indexed)' },
+          file_path: { type: 'string', description: 'Absolute path to the source file' },
+          line: { type: 'integer', description: '1-indexed line number' },
+          column: { type: 'integer', description: '1-indexed column offset' },
         },
-        required: ['path', 'line', 'character'],
+        required: ['file_path', 'line', 'column'],
+        additionalProperties: false,
       },
     },
   },
@@ -231,11 +234,12 @@ const LSP_TOOL_DEFS = {
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'File path' },
-          line: { type: 'number', description: 'Line number (0-indexed)' },
-          character: { type: 'number', description: 'Character offset (0-indexed)' },
+          file_path: { type: 'string', description: 'Absolute path to the source file' },
+          line: { type: 'integer', description: '1-indexed line number' },
+          column: { type: 'integer', description: '1-indexed column offset' },
         },
-        required: ['path', 'line', 'character'],
+        required: ['file_path', 'line', 'column'],
+        additionalProperties: false,
       },
     },
   },
@@ -247,11 +251,13 @@ const LSP_TOOL_DEFS = {
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'File path' },
-          line: { type: 'number', description: 'Line number (0-indexed)' },
-          character: { type: 'number', description: 'Character offset (0-indexed)' },
+          file_path: { type: 'string', description: 'Absolute path to the source file' },
+          line: { type: 'integer', description: '1-indexed line number' },
+          column: { type: 'integer', description: '1-indexed column offset' },
+          include_declaration: { type: 'boolean', description: 'Whether to include the declaration site' },
         },
-        required: ['path', 'line', 'character'],
+        required: ['file_path', 'line', 'column'],
+        additionalProperties: false,
       },
     },
   },
@@ -263,11 +269,13 @@ const LSP_TOOL_DEFS = {
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'File path' },
-          line: { type: 'number', description: 'Line number (0-indexed)' },
-          character: { type: 'number', description: 'Character offset (0-indexed)' },
+          file_path: { type: 'string', description: 'Absolute path to the source file' },
+          line: { type: 'integer', description: '1-indexed line number' },
+          column: { type: 'integer', description: '1-indexed column offset' },
+          direction: { type: 'string', description: 'Direction: incoming, outgoing, or both (default: both)' },
         },
-        required: ['path', 'line', 'character'],
+        required: ['file_path', 'line', 'column'],
+        additionalProperties: false,
       },
     },
   },
@@ -279,11 +287,12 @@ const LSP_TOOL_DEFS = {
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'File path' },
-          line: { type: 'number', description: 'Line number (0-indexed)' },
-          character: { type: 'number', description: 'Character offset (0-indexed)' },
+          file_path: { type: 'string', description: 'Absolute path to the source file' },
+          line: { type: 'integer', description: '1-indexed line number' },
+          column: { type: 'integer', description: '1-indexed column offset' },
         },
-        required: ['path', 'line', 'character'],
+        required: ['file_path', 'line', 'column'],
+        additionalProperties: false,
       },
     },
   },
@@ -297,7 +306,7 @@ const LSP_TOOL_DEFS = {
         properties: {
           query: { type: 'string', description: 'Symbol name or pattern to search for' },
         },
-        required: ['query'],
+        additionalProperties: false,
       },
     },
   },
@@ -305,14 +314,19 @@ const LSP_TOOL_DEFS = {
     type: 'function',
     function: {
       name: 'lsp_simulate_edit_atomic',
-      description: 'Simulate a file edit in memory and report diagnostic changes without writing to disk.',
+      description: 'Simulate a file edit and report diagnostic changes without writing to disk.',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'File path to simulate editing' },
-          content: { type: 'string', description: 'New file content to simulate' },
+          file_path: { type: 'string', description: 'Absolute path to the file to edit' },
+          start_line: { type: 'integer', description: '1-indexed start line of the range to replace' },
+          start_column: { type: 'integer', description: '1-indexed start column' },
+          end_line: { type: 'integer', description: '1-indexed end line' },
+          end_column: { type: 'integer', description: '1-indexed end column' },
+          new_text: { type: 'string', description: 'Replacement text for the specified range' },
         },
-        required: ['path', 'content'],
+        required: ['file_path', 'start_line', 'start_column', 'end_line', 'end_column', 'new_text'],
+        additionalProperties: false,
       },
     },
   },
@@ -324,9 +338,9 @@ const LSP_TOOL_DEFS = {
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'File path to get diagnostics for' },
+          file_path: { type: 'string', description: 'File path to get diagnostics for. If omitted, returns diagnostics for all open files' },
         },
-        required: ['path'],
+        additionalProperties: false,
       },
     },
   },
@@ -334,15 +348,15 @@ const LSP_TOOL_DEFS = {
     type: 'function',
     function: {
       name: 'lsp_get_change_impact',
-      description: 'Analyze the blast radius of changes to a symbol — which files and symbols are affected.',
+      description: 'Analyze the blast radius of changes — which files and symbols are affected by changes to the given files.',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'File path containing the symbol' },
-          line: { type: 'number', description: 'Line number (0-indexed)' },
-          character: { type: 'number', description: 'Character offset (0-indexed)' },
+          changed_files: { type: 'array', items: { type: 'string' }, description: 'List of absolute file paths to analyze' },
+          include_transitive: { type: 'boolean', description: 'If true, include second-order callers' },
         },
-        required: ['path', 'line', 'character'],
+        required: ['changed_files'],
+        additionalProperties: false,
       },
     },
   },
@@ -350,16 +364,18 @@ const LSP_TOOL_DEFS = {
     type: 'function',
     function: {
       name: 'lsp_apply_code_action',
-      description: 'Apply a code action (quick fix, refactoring) suggested by the language server.',
+      description: 'Get available code actions (quick fixes, refactorings) for a range in a file.',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'File path' },
-          line: { type: 'number', description: 'Line number (0-indexed)' },
-          character: { type: 'number', description: 'Character offset (0-indexed)' },
-          actionTitle: { type: 'string', description: 'Title of the code action to apply' },
+          file_path: { type: 'string', description: 'Absolute path to the source file' },
+          start_line: { type: 'integer', description: '1-indexed start line' },
+          start_column: { type: 'integer', description: '1-indexed start column' },
+          end_line: { type: 'integer', description: '1-indexed end line' },
+          end_column: { type: 'integer', description: '1-indexed end column' },
         },
-        required: ['path', 'line', 'character', 'actionTitle'],
+        required: ['file_path', 'start_line', 'start_column', 'end_line', 'end_column'],
+        additionalProperties: false,
       },
     },
   },
@@ -544,7 +560,7 @@ async function buildProjectContext(cwd, taskGraphPath, lspManager) {
     const symbolParts = []
     for (const file of entryFiles.slice(0, 10)) {
       try {
-        const symbols = await lspManager.call('lsp_get_document_symbols', { path: file })
+        const symbols = await lspManager.call('lsp_get_document_symbols', { file_path: file })
         if (Array.isArray(symbols) && symbols.length > 0) {
           const outline = formatSymbolOutline(symbols)
           if (outline) {
@@ -585,6 +601,30 @@ async function buildProjectContext(cwd, taskGraphPath, lspManager) {
     combined = combined.slice(0, 4000) + '\n... [truncated]'
   }
   return combined
+}
+
+/**
+ * Parse diagnostics from an MCP tool response.
+ * The agent-lsp binary returns: { content: [{ type: "text", text: "{\"file://...\": [...]}" }] }
+ * Returns an array of diagnostic objects with severity, message, line fields.
+ */
+function parseMcpDiagnostics(result) {
+  try {
+    const text = result?.content?.[0]?.text
+    if (!text) return []
+    const parsed = JSON.parse(text)
+    const values = Object.values(parsed)
+    if (values.length > 0 && Array.isArray(values[0])) {
+      return values[0].map(d => ({
+        severity: d.severity === 1 ? 'error' : d.severity === 2 ? 'warning' : d.severity === 3 ? 'info' : 'hint',
+        message: d.message || '',
+        line: d.range?.start?.line != null ? d.range.start.line + 1 : undefined,
+        code: d.code,
+        source: d.source,
+      }))
+    }
+  } catch { /* not parseable */ }
+  return result?.errors || result?.diagnostics || []
 }
 
 /**
@@ -857,9 +897,20 @@ async function executeTool(name, args, cwd, browserInstance, lspManager) {
     if (lspStatus !== 'ready' && lspStatus !== 'degraded') {
       return { error: 'LSP not available. Use built-in tools instead.' }
     }
+    // Strip the lsp_ prefix and map to actual binary tool names
+    // Agent-facing names use lsp_ prefix, binary uses different names for some tools
+    const TOOL_NAME_MAP = {
+      'get_hover': 'get_info_on_location',
+      'get_definition': 'go_to_definition',
+      'get_type_definition': 'go_to_type_definition',
+      'workspace_symbol': 'get_workspace_symbols',
+      'apply_code_action': 'get_code_actions',
+    }
+    const stripped = name.slice(4)
+    const binaryToolName = TOOL_NAME_MAP[stripped] || stripped
     try {
       const result = await Promise.race([
-        lspManager.call(name, args),
+        lspManager.call(binaryToolName, args),
         new Promise((_, reject) => setTimeout(() => reject(new Error('LSP tool timed out (30s)')), 30000))
       ])
       return { result: JSON.stringify(result) }
@@ -1516,7 +1567,12 @@ class DirectBridge {
           this.send('qwen-event', { type: 'lsp-activity', action: 'speculative-check', path: fnArgs.path })
           try {
             const simResult = await Promise.race([
-              this._lspManager.call('lsp_simulate_edit_atomic', { path: fnArgs.path, content: fnArgs.content }),
+              this._lspManager.call('lsp_simulate_edit_atomic', {
+                file_path: path.resolve(cwd, fnArgs.path),
+                start_line: 1, start_column: 1,
+                end_line: 999999, end_column: 1,
+                new_text: fnArgs.content,
+              }),
               new Promise((_, reject) => setTimeout(() => reject(new Error('speculative edit timed out')), 10000))
             ])
             if (simResult?.newDiagnostics?.length > 0) {
@@ -1547,11 +1603,11 @@ class DirectBridge {
           this.send('qwen-event', { type: 'lsp-activity', action: 'diagnostics-check', path: fnArgs.path })
           try {
             const diags = await Promise.race([
-              this._lspManager.call('lsp_get_diagnostics', { path: fnArgs.path }),
+              this._lspManager.call('lsp_get_diagnostics', { file_path: fnArgs.path }),
               new Promise((_, reject) => setTimeout(() => reject(new Error('diagnostic timeout')), 10000))
             ])
-            if (diags?.errors?.length > 0) {
-              const errorDiags = diags.errors.filter(d => d.severity === 'error')
+            if (diags?.content || diags?.errors) {
+              const errorDiags = parseMcpDiagnostics(diags).filter(d => d.severity === 'error')
               if (errorDiags.length > 0) {
                 const diagLines = errorDiags.map(d => `  ${d.severity || 'error'}: ${d.message} (line ${d.line || '?'})`).join('\n')
                 content = `⚠️ Edit introduced errors:\n${diagLines}\n\n${content}`
@@ -1594,11 +1650,11 @@ class DirectBridge {
             try {
               this.send('qwen-event', { type: 'lsp-activity', action: 'diagnostics-check', path: fp })
               const diags = await Promise.race([
-                this._lspManager.call('lsp_get_diagnostics', { path: fp }),
+                this._lspManager.call('lsp_get_diagnostics', { file_path: fp }),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('diagnostic timeout')), 8000))
               ])
-              if (diags?.errors?.length > 0) {
-                const errorDiags = diags.errors.filter(d => d.severity === 'error')
+              if (diags?.content || diags?.errors) {
+                const errorDiags = parseMcpDiagnostics(diags).filter(d => d.severity === 'error')
                 if (errorDiags.length > 0) {
                   const diagLines = errorDiags.map(d => `  ${d.severity || 'error'}: ${d.message} (line ${d.line || '?'})`).join('\n')
                   content += `\n\n⚠️ LSP detected errors in ${path.relative(cwd, fp)}:\n${diagLines}`

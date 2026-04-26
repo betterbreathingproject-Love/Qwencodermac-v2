@@ -328,6 +328,22 @@ class LspManager extends EventEmitter {
       }
       this._lastError = null;
 
+      // Initialize the LSP language servers via start_lsp tool call.
+      // agent-lsp requires this before any language-aware tools work.
+      if (projectDir && (this._status === 'ready' || this._status === 'degraded')) {
+        for (const server of this._servers) {
+          // Pick the first language for each server to initialize it
+          const lang = server.languages?.[0];
+          if (!lang) continue;
+          try {
+            await this.call('start_lsp', { root_dir: projectDir, language_id: lang });
+            console.info(`[LspManager] start_lsp initialized ${server.name} (${lang}) for ${projectDir}`);
+          } catch (err) {
+            console.warn(`[LspManager] start_lsp failed for ${server.name}:`, err.message);
+          }
+        }
+      }
+
       // Reset restart count on successful start (only for fresh starts, not auto-restarts)
       if (!this._restarting) {
         this._restartCount = 0;
@@ -521,8 +537,24 @@ class LspManager extends EventEmitter {
     // Fall back to explicit call
     if (this._status !== 'ready' && this._status !== 'degraded') return [];
     try {
-      const result = await this.call('lsp_get_diagnostics', { path: filePath });
-      const diags = result?.errors || result?.diagnostics || [];
+      const result = await this.call('lsp_get_diagnostics', { file_path: filePath });
+      // MCP response format: { content: [{ type: "text", text: "..." }] }
+      let diags = [];
+      const text = result?.content?.[0]?.text;
+      if (text) {
+        try {
+          const parsed = JSON.parse(text);
+          // Response is { "file://...": [...diagnostics...] }
+          const values = Object.values(parsed);
+          if (values.length > 0 && Array.isArray(values[0])) {
+            diags = values[0];
+          }
+        } catch { /* not JSON — skip */ }
+      }
+      // Also handle legacy format
+      if (diags.length === 0) {
+        diags = result?.errors || result?.diagnostics || [];
+      }
       this._diagnosticsCache.set(filePath, { diagnostics: diags, timestamp: Date.now() });
       return diags;
     } catch {
@@ -583,12 +615,16 @@ class LspManager extends EventEmitter {
       throw new Error(`LSP not available (status: ${this._status})`);
     }
 
+    // Strip lsp_ prefix — agent-lsp binary uses unprefixed tool names
+    // (e.g. "get_diagnostics" not "lsp_get_diagnostics")
+    const binaryToolName = toolName.startsWith('lsp_') ? toolName.slice(4) : toolName;
+
     const id = this._requestId++;
     const request = {
       jsonrpc: '2.0',
       id,
       method: 'tools/call',
-      params: { name: toolName, arguments: args },
+      params: { name: binaryToolName, arguments: args },
     };
 
     return new Promise((resolve, reject) => {

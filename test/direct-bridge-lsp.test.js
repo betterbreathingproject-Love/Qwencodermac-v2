@@ -646,7 +646,10 @@ describe('LSP_TOOL_DEFS — tool definition map', () => {
       assert.strictEqual(def.function.name, name, `${name} function.name mismatch`)
       assert.ok(def.function.description, `${name} missing description`)
       assert.strictEqual(def.function.parameters.type, 'object', `${name} parameters.type should be "object"`)
-      assert.ok(Array.isArray(def.function.parameters.required), `${name} missing required array`)
+      // required array is optional — some tools have all-optional params
+      if (def.function.parameters.required) {
+        assert.ok(Array.isArray(def.function.parameters.required), `${name} required should be an array`)
+      }
     }
   })
 })
@@ -987,7 +990,7 @@ describe('buildProjectContext — LSP symbol outlines (task 4.5)', () => {
       getStatus() { return { status: 'ready' } },
       async call(name, args) {
         callCount++
-        if (args.path.endsWith('index.js')) throw new Error('LSP crashed')
+        if ((args.file_path || args.path || '').endsWith('index.js')) throw new Error('LSP crashed')
         return [{ kind: 'function', name: 'appInit' }]
       },
     }
@@ -1055,7 +1058,7 @@ describe('buildProjectContext — LSP symbol outlines (task 4.5)', () => {
     const mgr = {
       getStatus() { return { status: 'ready' } },
       async call(name, args) {
-        calledPaths.push(args.path)
+        calledPaths.push(args.file_path || args.path)
         return [{ kind: 'function', name: 'test' }]
       },
     }
