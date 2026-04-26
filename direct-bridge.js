@@ -1235,7 +1235,7 @@ class DirectBridge {
           messages.push({ role: 'assistant', content: text })
           messages.push({
             role: 'system',
-            content: 'STOP. You were outputting code as text which is not allowed. You MUST use tools instead:\n- Use write_file to create or overwrite files (keep under 150 lines per call)\n- Use edit_file to make surgical edits\n- For large files, use bash with heredoc: bash({command: "cat > file << \'EOF\'\\n...\\nEOF"})\nNever output code blocks in your text response. Break your work into small steps using one tool call at a time.',
+            content: 'STOP. You were outputting code as text which is not allowed. You MUST use tools instead:\n- Use write_file to create or overwrite files\n- Use edit_file to make surgical edits\n- For files with complex template literals or backticks, use bash with heredoc: bash({command: "cat > file << \'EOF\'\\n...\\nEOF"})\nNever output code blocks in your text response. Use one tool call at a time.',
           })
           continue
         }
@@ -1354,7 +1354,7 @@ class DirectBridge {
           messages.push({ role: 'assistant', content: text || 'I was writing a file but hit the output limit.' })
           messages.push({
             role: 'system',
-            content: 'Your write_file tool call was TRUNCATED — the file was NOT written. You MUST write large files in chunks:\n1. write_file with the first ~150 lines\n2. bash({command: "cat >> filepath << \'CHUNK_END\'\\n...next 150 lines...\\nCHUNK_END"}) to append more\n3. Repeat until done\nAlternatively, write the entire file using bash with heredoc:\nbash({command: "cat > filepath << \'FILEEOF\'\\n...all content...\\nFILEEOF"})\nDo this NOW. Start with the first chunk.',
+            content: 'Your write_file tool call was TRUNCATED — the file was NOT written. The output token limit was hit mid-write. Try one of these:\n1. Write the file using bash with heredoc: bash({command: "cat > filepath << \'FILEEOF\'\\n...all content...\\nFILEEOF"})\n2. Or split into two write_file calls — first half, then use bash to append the rest.\nDo this NOW.',
           })
           this.send('qwen-event', { type: 'system', subtype: 'debug', data: 'Tool call truncated — asking model to write in chunks' })
           continue
@@ -1395,7 +1395,7 @@ class DirectBridge {
                 fnArgs = repaired
                 this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Repaired malformed JSON in write_file` })
               } else {
-                const guidance = 'Your file content broke JSON serialization. Use the bash tool with heredoc instead:\nbash({command: "cat > filepath << \'FILEEOF\'\\n...content...\\nFILEEOF"})\nOr write smaller files (under 100 lines) to avoid this issue.'
+                const guidance = 'Your file content broke JSON serialization. Use the bash tool with heredoc instead:\nbash({command: "cat > filepath << \'FILEEOF\'\\n...content...\\nFILEEOF"})'
                 this.send('qwen-event', { type: 'tool-result', tool_use_id: tc.id, content: guidance, is_error: true })
                 messages.push({ role: 'tool', tool_call_id: tc.id, content: guidance })
                 continue
@@ -1833,12 +1833,6 @@ When the user asks you to make changes to code:
 When the user asks you to browse, research, or interact with websites, use the browser tools directly. Call browser_navigate first, then use other browser tools to interact with the page.
 
 Be direct and efficient. Make the changes the user asks for. Do NOT just describe what you plan to do — actually do it using tools. If you need to read a file, call read_file. If you need to fix code, call edit_file. Always take action, never just narrate.
-
-CRITICAL FILE SIZE LIMIT: Each write_file call must be under 200 lines. For larger files:
-1. Write the first ~150 lines with write_file
-2. Use bash with heredoc to append the next chunk: bash({command: "cat >> file.js << 'CHUNK_END'\\n...code...\\nCHUNK_END"})
-3. Repeat until the file is complete
-NEVER try to write an entire large file in a single write_file call — it WILL be truncated or the JSON will break and the file will NOT be written.
 
 IMPORTANT: When writing code files, avoid putting backticks, complex template literals, or deeply nested quotes in write_file content. If the file contains such characters, prefer using bash with heredoc syntax instead.
 
