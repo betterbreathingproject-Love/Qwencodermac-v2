@@ -5,6 +5,7 @@ const { WebSocketServer } = require('ws')
 const fs = require('node:fs')
 const path = require('node:path')
 const http = require('node:http')
+const projects = require('./projects')
 
 /**
  * Serves the Telegram Mini App HTML and provides a WebSocket bridge
@@ -34,13 +35,24 @@ class MiniAppServer extends EventEmitter {
     const htmlPath = path.join(__dirname, 'telegram-miniapp.html')
 
     this._server = http.createServer((req, res) => {
-      if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
+      const url = new URL(req.url, `http://localhost:${this._port}`)
+      const pathname = url.pathname
+
+      // ── Static HTML ──
+      if (req.method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
         res.writeHead(200, { 'Content-Type': 'text/html' })
         fs.createReadStream(htmlPath).pipe(res)
-      } else {
-        res.writeHead(404)
-        res.end('Not found')
+        return
       }
+
+      // ── REST API ──
+      if (pathname.startsWith('/api/')) {
+        this._handleApi(req, res, pathname)
+        return
+      }
+
+      res.writeHead(404)
+      res.end('Not found')
     })
 
     this._wss = new WebSocketServer({ server: this._server, path: '/miniapp' })
@@ -76,6 +88,120 @@ class MiniAppServer extends EventEmitter {
     })
 
     return { port: this._port, url: `http://localhost:${this._port}` }
+  }
+
+  /**
+   * Parse JSON body from a request.
+   * @param {http.IncomingMessage} req
+   * @returns {Promise<object>}
+   */
+  _parseBody(req) {
+    return new Promise((resolve, reject) => {
+      let body = ''
+      req.on('data', (chunk) => { body += chunk })
+      req.on('end', () => {
+        try { resolve(JSON.parse(body || '{}')) }
+        catch { reject(new Error('Invalid JSON')) }
+      })
+      req.on('error', reject)
+    })
+  }
+
+  /**
+   * Handle REST API requests for projects and sessions.
+   * @param {http.IncomingMessage} req
+   * @param {http.ServerResponse} res
+   * @param {string} pathname
+   */
+  _handleApi(req, res, pathname) {
+    res.setHeader('Content-Type', 'application/json')
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+
+    if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return }
+
+    // GET /api/projects — list all projects
+    if (req.method === 'GET' && pathname === '/api/projects') {
+      const list = projects.listProjects()
+      res.writeHead(200)
+      res.end(JSON.stringify(list))
+      return
+    }
+
+    // GET /api/projects/:id/sessions — list sessions for a project
+    const sessionsMatch = pathname.match(/^\/api\/projects\/([^/]+)\/sessions$/)
+    if (req.method === 'GET' && sessionsMatch) {
+      const projectId = sessionsMatch[1]
+      const sessions = projects.listSessions(projectId)
+      res.writeHead(200)
+      res.end(JSON.stringify(sessions))
+      return
+    }
+
+    // GET /api/projects/:id/sessions/:sid/messages — get session messages
+    const messagesMatch = pathname.match(/^\/api\/projects\/([^/]+)\/sessions\/([^/]+)\/messages$/)
+    if (req.method === 'GET' && messagesMatch) {
+      const [, projectId, sessionId] = messagesMatch
+      const messages = projects.getSessionMessages(projectId, sessionId)
+      res.writeHead(200)
+      res.end(JSON.stringify(messages))
+      return
+    }
+
+    // POST /api/projects/:id/sessions — create a new session
+    if (req.method === 'POST' && sessionsMatch) {
+      this._parseBody(req).then((body) => {
+        const projectId = sessionsMatch[1]
+        const session = projects.createSession(projectId, body.name || 'New Session', body.type)
+        res.writeHead(201)
+        res.end(JSON.stringify(session))
+      }).catch(() => { res.writeHead(400); res.end('{"error":"Invalid body"}') })
+      return
+    }
+
+    // POST /api/projects/:id/sessions/:sid/run — run agent on a session
+    const runMatch = pathname.match(/^\/api\/projects\/([^/]+)\/sessions\/([^/]+)\/run$/)
+    if (req.method === 'POST' && runMatch) {
+      this._parseBody(req).then((body) => {
+        if (!body.prompt) { res.writeHead(400); res.end('{"error":"prompt required"}'); return }
+        const [, projectId, sessionId] = runMatch
+        // Append user message to session
+        projects.appendSessionMessage(projectId, sessionId, { role: 'user', content: body.prompt, ts: Date.now() })
+        // Trigger the job via controller
+        this._controller.handleCommand('run', body.prompt)
+        res.writeHead(200)
+        res.end(JSON.stringify({ ok: true, jobId: this._controller.getJobId() }))
+      }).catch(() => { res.writeHead(400); res.end('{"error":"Invalid body"}') })
+      return
+    }
+
+    // GET /api/projects/:id — get project details
+    const projectMatch = pathname.match(/^\/api\/projects\/([^/]+)$/)
+    if (req.method === 'GET' && projectMatch) {
+      const project = projects.openProject(projectMatch[1])
+      if (project) {
+        res.writeHead(200)
+        res.end(JSON.stringify(project))
+      } else {
+        res.writeHead(404)
+        res.end('{"error":"Not found"}')
+      }
+      return
+    }
+
+    // GET /api/status — agent status
+    if (req.method === 'GET' && pathname === '/api/status') {
+      res.writeHead(200)
+      res.end(JSON.stringify({
+        state: this._controller.getJobState(),
+        jobId: this._controller.getJobId(),
+      }))
+      return
+    }
+
+    res.writeHead(404)
+    res.end('{"error":"Not found"}')
   }
 
   /**

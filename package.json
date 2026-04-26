@@ -54,7 +54,11 @@
       {
         "from": "resources/bin/",
         "to": "bin/",
-        "filter": ["sg", "ast-grep", "agent-lsp"]
+        "filter": [
+          "sg",
+          "ast-grep",
+          "agent-lsp"
+        ]
       }
     ]
   },
@@ -63,7 +67,8 @@
     "chokidar": "^5.0.0",
     "node-pty": "^1.1.0",
     "openai": "^4.0.0",
-    "playwright": "^1.59.1"
+    "playwright": "^1.59.1",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "electron": "^41.3.0",
