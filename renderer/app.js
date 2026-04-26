@@ -547,6 +547,9 @@ async function switchSession(id) {
   const sess = sessions.find(s => s.id === id)
   activeSessionType = (sess && sess.type) || 'vibe'
   conversationHistory = await window.app.getSessionMsgs(activeProjectId, id)
+  // Reset agent stats bar from previous session to prevent visual overlap
+  const statsBar = document.getElementById('agentStats')
+  if (statsBar) { statsBar.style.display = 'none'; statsBar.innerHTML = '' }
   await restoreChatFromSnapshot()
   await restoreTodos()
   await restoreWorkflowState()
@@ -1745,6 +1748,8 @@ function finishGeneration() {
   const btn = document.getElementById('sendBtn')
   btn.disabled=false; btn.textContent='Send ↵'; btn.className='btn-send'; btn.onclick=sendAgent
   updateStatusBar('idle')
+  // Reset the agent stats bar so it doesn't linger into the next session
+  updateAgentStatsBar({ state: 'idle' })
 }
 
 function appendMsg(role, text) {
