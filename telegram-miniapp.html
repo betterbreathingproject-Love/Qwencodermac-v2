@@ -295,8 +295,19 @@ async function sendCmd(type, payload = {}) {
       body: JSON.stringify({ type, ...payload }),
     });
     const data = await res.json();
-    if (!connected) { connected = true; state.connected = true; render(); }
+    if (!connected) { connected = true; state.connected = true; }
+    // For 'run' command, immediately set state to running
+    if (type === 'run' && payload.prompt) {
+      state.jobState = 'running';
+      state.jobPrompt = payload.prompt;
+      state.jobStartedAt = Date.now();
+      state.jobId = data.jobId || 'job_' + Date.now();
+      state.logs = [];
+      state.tab = 'monitor';
+      showToast('Job started');
+    }
     handleMessage(data);
+    render();
   } catch {
     if (connected) { connected = false; state.connected = false; render(); }
   }
@@ -306,29 +317,31 @@ async function pollStatus() {
   try {
     const res = await fetch(getApiBase() + '/api/status');
     const data = await res.json();
-    if (!connected) { connected = true; state.connected = true; render(); }
-    // Update state from poll
-    if (data.state && data.state !== state.jobState) {
-      const prev = state.jobState;
+    if (!connected) { connected = true; state.connected = true; }
+
+    const prev = state.jobState;
+
+    // Update state from server
+    if (data.state) {
       state.jobState = data.state;
       state.jobId = data.jobId || state.jobId;
-      if (data.state === 'running' && prev !== 'running') {
-        state.tab = 'monitor';
-        showToast('Job started');
-      } else if (data.state === 'completed' && prev === 'running') {
-        state.history.unshift({ id: state.jobId, prompt: state.jobPrompt, state: 'completed', time: Date.now() });
-        showToast('Job completed ✓');
-      } else if (data.state === 'failed' && prev === 'running') {
-        state.history.unshift({ id: state.jobId, prompt: state.jobPrompt, state: 'failed', time: Date.now() });
-        showToast('Job failed');
-      }
-      render();
     }
-    // Fetch logs if running
-    if (data.state === 'running' && data.logs) {
+
+    // Update logs from server
+    if (data.logs && data.logs.length > 0) {
       state.logs = data.logs;
-      render();
     }
+
+    // Notifications on state transitions
+    if (data.state === 'completed' && prev === 'running') {
+      state.history.unshift({ id: state.jobId, prompt: state.jobPrompt, state: 'completed', time: Date.now() });
+      showToast('Job completed ✓');
+    } else if (data.state === 'failed' && prev === 'running') {
+      state.history.unshift({ id: state.jobId, prompt: state.jobPrompt, state: 'failed', time: Date.now() });
+      showToast('Job failed');
+    }
+
+    render();
   } catch {
     if (connected) { connected = false; state.connected = false; render(); }
   }
@@ -544,7 +557,7 @@ function renderRunTab() {
 }
 
 function renderMonitorTab() {
-  if (state.jobState === 'idle' && state.logs.length === 0) {
+  if (state.jobState === 'idle' && state.logs.length === 0 && !state.jobPrompt) {
     return `
       <div class="content">
         <div class="empty-state">
