@@ -543,6 +543,16 @@ async function switchSession(id) {
   // Save current session's chat snapshot and workflow state before switching
   await saveChatSnapshot()
   await saveWorkflowState()
+
+  // Tear down any in-flight agent event listeners from the previous session.
+  // Without this, stale onQwenEvent handlers keep firing into the new session's
+  // DOM, causing the old status to flash/fight with the new session's UI.
+  window.app.offQwenEvents()
+  window.app.offOrchestratorCompleted()
+  if (isGenerating) {
+    finishGeneration()
+  }
+
   activeSessionId = id
   const sessions = await window.app.listSessions(activeProjectId)
   const sess = sessions.find(s => s.id === id)
@@ -562,6 +572,14 @@ async function newSession(sessionType) {
   // Save current session's chat snapshot and workflow state before creating new one
   await saveChatSnapshot()
   await saveWorkflowState()
+
+  // Tear down stale agent event listeners from the previous session
+  window.app.offQwenEvents()
+  window.app.offOrchestratorCompleted()
+  if (isGenerating) {
+    finishGeneration()
+  }
+
   const sessions = await window.app.listSessions(activeProjectId)
   const type = sessionType || 'vibe'
   const prefix = type === 'spec' ? 'Spec' : 'Vibe'
