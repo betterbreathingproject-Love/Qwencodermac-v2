@@ -79,6 +79,10 @@ contextBridge.exposeInMainWorld('app', {
   getApiKeys:     ()        => ipcRenderer.invoke('get-api-keys'),
   saveApiKeys:    (k)       => ipcRenderer.invoke('save-api-keys', k),
 
+  // app settings (global)
+  getAppSettings: ()        => ipcRenderer.invoke('get-app-settings'),
+  saveAppSettings:(s)       => ipcRenderer.invoke('save-app-settings', s),
+
   // compactor
   compactorStatus:()        => ipcRenderer.invoke('compactor-status'),
   compactMessages:(m, o)    => ipcRenderer.invoke('compactor-compress-messages', m, o),

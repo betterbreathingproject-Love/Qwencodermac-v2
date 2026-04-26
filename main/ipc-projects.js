@@ -2,7 +2,7 @@
 
 const fs = require('fs')
 const path = require('path')
-const { listProjects, createProject, openProject, deleteProject, getHistory, appendHistory, clearHistory, buildProjectContext, getSettings, saveSettings, DEFAULT_SETTINGS, listSessions, createSession, renameSession, deleteSession, getSessionMessages, appendSessionMessage, clearSessionMessages, setSessionMessages, getSessionTodos, saveSessionTodos, getSessionChatSnapshot, saveSessionChatSnapshot, getSessionWorkflowState, saveSessionWorkflowState, getApiKeys, saveApiKeys } = require('../projects')
+const { listProjects, createProject, openProject, deleteProject, getHistory, appendHistory, clearHistory, buildProjectContext, getSettings, saveSettings, DEFAULT_SETTINGS, listSessions, createSession, renameSession, deleteSession, getSessionMessages, appendSessionMessage, clearSessionMessages, setSessionMessages, getSessionTodos, saveSessionTodos, getSessionChatSnapshot, saveSessionChatSnapshot, getSessionWorkflowState, saveSessionWorkflowState, getApiKeys, saveApiKeys, getAppSettings, saveAppSettings } = require('../projects')
 
 // ── validation ────────────────────────────────────────────────────────────────
 function isNonEmptyString(v) { return typeof v === 'string' && v.length > 0 }
@@ -171,6 +171,14 @@ function register(ipcMain, { getCurrentProject, setCurrentProject, getMainWindow
   ipcMain.handle('save-api-keys', (_, keys) => {
     if (!keys || typeof keys !== 'object') return { error: 'keys must be an object' }
     return saveApiKeys(keys)
+  })
+
+  // ── app settings (global) ─────────────────────────────────────────────
+  ipcMain.handle('get-app-settings', () => getAppSettings())
+
+  ipcMain.handle('save-app-settings', (_, settings) => {
+    if (!settings || typeof settings !== 'object') return { error: 'settings must be an object' }
+    return saveAppSettings(settings)
   })
 }
 

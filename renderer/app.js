@@ -16,6 +16,7 @@ let currentTodos = [] // persisted todo list for active session
 window.addEventListener('DOMContentLoaded', async () => {
   window.app.onServerStatus(s => { setServerStatus(s.running); if(s.running) refreshStatus() })
   await refreshStatus()
+  await autoLoadLastModel()
 
   // drag-drop images onto agent input
   const inputWrap = document.querySelector('.input-wrap')
@@ -89,6 +90,32 @@ async function refreshStatus() {
   const s = await window.app.serverStatus()
   setServerStatus(s.running)
   if(s.running) { if(s.models) renderModels(s.models); if(s.loaded) setLoadedModel(s.loaded) }
+}
+
+async function autoLoadLastModel() {
+  if (loadedModelId) return  // already loaded
+  if (!allModels.length) return  // no models available
+  try {
+    const appSettings = await window.app.getAppSettings()
+    if (!appSettings.lastModelPath) return
+    const match = allModels.find(m => m.path === appSettings.lastModelPath)
+    if (!match) return
+    const modelName = _formatModelName(match.id)
+    _showModelLoadingOverlay(modelName)
+    appendMsg('system', `⏳ Auto-loading last used model: ${modelName}`)
+    const r = await window.app.loadModel(match.path)
+    if (r && r.error) {
+      _hideModelLoadingOverlay()
+      appendMsg('system', `⚠️ Auto-load failed: ${r.error}`)
+    } else {
+      setLoadedModel(r.model_id || match.id)
+      _hideModelLoadingOverlay()
+      appendMsg('system', `✅ Model loaded: ${modelName}`)
+    }
+  } catch (err) {
+    _hideModelLoadingOverlay()
+    appendMsg('system', `⚠️ Auto-load failed: ${err.message || 'Unknown error'}`)
+  }
 }
 function setServerStatus(r) {
   document.getElementById('statusDot').className = 'status-dot'+(r?' online':'')
@@ -222,6 +249,7 @@ async function switchModelFromSwitcher(id, modelPath) {
       appendMsg('system', `⚠️ Failed to load model: ${r.error}`)
     } else {
       setLoadedModel(r.model_id || id)
+      window.app.saveAppSettings({ lastModelPath: modelPath })
       document.getElementById('modelSwitcherBtn').classList.remove('loading')
       _hideModelLoadingOverlay()
       appendMsg('system', `✅ Model loaded: ${modelName}`)
@@ -252,6 +280,7 @@ async function loadSelected() {
   try {
     const r=await window.app.loadModel(selectedModel.path)
     setLoadedModel(r.model_id||selectedModel.id)
+    window.app.saveAppSettings({ lastModelPath: selectedModel.path })
     t.textContent='Already loaded'
     _hideModelLoadingOverlay()
     appendMsg('system', `✅ Model loaded: ${modelName}`)

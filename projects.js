@@ -308,6 +308,22 @@ function saveApiKeys(keys) {
   return keys
 }
 
+// ── app settings (global, not per-project) ────────────────────────────────────
+const APP_SETTINGS_PATH = path.join(DATA_DIR, 'app-settings.json')
+
+function getAppSettings() {
+  try {
+    return JSON.parse(fs.readFileSync(APP_SETTINGS_PATH, 'utf-8'))
+  } catch { return {} }
+}
+
+function saveAppSettings(settings) {
+  ensureDir(DATA_DIR)
+  const merged = { ...getAppSettings(), ...settings }
+  fs.writeFileSync(APP_SETTINGS_PATH, JSON.stringify(merged, null, 2))
+  return merged
+}
+
 module.exports = {
   listProjects, createProject, openProject, deleteProject,
   getHistory, appendHistory, clearHistory, buildProjectContext,
@@ -318,4 +334,5 @@ module.exports = {
   getSessionChatSnapshot, saveSessionChatSnapshot,
   getSessionWorkflowState, saveSessionWorkflowState,
   getApiKeys, saveApiKeys,
+  getAppSettings, saveAppSettings,
 }
