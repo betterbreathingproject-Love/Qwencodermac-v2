@@ -8,7 +8,7 @@ const http = require('node:http')
 const projects = require('./projects')
 
 /**
- * Serves the Telegram Mini App HTML and provides a WebSocket bridge
+ * Serves the Telegram Mini App HTML and provides a REST API bridge
  * to the RemoteJobController for real-time communication.
  */
 class MiniAppServer extends EventEmitter {
@@ -16,11 +16,13 @@ class MiniAppServer extends EventEmitter {
    * @param {object} opts
    * @param {object} opts.jobController - RemoteJobController instance
    * @param {number} [opts.port=3847] - HTTP/WS port
+   * @param {function} [opts.onRunJob] - Callback to actually run an agent job: (prompt) => void
    */
-  constructor({ jobController, port = 3847 }) {
+  constructor({ jobController, port = 3847, onRunJob }) {
     super()
     this._controller = jobController
     this._port = port
+    this._onRunJob = onRunJob || null
     this._server = null
     this._wss = null
     this._clients = new Set()
@@ -275,18 +277,23 @@ class MiniAppServer extends EventEmitter {
     switch (msg.type) {
       case 'run':
         if (msg.prompt) {
-          this._controller.handleCommand('run', msg.prompt)
+          // Use the onRunJob callback if available (triggers real agent)
+          if (this._onRunJob) {
+            this._onRunJob(msg.prompt)
+            // Log it
+            const log = { type: 'log', text: `Job started: ${msg.prompt}`, logType: 'info', time: Date.now() }
+            this._logs.push(log)
+            if (this._logs.length > 200) this._logs.shift()
+          } else {
+            this._controller.handleCommand('run', msg.prompt)
+          }
         }
         break
       case 'stop':
         this._controller.handleCommand('stop', '')
         break
       case 'status':
-        this._broadcast({
-          type: 'status',
-          state: this._controller.getJobState(),
-          jobId: this._controller.getJobId(),
-        })
+        // no-op for REST polling, status is returned in response
         break
       case 'screenshot':
         this._controller.handleCommand('screenshot', '')

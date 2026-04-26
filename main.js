@@ -412,7 +412,20 @@ function createWindow() {
 
       // Start the HTTP/WS server
       if (!miniAppServer) {
-        miniAppServer = new MiniAppServer({ jobController: remoteJobController, port: MINIAPP_PORT })
+        miniAppServer = new MiniAppServer({
+          jobController: remoteJobController,
+          port: MINIAPP_PORT,
+          onRunJob: (prompt) => {
+            // Trigger the real Qwen agent via the same path as the main UI
+            if (qwenBridge) {
+              const cwd = currentProject || process.cwd()
+              mainWindow?.webContents.send('qwen-event', { type: 'start', prompt })
+              qwenBridge.run({ prompt, cwd, permissionMode: 'auto-edit' }).catch((err) => {
+                mainWindow?.webContents.send('qwen-event', { type: 'error', error: err.message })
+              })
+            }
+          },
+        })
         miniAppServer.start()
       }
 
