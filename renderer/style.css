@@ -642,6 +642,17 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .tool-spinner { display: inline-block; width: 10px; height: 10px; border: 1.5px solid rgba(250,204,21,0.3); border-top-color: var(--yellow); border-radius: 50%; animation: spin 0.6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ── streaming tool preview ────────────────────────────────────────────────── */
+.tool-preview { border-color: rgba(250,204,21,0.25); background: var(--bg2); }
+.tool-preview .tool-header { border-bottom: 1px solid rgba(255,255,255,0.04); }
+.tool-preview-file { display: none; padding: 4px 12px; font-size: 11px; font-weight: 600; color: var(--yellow); background: rgba(250,204,21,0.04); border-bottom: 1px solid rgba(255,255,255,0.04); }
+.tool-preview-body { display: none; padding: 0; max-height: 280px; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 0 0 10px 10px; }
+.tool-preview-body pre { margin: 0; padding: 8px 12px; font-size: 11px; font-family: 'SF Mono', monospace; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-all; }
+.tool-preview-body code { font-family: inherit; }
+.tool-preview-body .ln { display: inline-block; width: 30px; color: rgba(255,255,255,0.15); text-align: right; margin-right: 10px; user-select: none; font-size: 10px; }
+.tool-preview-lang { padding: 4px 12px 0; font-size: 10px; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+.tool-preview-body .cursor { color: var(--yellow); animation: blink 1s step-end infinite; }
+
 /* ── improved thinking section ─────────────────────────────────────────────── */
 .msg-thinking { border: 1px solid rgba(250,204,21,0.12); border-radius: 8px; overflow: hidden; margin-bottom: 10px; background: rgba(250,204,21,0.02); }
 .msg-thinking summary { padding: 8px 14px; cursor: pointer; font-size: 12px; font-weight: 500; color: #c8b530; list-style: none; display: flex; align-items: center; gap: 6px; user-select: none; background: rgba(250,204,21,0.03); }

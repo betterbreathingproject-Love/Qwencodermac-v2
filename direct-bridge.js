@@ -1590,6 +1590,7 @@ class DirectBridge {
       let usage = null
       let finishReason = null
       let buf = ''
+      let _lastToolDeltaTime = 0
 
       try {
         const { res, req } = await streamSSE(`${SERVER_URL}/v1/chat/completions`, body)
@@ -1673,6 +1674,22 @@ class DirectBridge {
                   }
                 }
                 if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments
+
+                // Stream tool call progress to the renderer so users can see
+                // what the agent is generating in real-time (file content, commands, etc.)
+                // Throttle to ~15fps to avoid flooding the renderer with tiny deltas
+                const currentTc = toolCalls[idx]
+                const now = Date.now()
+                if (currentTc.function.name && (now - _lastToolDeltaTime > 66)) {
+                  _lastToolDeltaTime = now
+                  this.send('qwen-event', {
+                    type: 'tool-delta',
+                    index: idx,
+                    id: currentTc.id,
+                    name: currentTc.function.name,
+                    argumentsSoFar: currentTc.function.arguments,
+                  })
+                }
               }
               finishReason = 'tool_calls'
             }
@@ -1685,6 +1702,19 @@ class DirectBridge {
 
         res.on('end', () => {
           this._activeReq = null
+          // Send final tool-delta for each tool call so the preview shows complete content
+          for (let i = 0; i < toolCalls.length; i++) {
+            const tc = toolCalls[i]
+            if (tc && tc.function.name) {
+              this.send('qwen-event', {
+                type: 'tool-delta',
+                index: i,
+                id: tc.id,
+                name: tc.function.name,
+                argumentsSoFar: tc.function.arguments,
+              })
+            }
+          }
           resolve({ text: accumulated, toolCalls, usage, finishReason })
         })
 

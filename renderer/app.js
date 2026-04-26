@@ -967,6 +967,7 @@ async function sendAgentMode(prompt, opts = {}) {
   }
 
   // Debounced markdown rendering — avoids O(n²) re-render on every delta
+  // Debounced markdown rendering — avoids O(n²) re-render on every delta
   let _mdRenderTimer = null
   let _mdDirty = false
   function scheduleRender() {
@@ -979,6 +980,16 @@ async function sendAgentMode(prompt, opts = {}) {
         document.getElementById(respId+'-text').innerHTML = renderMd(lastText, true) + '<span class="cursor">▌</span>'
         scrollOutput()
       }
+    })
+  }
+
+  // Debounced scroll for tool preview — avoids excessive scrolling during fast streaming
+  let _toolPreviewScrollTimer = null
+  function _scheduleToolPreviewScroll() {
+    if (_toolPreviewScrollTimer) return
+    _toolPreviewScrollTimer = requestAnimationFrame(() => {
+      _toolPreviewScrollTimer = null
+      scrollOutput()
     })
   }
 
@@ -1017,10 +1028,94 @@ async function sendAgentMode(prompt, opts = {}) {
         updateStatusBar('thinking', { activity: 'Reasoning...' })
         updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount, activity: 'Reasoning...' })
         break
+      case 'tool-delta': {
+        // Live streaming preview of tool call arguments as they're generated
+        stopPromptProgress()
+        const toolName = ev.name || ''
+        const args = ev.argumentsSoFar || ''
+
+        // Show what the agent is generating in the status bar
+        const WRITE_TOOLS = ['write_file', 'edit_file', 'create_file']
+        const isWriteTool = WRITE_TOOLS.includes(toolName)
+        const activityLabel = isWriteTool ? `Writing code via ${toolName}...` : `Preparing ${toolName}...`
+        updateStatusBar('generating', { tokens: tokenCount, tks: serverTps || _calcTks(tokenCount, startTime), activity: activityLabel })
+        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: outputTokens || tokenCount, tks: serverTps || _calcTks(tokenCount, startTime), toolCount: _agentToolCount, activity: activityLabel })
+
+        // Update or create the streaming tool preview block
+        const previewId = respId + '-tool-preview'
+        let previewEl = document.getElementById(previewId)
+        if (!previewEl) {
+          document.getElementById(respId+'-tools').insertAdjacentHTML('beforeend',
+            `<div class="tool-block tool-preview running" id="${previewId}">
+              <div class="tool-header">
+                <span class="tool-icon">⚡</span>
+                <div class="tool-header-info">
+                  <span class="tool-name">${esc(_toolDisplayName(toolName))}</span>
+                  <span class="tool-name-raw">${esc(toolName)}</span>
+                </div>
+                <span class="tool-status running"><span class="tool-spinner"></span> Generating…</span>
+              </div>
+              <div class="tool-preview-file"></div>
+              <div class="tool-preview-body"></div>
+            </div>`)
+          previewEl = document.getElementById(previewId)
+        }
+
+        // Parse partial args to extract file path and content for write tools
+        if (isWriteTool && args.length > 10) {
+          const fileEl = previewEl.querySelector('.tool-preview-file')
+          const bodyEl = previewEl.querySelector('.tool-preview-body')
+
+          // Try to extract path from partial JSON: {"path":"some/file.js","content":"...
+          const pathMatch = args.match(/"path"\s*:\s*"([^"]*)"/)
+          if (pathMatch && fileEl) {
+            fileEl.textContent = '📄 ' + pathMatch[1]
+            fileEl.style.display = 'block'
+          }
+
+          // Extract content being written — show as live code preview
+          const contentStart = args.indexOf('"content"')
+          if (contentStart !== -1) {
+            // Find the start of the content value (after "content":" )
+            const valStart = args.indexOf(':"', contentStart + 9)
+            if (valStart !== -1) {
+              let raw = args.slice(valStart + 2)
+              // Unescape basic JSON escapes for display
+              raw = raw.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+              // Trim trailing incomplete escape or quote
+              if (raw.endsWith('\\')) raw = raw.slice(0, -1)
+              if (raw.endsWith('"')) raw = raw.slice(0, -1)
+
+              if (bodyEl) {
+                // Detect language from file extension for syntax hint
+                const ext = (pathMatch?.[1] || '').split('.').pop() || ''
+                const lineCount = raw.split('\n').length
+                const lines = raw.split('\n').map((l, i) => `<span class="ln">${i + 1}</span>${esc(l)}`).join('\n')
+                bodyEl.innerHTML = `<div class="tool-preview-lang">${esc(ext)} · ${lineCount} lines</div><pre><code>${lines}</code></pre><span class="cursor">▌</span>`
+                bodyEl.style.display = 'block'
+              }
+            }
+          }
+        } else if (toolName === 'bash' && args.length > 5) {
+          const bodyEl = previewEl.querySelector('.tool-preview-body')
+          const cmdMatch = args.match(/"command"\s*:\s*"([^"]*(?:\\.[^"]*)*)/)
+          if (cmdMatch && bodyEl) {
+            let cmd = cmdMatch[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+            bodyEl.innerHTML = `<pre><code>$ ${esc(cmd)}</code></pre><span class="cursor">▌</span>`
+            bodyEl.style.display = 'block'
+          }
+        }
+
+        _scheduleToolPreviewScroll()
+        break
+      }
       case 'tool-use':
         lastToolName = ev.name || ''
         _agentToolCount++
         stopPromptProgress()
+        // Remove the streaming preview — the real tool block replaces it
+        const previewToRemove = document.getElementById(respId + '-tool-preview')
+        if (previewToRemove) previewToRemove.remove()
         // Start a new text segment for the next turn after this tool call
         allTextSegments.push('')
         document.getElementById(respId+'-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
