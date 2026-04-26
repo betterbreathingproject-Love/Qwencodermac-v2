@@ -416,21 +416,43 @@ function createWindow() {
         miniAppServer.start()
       }
 
-      // Start the tunnel for public HTTPS access
-      // Use a stable subdomain derived from the bot username for consistency
-      const localtunnel = require('localtunnel')
+      // Start cloudflared tunnel for public HTTPS access (no interstitial page)
       if (!miniAppTunnel) {
-        const subdomain = telegramBot?._botUsername
-          ? 'qc-' + telegramBot._botUsername.replace(/[^a-z0-9]/gi, '').toLowerCase().slice(0, 20)
-          : 'qwencoder-' + require('node:crypto').randomBytes(4).toString('hex')
+        const { spawn } = require('node:child_process')
+        const tunnelProcess = spawn('cloudflared', ['tunnel', '--url', `http://localhost:${MINIAPP_PORT}`], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
 
-        miniAppTunnel = await localtunnel({ port: MINIAPP_PORT, subdomain })
-        miniAppPublicUrl = miniAppTunnel.url
+        // Parse the public URL from cloudflared's stderr output
+        miniAppPublicUrl = await new Promise((resolve, reject) => {
+          let output = ''
+          const timeout = setTimeout(() => reject(new Error('Tunnel startup timed out')), 15000)
+
+          const onData = (chunk) => {
+            output += chunk.toString()
+            const match = output.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/)
+            if (match) {
+              clearTimeout(timeout)
+              tunnelProcess.stderr.off('data', onData)
+              tunnelProcess.stdout.off('data', onData)
+              resolve(match[0])
+            }
+          }
+          tunnelProcess.stderr.on('data', onData)
+          tunnelProcess.stdout.on('data', onData)
+          tunnelProcess.on('error', (err) => { clearTimeout(timeout); reject(err) })
+          tunnelProcess.on('exit', (code) => {
+            if (!miniAppPublicUrl) { clearTimeout(timeout); reject(new Error(`cloudflared exited with code ${code}`)) }
+          })
+        })
+
+        miniAppTunnel = tunnelProcess
+        miniAppTunnel.on('exit', () => { miniAppTunnel = null; miniAppPublicUrl = null })
+
         // Update the controller's mini app URL
         if (remoteJobController._miniAppUrl !== undefined) {
           remoteJobController._miniAppUrl = miniAppPublicUrl
         }
-        miniAppTunnel.on('close', () => { miniAppTunnel = null; miniAppPublicUrl = null })
 
         // Auto-set the bot's menu button to the mini app URL via Telegram API
         if (telegramBot?._token && telegramBot.getPairedChatId()) {
@@ -461,7 +483,7 @@ function createWindow() {
         menu_button: JSON.stringify({ type: 'default' }),
       }).catch(() => {})
     }
-    if (miniAppTunnel) { miniAppTunnel.close(); miniAppTunnel = null; miniAppPublicUrl = null }
+    if (miniAppTunnel) { miniAppTunnel.kill(); miniAppTunnel = null; miniAppPublicUrl = null }
     if (miniAppServer) { miniAppServer.stop(); miniAppServer = null }
     return { ok: true }
   })
@@ -488,7 +510,7 @@ app.on('window-all-closed', () => {
   ipcWatcher.unwatchProject()
   if (lspManager) lspManager.stop().catch(() => {})
   if (telegramBot) telegramBot.stop()
-  if (miniAppTunnel) { miniAppTunnel.close(); miniAppTunnel = null }
+  if (miniAppTunnel) { miniAppTunnel.kill(); miniAppTunnel = null }
   if (miniAppServer) { miniAppServer.stop(); miniAppServer = null }
   app.quit()
 })
