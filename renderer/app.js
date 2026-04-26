@@ -42,9 +42,11 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (currentProject) startFileWatcher(currentProject)
   await loadProjectList()
   await loadContextSettings()
+  await loadApiKeys()
   await restoreActiveSpec()
   checkCompactor()
   checkSearchEngine()
+  refreshWelcomeProjectBar()
 })
 
 // ── panels ────────────────────────────────────────────────────────────────────
@@ -95,33 +97,218 @@ function setServerStatus(r) {
 // ── models ────────────────────────────────────────────────────────────────────
 function renderModels(models) {
   allModels = models
+  // Update sidebar model list
   const l = document.getElementById('modelList')
   if(!models.length) { l.innerHTML='<div class="model-empty">No models</div>'; return }
   l.innerHTML = models.map(m => {
-    const n=m.id.replace(/^qwen3-vl-/,'').split('-').pop() || m.id, cls=m.id===loadedModelId?'model-card loaded':(selectedModel?.id===m.id?'model-card selected':'model-card')
+    const name = _formatModelName(m.id)
+    const cls = m.id===loadedModelId ? 'model-card loaded' : (selectedModel?.id===m.id ? 'model-card selected' : 'model-card')
     return `<div class="${cls}" id="card-${CSS.escape(m.id)}" onclick="selectModel('${m.id}','${m.path}')">
-      <div class="model-card-name">${n}</div>
-      <div class="model-card-meta"><span class="badge ${m.vision?'badge-vision':'badge-text'}">${m.vision?'👁 Vision':'💬 Text'}</span><span class="badge badge-type">${m.model_type}</span></div></div>`
+      <div class="model-card-name">${esc(name)}</div>
+      <div class="model-card-meta"><span class="badge ${m.vision?'badge-vision':'badge-text'}">${m.vision?'👁 Vision':'💬 Text'}</span><span class="badge badge-type">${esc(m.model_type)}</span></div></div>`
   }).join('')
+  // Also update the central model switcher
+  _renderModelSwitcher(models)
 }
+
+function _formatModelName(id) {
+  // Turn "qwen3-vl-lmstudio-community-Qwen3-30B-A3B-MLX-4bit" into "Qwen3 30B A3B MLX 4bit"
+  // Strip the qwen3-vl- prefix the server adds, then clean up
+  let name = id.replace(/^qwen3-vl-/, '')
+  // Remove common org prefixes
+  name = name.replace(/^(lmstudio-community|mlx-community|bartowski|unsloth)-?/i, '')
+  // Replace hyphens with spaces for readability
+  name = name.replace(/-/g, ' ')
+  return name || id
+}
+
+function _renderModelSwitcher(models) {
+  const list = document.getElementById('modelSwitcherList')
+  const nameEl = document.getElementById('modelSwitcherName')
+  if (!list) return
+
+  // Update current model display
+  if (loadedModelId) {
+    nameEl.textContent = _formatModelName(loadedModelId)
+    nameEl.style.color = ''
+  } else {
+    nameEl.textContent = 'No model loaded'
+    nameEl.style.color = 'var(--muted)'
+  }
+
+  if (!models.length) { list.innerHTML = '<div class="ms-empty">No models found in ~/.lmstudio/models/</div>'; return }
+
+  list.innerHTML = models.map((m, i) => {
+    const name = _formatModelName(m.id)
+    const isLoaded = m.id === loadedModelId
+    const icon = m.vision ? '👁️' : '💬'
+    const cls = isLoaded ? 'ms-item active' : 'ms-item'
+    // Show the original path segments for context
+    const pathDisplay = m.id.replace(/^qwen3-vl-/, '').replace(/-/g, '/')
+    return `<div class="${cls}" data-ms-idx="${i}">
+      <div class="ms-item-icon">${icon}</div>
+      <div class="ms-item-info">
+        <div class="ms-item-name">${esc(name)}</div>
+        <div class="ms-item-path">${esc(pathDisplay)}</div>
+        <div class="ms-item-badges">
+          <span class="badge ${m.vision?'badge-vision':'badge-text'}">${m.vision?'Vision':'Text'}</span>
+          <span class="badge badge-type">${esc(m.model_type)}</span>
+        </div>
+      </div>
+      ${isLoaded ? '<div class="ms-item-check">✓</div>' : ''}
+    </div>`
+  }).join('')
+
+  // Use event delegation instead of inline onclick to avoid string escaping issues
+  list.onclick = (e) => {
+    const item = e.target.closest('[data-ms-idx]')
+    if (!item) return
+    const idx = parseInt(item.dataset.msIdx, 10)
+    const m = models[idx]
+    if (m) switchModelFromSwitcher(m.id, m.path)
+  }
+}
+
+function toggleModelSwitcher() {
+  const bar = document.getElementById('modelSwitcherBar')
+  const dd = document.getElementById('modelSwitcherDropdown')
+  const isOpen = dd.style.display !== 'none'
+  dd.style.display = isOpen ? 'none' : 'block'
+  bar.classList.toggle('open', !isOpen)
+  // Close on outside click
+  if (!isOpen) {
+    const closer = (e) => {
+      if (!bar.contains(e.target)) {
+        dd.style.display = 'none'
+        bar.classList.remove('open')
+        document.removeEventListener('click', closer)
+      }
+    }
+    setTimeout(() => document.addEventListener('click', closer), 0)
+  }
+}
+
+async function switchModelFromSwitcher(id, modelPath) {
+  if (id === loadedModelId) {
+    // Already loaded, just close
+    document.getElementById('modelSwitcherDropdown').style.display = 'none'
+    document.getElementById('modelSwitcherBar').classList.remove('open')
+    return
+  }
+  // Show loading state
+  const nameEl = document.getElementById('modelSwitcherName')
+  const prevText = nameEl.textContent
+  const modelName = _formatModelName(id)
+  nameEl.innerHTML = '<span class="model-loading-spinner"></span> Loading ' + esc(modelName) + '...'
+  // Mark the clicked item as loading
+  document.querySelectorAll('.ms-item').forEach(el => el.classList.remove('loading'))
+  const idx = allModels.findIndex(m => m.id === id)
+  const targetItem = idx >= 0 ? document.querySelector(`.ms-item[data-ms-idx="${idx}"]`) : null
+  if (targetItem) targetItem.classList.add('loading')
+
+  // Show the loading overlay in the chat area
+  _showModelLoadingOverlay(modelName)
+  document.getElementById('modelSwitcherBtn').classList.add('loading')
+
+  try {
+    const r = await window.app.loadModel(modelPath)
+    if (r && r.error) {
+      nameEl.textContent = prevText
+      if (targetItem) targetItem.classList.remove('loading')
+      document.getElementById('modelSwitcherBtn').classList.remove('loading')
+      _hideModelLoadingOverlay()
+      appendMsg('system', `⚠️ Failed to load model: ${r.error}`)
+    } else {
+      setLoadedModel(r.model_id || id)
+      document.getElementById('modelSwitcherBtn').classList.remove('loading')
+      _hideModelLoadingOverlay()
+      appendMsg('system', `✅ Model loaded: ${modelName}`)
+    }
+  } catch (err) {
+    nameEl.textContent = prevText
+    if (targetItem) targetItem.classList.remove('loading')
+    document.getElementById('modelSwitcherBtn').classList.remove('loading')
+    _hideModelLoadingOverlay()
+    appendMsg('system', `⚠️ Failed to load model: ${err.message || 'Unknown error'}`)
+  }
+  document.getElementById('modelSwitcherDropdown').style.display = 'none'
+  document.getElementById('modelSwitcherBar').classList.remove('open')
+}
+
 function selectModel(id, path) {
   selectedModel={id,path}
   document.querySelectorAll('.model-card').forEach(c => { c.className = c.id==='card-'+CSS.escape(loadedModelId)?'model-card loaded':(c.id==='card-'+CSS.escape(id)?'model-card selected':'model-card') })
   const b=document.getElementById('loadBtn'), t=document.getElementById('loadBtnText')
-  b.disabled=id===loadedModelId; t.textContent=id===loadedModelId?'Already loaded':`Load ${id.split('/').pop()}`
+  b.disabled=id===loadedModelId; t.textContent=id===loadedModelId?'Already loaded':`Load ${_formatModelName(id)}`
 }
 async function loadSelected() {
   if(!selectedModel) return
   const b=document.getElementById('loadBtn'), t=document.getElementById('loadBtnText')
-  b.disabled=true; t.innerHTML='<span class="spinner"></span>Loading...'
-  try { const r=await window.app.loadModel(selectedModel.path); setLoadedModel(r.model_id||selectedModel.id); t.textContent='Already loaded' }
-  catch { t.textContent='Failed'; b.disabled=false }
+  const modelName = _formatModelName(selectedModel.id)
+  b.disabled=true; t.innerHTML='<span class="spinner"></span> Loading...'
+  _showModelLoadingOverlay(modelName)
+  try {
+    const r=await window.app.loadModel(selectedModel.path)
+    setLoadedModel(r.model_id||selectedModel.id)
+    t.textContent='Already loaded'
+    _hideModelLoadingOverlay()
+    appendMsg('system', `✅ Model loaded: ${modelName}`)
+  }
+  catch {
+    t.textContent='Failed'
+    b.disabled=false
+    _hideModelLoadingOverlay()
+    appendMsg('system', `⚠️ Failed to load model: ${modelName}`)
+  }
 }
 function setLoadedModel(id) {
   loadedModelId=id
-  document.getElementById('loadedModelName').textContent=id||'None'
+  document.getElementById('loadedModelName').textContent = id ? _formatModelName(id) : 'None'
   document.getElementById('f-modelid').textContent=id||'—'
   renderModels(allModels)
+}
+
+// ── model loading overlay ─────────────────────────────────────────────────────
+let _modelLoadTimer = null
+function _showModelLoadingOverlay(modelName) {
+  // Remove any existing overlay
+  _hideModelLoadingOverlay()
+  const out = document.getElementById('agentOutput')
+  if (!out) return
+  // Show overlay on top of the build picker or chat
+  const overlay = document.createElement('div')
+  overlay.id = 'modelLoadingOverlay'
+  overlay.className = 'model-loading-overlay'
+  overlay.innerHTML = `
+    <div class="model-loading-card">
+      <div class="model-loading-icon">
+        <div class="model-loading-ring"></div>
+        <span class="model-loading-emoji">🤖</span>
+      </div>
+      <div class="model-loading-title">Loading Model</div>
+      <div class="model-loading-name">${esc(modelName)}</div>
+      <div class="model-loading-hint" id="modelLoadingHint">Initializing...</div>
+      <div class="model-loading-bar"><div class="model-loading-bar-fill" id="modelLoadingBarFill"></div></div>
+    </div>`
+  out.appendChild(overlay)
+
+  // Animate the hint text through stages
+  let stage = 0
+  const hints = ['Initializing...', 'Loading weights into memory...', 'Preparing inference engine...', 'Almost ready...']
+  _modelLoadTimer = setInterval(() => {
+    stage++
+    const hint = document.getElementById('modelLoadingHint')
+    if (hint && stage < hints.length) hint.textContent = hints[stage]
+  }, 3000)
+}
+
+function _hideModelLoadingOverlay() {
+  if (_modelLoadTimer) { clearInterval(_modelLoadTimer); _modelLoadTimer = null }
+  const overlay = document.getElementById('modelLoadingOverlay')
+  if (overlay) {
+    overlay.classList.add('fade-out')
+    setTimeout(() => overlay.remove(), 300)
+  }
 }
 
 // ── files ─────────────────────────────────────────────────────────────────────
@@ -149,6 +336,12 @@ function startFileWatcher(dir) {
     // Auto-refresh live preview if an HTML file changed and preview is open
     if (previewOpen && ev.filename && /\.(html?|svg)$/i.test(ev.filename)) {
       autoRefreshLivePreview(ev)
+    }
+    // Auto-reload task graph when tasks.md changes on disk (e.g. from orchestrator persistence)
+    if (currentTasksPath && ev.filename && ev.filename.endsWith('tasks.md')) {
+      // Debounce: only reload if we're not mid-execution (status events handle that)
+      // This catches external edits and post-execution persistence
+      loadTaskGraph(currentTasksPath).catch(() => {})
     }
   })
 }
@@ -256,6 +449,7 @@ async function switchProject(id) {
   await loadContextSettings()
   await restoreActiveSpec()
   await loadSessions(p.activeSession)
+  refreshWelcomeProjectBar()
 }
 
 // ── sessions ──────────────────────────────────────────────────────────────────
@@ -273,6 +467,7 @@ async function loadSessions(preferredId) {
     conversationHistory = await window.app.getSessionMsgs(activeProjectId, target)
     await restoreChatFromSnapshot()
     await restoreTodos()
+    await restoreWorkflowState()
   } else {
     activeSessionId = null; activeSessionType = 'vibe'; conversationHistory = []; clearChatOutput()
   }
@@ -290,8 +485,9 @@ function renderSessionSelect(sessions) {
 
 async function switchSession(id) {
   if (!id || !activeProjectId) return
-  // Save current session's chat snapshot before switching
+  // Save current session's chat snapshot and workflow state before switching
   await saveChatSnapshot()
+  await saveWorkflowState()
   activeSessionId = id
   const sessions = await window.app.listSessions(activeProjectId)
   const sess = sessions.find(s => s.id === id)
@@ -299,13 +495,15 @@ async function switchSession(id) {
   conversationHistory = await window.app.getSessionMsgs(activeProjectId, id)
   await restoreChatFromSnapshot()
   await restoreTodos()
+  await restoreWorkflowState()
   updateSessionInfo()
 }
 
 async function newSession(sessionType) {
   if (!activeProjectId) { appendMsg('system', '⚠️ Select a project first.'); return }
-  // Save current session's chat snapshot before creating new one
+  // Save current session's chat snapshot and workflow state before creating new one
   await saveChatSnapshot()
+  await saveWorkflowState()
   const sessions = await window.app.listSessions(activeProjectId)
   const type = sessionType || 'vibe'
   const prefix = type === 'spec' ? 'Spec' : 'Vibe'
@@ -326,6 +524,41 @@ async function newSession(sessionType) {
 async function startSessionWithType(type) {
   if (!activeProjectId) { appendMsg('system', '⚠️ Select a project first.'); return }
   await newSession(type)
+}
+
+// ── welcome page project selector ─────────────────────────────────────────────
+async function welcomePickProject() {
+  const dir = await window.app.openFolder()
+  if (!dir) return
+  const name = dir.split('/').pop()
+  const p = await window.app.createProject(name, dir)
+  activeProjectId = p.id
+  currentProject = p.directory
+  await loadProjectList()
+  await renderFileTree(dir, document.getElementById('fileTree'))
+  startFileWatcher(dir)
+  document.getElementById('projectPath').textContent = dir
+  await loadContextSettings()
+  await loadSessions()
+  refreshWelcomeProjectBar()
+}
+
+async function welcomeSwitchProject(id) {
+  if (!id) return
+  await switchProject(id)
+  refreshWelcomeProjectBar()
+}
+
+async function refreshWelcomeProjectBar() {
+  const sel = document.getElementById('welcomeProjectSelect')
+  const pathEl = document.getElementById('welcomeProjectPath')
+  if (!sel) return
+  const projects = await window.app.listProjects()
+  sel.innerHTML = '<option value="">— Select a project —</option>' +
+    projects.map(p => `<option value="${p.id}" ${p.id === activeProjectId ? 'selected' : ''}>${p.name}</option>`).join('')
+  if (pathEl) {
+    pathEl.textContent = currentProject || ''
+  }
 }
 
 async function renameCurrentSession() {
@@ -400,6 +633,16 @@ function clearChatOutput() {
       <div class="build-picker-icon">✦</div>
       <div class="build-picker-title">Let's build</div>
       <div class="build-picker-subtitle">Plan, search, or build anything</div>
+      <div class="build-picker-project" id="welcomeProjectBar">
+        <div class="bp-project-row" id="welcomeProjectRow">
+          <span class="bp-project-icon">📁</span>
+          <select id="welcomeProjectSelect" class="bp-project-select" onchange="welcomeSwitchProject(this.value)">
+            <option value="">— Select a project —</option>
+          </select>
+          <button class="bp-project-btn" onclick="welcomePickProject()" title="Open folder">Open Folder</button>
+        </div>
+        <div class="bp-project-path" id="welcomeProjectPath"></div>
+      </div>
       <div class="build-picker-cards">
         <button class="build-card build-card-vibe" onclick="startSessionWithType('vibe')">
           <span class="build-card-icon">💬</span>
@@ -409,6 +652,7 @@ function clearChatOutput() {
         ${specResumeHtml}
       </div>
     </div>`
+  refreshWelcomeProjectBar()
 }
 
 function restoreChat() {
@@ -435,6 +679,8 @@ async function saveChatSnapshot() {
   if (snapshot) {
     await window.app.saveSessionSnapshot(activeProjectId, activeSessionId, snapshot)
   }
+  // Also persist workflow state alongside the snapshot
+  await saveWorkflowState()
 }
 
 /** Restore chat from a rich HTML snapshot, falling back to plain message replay */
@@ -465,6 +711,67 @@ async function restoreTodos() {
     if (todoPanel) { todoPanel.style.display = 'none' }
     const todoPanelBody = document.getElementById('todoPanelBody')
     if (todoPanelBody) todoPanelBody.innerHTML = ''
+  }
+}
+
+/** Save the current spec + task graph state for the active session */
+async function saveWorkflowState() {
+  if (!activeProjectId || !activeSessionId) return
+  const state = {
+    specDir: currentSpecDir || null,
+    specName: currentSpecName || null,
+    tasksPath: currentTasksPath || null,
+  }
+  await window.app.saveSessionWorkflowState(activeProjectId, activeSessionId, state)
+}
+
+/** Restore spec + task graph state for the active session */
+async function restoreWorkflowState() {
+  if (!activeProjectId || !activeSessionId) {
+    currentTaskGraph = null
+    currentTasksPath = null
+    renderTaskGraph({ nodes: {} })
+    return
+  }
+  const state = await window.app.getSessionWorkflowState(activeProjectId, activeSessionId)
+  if (state) {
+    // Restore spec context
+    if (state.specDir) {
+      currentSpecDir = state.specDir
+      currentSpecName = state.specName || null
+    } else {
+      currentSpecDir = null
+      currentSpecName = null
+    }
+    // Restore task graph from persisted tasks.md path
+    if (state.tasksPath) {
+      currentTasksPath = state.tasksPath
+      try {
+        await loadTaskGraph(state.tasksPath)
+      } catch (_) {
+        // Task file may have been deleted — clear gracefully
+        currentTaskGraph = null
+        currentTasksPath = null
+      }
+    } else if (state.specDir) {
+      // No explicit tasksPath but we have a spec — try loading its tasks.md
+      const specTasksPath = state.specDir + '/tasks.md'
+      try {
+        await loadTaskGraph(specTasksPath)
+      } catch (_) {
+        currentTaskGraph = null
+        currentTasksPath = null
+      }
+    } else {
+      currentTaskGraph = null
+      currentTasksPath = null
+      document.getElementById('taskNodeList').innerHTML = '<div class="model-empty" id="taskGraphEmpty">No task graph loaded. Open a Tasks.md file or start a spec workflow.</div>'
+    }
+  } else {
+    // No workflow state — clear task graph sidebar
+    currentTaskGraph = null
+    currentTasksPath = null
+    document.getElementById('taskNodeList').innerHTML = '<div class="model-empty" id="taskGraphEmpty">No task graph loaded. Open a Tasks.md file or start a spec workflow.</div>'
   }
 }
 
@@ -536,7 +843,7 @@ function sendAgent() {
 }
 
 // ── agent mode (Qwen Code SDK with tools) ─────────────────────────────────────
-async function sendAgentMode(prompt) {
+async function sendAgentMode(prompt, opts = {}) {
   if (!currentProject) {
     appendMsg('system', '📁 Agent mode needs a project folder. Opening picker...')
     const p = await window.app.openFolder()
@@ -554,10 +861,14 @@ async function sendAgentMode(prompt) {
   btn.onclick = () => { window.app.qwenInterrupt(); finishGeneration() }
 
   const out = document.getElementById('agentOutput')
-  if(out.querySelector('.agent-welcome')) out.innerHTML = ''
+  if(out.querySelector('.agent-welcome') || out.querySelector('.build-picker')) out.innerHTML = ''
 
-  appendMsg('user', esc(prompt))
-  saveToHistory('user', prompt)
+  if (!opts.skipUserMsg) {
+    appendMsg('user', esc(prompt))
+  }
+  // Save a compact version to history for spec prompts (avoid storing massive task lists)
+  const historyContent = (opts.historyLabel) ? opts.historyLabel : prompt
+  saveToHistory('user', historyContent)
   document.getElementById('agentPrompt').value = ''
 
   // show attached images in the user message bubble
@@ -585,7 +896,10 @@ async function sendAgentMode(prompt) {
   let agentFinished = false
   let lastToolName = ''
   let inputTokens = 0, outputTokens = 0
+  let serverTps = null // real tk/s from server, used when available
+  let allTextSegments = [] // accumulates text across all turns (text→tool→text→...)
   window._rawCount = 0
+  window._rawToolCalls = null
   window.app.offQwenEvents()
   updateStatusBar('initializing', { progress: -1, activity: 'Starting agent...' })
   updateAgentStatsBar({ state: 'initializing', progress: -1, activity: 'Starting agent...' })
@@ -644,7 +958,10 @@ async function sendAgentMode(prompt) {
         lastText = ev.text
         if (!startTime) startTime = Date.now()
         stopPromptProgress()
-        tokenCount = lastText.length
+        tokenCount++ // each text-delta ≈ 1 token
+        // Keep the latest segment in allTextSegments (last entry = current turn)
+        if (allTextSegments.length === 0) allTextSegments.push(ev.text)
+        else allTextSegments[allTextSegments.length - 1] = ev.text
         // Extract <think> content from text-delta and route to thinking box
         const thinkContent = extractThinking(lastText)
         if (thinkContent) {
@@ -653,8 +970,8 @@ async function sendAgentMode(prompt) {
           document.getElementById(respId+'-think-body').textContent = thinkContent + '▌'
         }
         scheduleRender()
-        updateStatusBar('generating', { tokens: tokenCount, tks: _calcTks(tokenCount, startTime) })
-        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, tks: _calcTks(tokenCount, startTime), toolCount: _agentToolCount, activity: 'Writing response...' })
+        updateStatusBar('generating', { tokens: tokenCount, tks: serverTps || _calcTks(tokenCount, startTime) })
+        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: outputTokens || tokenCount, tks: serverTps || _calcTks(tokenCount, startTime), toolCount: _agentToolCount, activity: 'Writing response...' })
         break
       case 'thinking-delta':
         lastThinking = ev.text
@@ -669,15 +986,18 @@ async function sendAgentMode(prompt) {
         lastToolName = ev.name || ''
         _agentToolCount++
         stopPromptProgress()
+        // Start a new text segment for the next turn after this tool call
+        allTextSegments.push('')
         document.getElementById(respId+'-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
         document.getElementById(respId+'-status').textContent = `🔧 Using tool: ${ev.name}`
         updateStatusBar('tool', { toolName: ev.name, activity: `Running ${ev.name}...` })
-        updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: `Running ${ev.name}...` })
+        updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: `Running ${ev.name}...` })
         scrollOutput()
         break
       case 'tool-result': {
         const toolsDiv = document.getElementById(respId+'-tools')
         const lastTool = toolsDiv.querySelector('.tool-block:last-child')
+
         if (lastTool) {
           const newStatus = ev.is_error ? 'error' : 'done'
           lastTool.className = lastTool.className.replace(/\b(running|done|error)\b/g, '').trim() + ' ' + newStatus
@@ -699,14 +1019,19 @@ async function sendAgentMode(prompt) {
           if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
         }
         document.getElementById(respId+'-status').textContent = '🤖 Agent processing...'
-        startPromptProgress()
+        // Show "waiting for model" state — the server is now processing the tool
+        // result and deciding what to do next
+        updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: 'Thinking about next step...' })
         scrollOutput()
         break
       }
       case 'assistant': {
         let html = ''
         for (const block of (ev.blocks || [])) {
-          if (block.type === 'text') html += renderMd(block.text)
+          if (block.type === 'text') {
+            html += renderMd(block.text)
+            allTextSegments.push(block.text)
+          }
           else if (block.type === 'thinking') { document.getElementById(respId+'-think').style.display = ''; document.getElementById(respId+'-think-body').textContent = block.text }
           else if (block.type === 'tool_use') document.getElementById(respId+'-tools').insertAdjacentHTML('beforeend', renderToolUse(block.name, block.input, 'done'))
           else if (block.type === 'tool_result') { const td = document.getElementById(respId+'-tools'); const lt = td.querySelector('.tool-block:last-child'); if (lt) lt.insertAdjacentHTML('beforeend', renderToolResult(block.content, block.is_error)) }
@@ -724,9 +1049,8 @@ async function sendAgentMode(prompt) {
       case 'system':
         if (ev.subtype === 'debug') document.getElementById(respId+'-status').textContent = `🔍 ${ev.data}`
         else { document.getElementById(respId+'-status').textContent = ev.subtype === 'init' ? '🤖 Agent initialized' : `⚙️ ${ev.subtype}` }
-        // Don't go to idle on system events — agent is still working
         updateStatusBar('processing', { activity: ev.subtype === 'debug' ? ev.data : ev.subtype })
-        updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: ev.subtype === 'debug' ? ev.data : ev.subtype })
+        updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: ev.subtype === 'debug' ? ev.data : ev.subtype })
         scrollOutput()
         break
       case 'usage':
@@ -738,7 +1062,7 @@ async function sendAgentMode(prompt) {
         break
       case 'result':
         document.getElementById(respId+'-status').textContent = ev.is_error ? `❌ ${ev.subtype}: ${ev.result||'error'}` : '✅ Done'
-        if (!agentFinished) {
+        if (!agentFinished && !window._pendingTasksExecute) {
           agentFinished = true
           stopPromptProgress()
           updateStatusBar('idle')
@@ -746,12 +1070,20 @@ async function sendAgentMode(prompt) {
           finishGeneration()
         }
         break
+      case 'tasks-file-written':
+        // The agent wrote a tasks.md / todo.md file — remember it for orchestrator
+        if (ev.path && currentProject) {
+          window._pendingTasksExecute = ev.path
+        }
+        break
       case 'session-end':
         document.getElementById(respId+'-status').textContent = '✅ Agent finished'
+        // Combine all text segments from every turn (text→tool→text→...)
+        const fullText = allTextSegments.filter(Boolean).join('\n\n')
         const textEl = document.getElementById(respId+'-text')
-        if (textEl) textEl.innerHTML = renderMd(lastText)
+        if (textEl) textEl.innerHTML = renderMd(fullText)
         // Finalize thinking box with extracted content
-        const finalThink = extractThinking(lastText)
+        const finalThink = extractThinking(fullText)
         const tb = document.getElementById(respId+'-think-body')
         if (finalThink && tb) {
           document.getElementById(respId+'-think').style.display = ''
@@ -759,11 +1091,227 @@ async function sendAgentMode(prompt) {
         } else if (tb && tb.textContent.endsWith('▌')) {
           tb.textContent = tb.textContent.slice(0,-1)
         }
-        if (lastText) saveToHistory('assistant', lastText)
+        if (fullText) saveToHistory('assistant', fullText)
         if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
         showPreviewButton(respId)
-        // Persist the rich chat snapshot (tool blocks, thinking, etc.)
         saveChatSnapshot()
+
+        // If the agent wrote a tasks file, parse it and trigger the orchestrator
+        if (window._pendingTasksExecute) {
+          const tasksPath = window._pendingTasksExecute
+          window._pendingTasksExecute = null
+          console.log('[orchestrator] Triggering execution for:', tasksPath)
+
+          // Wrap in async IIFE — parse must complete before execute starts
+          ;(async () => {
+          // Parse FIRST, then execute — avoid race where status events fire before graph is loaded
+          let parsed = null
+          try {
+            parsed = await window.app.taskGraphParse(tasksPath)
+          } catch (_) { /* best-effort */ }
+
+          if (parsed && parsed.nodes) {
+            currentTaskGraph = parsed
+            currentTasksPath = tasksPath
+            renderTaskGraph(parsed)
+            saveWorkflowState() // persist task graph path for session restore
+
+            const todos = Object.values(parsed.nodes).map(n => ({
+              id: n.id,
+              content: n.title,
+              status: n.status === 'not_started' ? 'pending' : n.status,
+            }))
+            if (todos.length > 0) updateTodoPanel(todos, 'done')
+          }
+
+          agentFinished = false
+          isGenerating = true
+          const btn = document.getElementById('sendBtn')
+          btn.disabled = false; btn.innerHTML = '<span class="spinner"></span>Stop'; btn.className = 'btn-send btn-stop'
+          btn.onclick = () => { window.app.qwenInterrupt(); finishGeneration() }
+
+          // Sync task graph sidebar buttons to show running state
+          document.getElementById('tgRunBtn').style.display = 'none'
+          document.getElementById('tgPauseBtn').style.display = 'inline-block'
+          document.getElementById('tgAbortBtn').style.display = 'inline-block'
+
+          // Switch to tasks panel in sidebar so user can see progress
+          showPanel('tasks', document.querySelector('[data-panel="tasks"]'))
+
+          const orchId = 'resp-orch-' + Date.now()
+          const out = document.getElementById('agentOutput')
+          out.insertAdjacentHTML('beforeend', `<div class="msg-block" id="${orchId}">
+            <div class="msg-system" id="${orchId}-status">🚀 Orchestrator: executing tasks...</div>
+            <div id="${orchId}-tasks"></div>
+          </div>`)
+          scrollOutput()
+
+          window.app.offQwenEvents()
+          let orchToolName = ''
+          let orchTaskBlockId = null
+          let orchTaskText = ''
+          let orchTaskCount = 0
+
+          function newOrchTaskBlock(label) {
+            orchTaskCount++
+            orchTaskText = ''
+            orchTaskBlockId = orchId + '-task-' + orchTaskCount
+            const tasksDiv = document.getElementById(orchId + '-tasks')
+            tasksDiv.insertAdjacentHTML('beforeend', `<div class="msg-block" id="${orchTaskBlockId}" style="margin:6px 0;padding:8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg3)">
+              <div class="msg-system" id="${orchTaskBlockId}-status" style="font-weight:600">${label}</div>
+              <div id="${orchTaskBlockId}-tools"></div>
+              <details class="msg-thinking" id="${orchTaskBlockId}-think" style="display:none">
+                <summary>🧠 Thinking</summary>
+                <div class="msg-thinking-body" id="${orchTaskBlockId}-think-body"></div>
+              </details>
+              <div class="msg-text" id="${orchTaskBlockId}-text"></div>
+            </div>`)
+            scrollOutput()
+          }
+
+          window.app.onQwenEvent(ev => {
+            switch (ev.type) {
+              case 'session-start': {
+                // Find the current in-progress task from the todo panel or task graph
+                const activeTask = currentTodos.find(t => t.status === 'in_progress')
+                // Use _currentAgentType which is set by onTaskStatusEvent (fires before session-start)
+                const agentType = _currentAgentType
+                const agentBadge = agentType && agentType !== 'general' ? ` <span class="orch-agent-badge">${agentType}</span>` : ''
+                const taskLabel = activeTask ? `🔧 Task ${activeTask.id}: ${activeTask.content}${agentBadge}` : '🔧 Working on task...'
+                newOrchTaskBlock(taskLabel)
+                document.getElementById(orchId + '-status').textContent = `🚀 Orchestrator: task ${orchTaskCount}...`
+                // Start prompt progress for this task
+                startPromptProgress()
+                updateAgentStatsBar({ state: 'prompt-eval', inputTokens, outputTokens: tokenCount, progress: 0, toolCount: _agentToolCount, agentType, activity: activeTask ? `Task ${activeTask.id}: Evaluating prompt...` : 'Evaluating prompt...' })
+                break
+              }
+              case 'text-delta': {
+                if (!orchTaskBlockId) newOrchTaskBlock('🔧 Working...')
+                stopPromptProgress()
+                orchTaskText = ev.text
+                // Strip thinking tags from display
+                let displayText = orchTaskText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+                // If still inside an unclosed <think> tag, don't show the thinking content
+                const openThink = orchTaskText.lastIndexOf('<think>')
+                const closeThink = orchTaskText.lastIndexOf('</think>')
+                if (openThink > closeThink) {
+                  displayText = orchTaskText.slice(0, openThink).trim()
+                  // Show thinking in the thinking box
+                  const thinkContent = orchTaskText.slice(openThink + 7)
+                  const thinkEl = document.getElementById(orchTaskBlockId + '-think')
+                  if (thinkEl) { thinkEl.style.display = ''; document.getElementById(orchTaskBlockId + '-think-body').textContent = thinkContent + '▌' }
+                }
+                const textEl = document.getElementById(orchTaskBlockId + '-text')
+                if (textEl && displayText) textEl.innerHTML = renderMd(displayText, true) + '<span class="cursor">▌</span>'
+                tokenCount++
+                updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, agentType: _currentAgentType, activity: 'Writing response...' })
+                scrollOutput()
+                break
+              }
+              case 'tool-use':
+                if (!orchTaskBlockId) newOrchTaskBlock('🔧 Working...')
+                stopPromptProgress()
+                orchToolName = ev.name || ''
+                _agentToolCount++
+                document.getElementById(orchTaskBlockId + '-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
+                document.getElementById(orchTaskBlockId + '-status').textContent = `🔧 Using tool: ${ev.name}`
+                updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, agentType: _currentAgentType, activity: `Running ${ev.name}...` })
+                scrollOutput()
+                break
+              case 'tool-result': {
+                if (!orchTaskBlockId) break
+                const toolsDiv = document.getElementById(orchTaskBlockId + '-tools')
+                const lastTool = toolsDiv?.querySelector('.tool-block:last-child')
+                if (lastTool) {
+                  const newStatus = ev.is_error ? 'error' : 'done'
+                  lastTool.className = lastTool.className.replace(/\b(running|done|error)\b/g, '').trim() + ' ' + newStatus
+                  const statusEl = lastTool.querySelector('.tool-status')
+                  if (statusEl) { statusEl.className = 'tool-status ' + newStatus; statusEl.innerHTML = ev.is_error ? '✗ Error' : '✓ Done' }
+                  lastTool.insertAdjacentHTML('beforeend', renderToolResult(ev.content, ev.is_error))
+                }
+                const FILE_TOOLS = ['write_file', 'edit_file', 'create_file', 'bash']
+                if (!ev.is_error && FILE_TOOLS.some(t => orchToolName.includes(t))) {
+                  if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
+                }
+                updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, agentType: _currentAgentType, activity: 'Thinking about next step...' })
+                scrollOutput()
+                break
+              }
+              case 'result':
+                if (orchTaskBlockId && ev.result && !ev.is_error) {
+                  const textEl = document.getElementById(orchTaskBlockId + '-text')
+                  if (textEl) {
+                    let cleanResult = ev.result.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+                    textEl.innerHTML = renderMd(cleanResult)
+                  }
+                }
+                break
+              case 'raw-stream': {
+                const sev = ev.event; if (!sev) break
+                if (sev.usage) {
+                  inputTokens = sev.usage.prompt_tokens || inputTokens
+                  outputTokens = sev.usage.completion_tokens || outputTokens
+                  const genTps = sev.x_stats?.generation_tps
+                  const promptTps = sev.x_stats?.prompt_tps
+                  if (genTps) serverTps = genTps
+                  updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks: genTps, promptTps, peakMemory: sev.x_stats?.peak_memory_gb, toolCount: _agentToolCount, agentType: _currentAgentType })
+                }
+                break
+              }
+              case 'session-end':
+                // Finalize current task block and prepare for next
+                if (orchTaskBlockId) {
+                  const statusEl = document.getElementById(orchTaskBlockId + '-status')
+                  if (statusEl) statusEl.textContent = '✅ Task completed'
+                  // Finalize thinking box
+                  const tb = document.getElementById(orchTaskBlockId + '-think-body')
+                  if (tb && tb.textContent.endsWith('▌')) tb.textContent = tb.textContent.slice(0, -1)
+                }
+                orchTaskBlockId = null
+                orchTaskText = ''
+                document.getElementById(orchId + '-status').textContent = '🚀 Orchestrator: moving to next task...'
+                scrollOutput()
+                break
+              case 'error':
+                appendMsg('system', '❌ Task error: ' + ev.error)
+                break
+            }
+          })
+
+          window.app.onOrchestratorCompleted(() => {
+            window.app.offOrchestratorCompleted()
+            window.app.offQwenEvents()
+            const allDone = currentTodos.every(t => t.status === 'completed' || t.status === 'done')
+            document.getElementById(orchId + '-status').textContent = allDone ? '✅ All tasks completed' : '⚠️ Orchestrator stopped'
+            if (allDone) appendMsg('system', '🎉 All tasks completed!')
+            if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
+            saveChatSnapshot()
+            agentFinished = true
+            isGenerating = false
+            updateStatusBar('idle')
+            updateAgentStatsBar({ state: 'done', inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount })
+            finishGeneration()
+
+            // Reset task graph sidebar buttons
+            document.getElementById('tgRunBtn').style.display = 'inline-block'
+            document.getElementById('tgPauseBtn').style.display = 'none'
+            document.getElementById('tgResumeBtn').style.display = 'none'
+            document.getElementById('tgAbortBtn').style.display = 'none'
+
+            // Refresh task graph to show final statuses
+            if (currentTasksPath) loadTaskGraph(currentTasksPath).catch(() => {})
+          })
+
+          window.app.taskGraphExecute(tasksPath).then(r => {
+            console.log('[orchestrator] Result:', r)
+            if (r.error) appendMsg('system', `⚠️ Orchestrator error: ${r.error}`)
+          }).catch(err => {
+            console.error('[orchestrator] Error:', err)
+            appendMsg('system', `⚠️ Orchestrator failed: ${err.message}`)
+          })
+          })() // end async IIFE
+        }
+
         if (!agentFinished) {
           agentFinished = true
           updateStatusBar('idle')
@@ -798,6 +1346,9 @@ async function sendAgentMode(prompt) {
           if (!startTime) startTime = Date.now()
           const content = sev.choices[0].delta.content
           lastText += content
+          // Keep allTextSegments in sync for raw-stream path
+          if (allTextSegments.length === 0) allTextSegments.push(content)
+          else allTextSegments[allTextSegments.length - 1] = lastText
           // Check for <think> tags in accumulated text
           const thinkInText = extractThinking(lastText)
           if (thinkInText) {
@@ -805,34 +1356,87 @@ async function sendAgentMode(prompt) {
             document.getElementById(respId+'-think-body').textContent = thinkInText + '▌'
           }
           scheduleRender()
-          tokenCount += content.length
-          const tks = _calcTks(tokenCount, startTime)
-          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, tks, toolCount: _agentToolCount, activity: 'Writing response...' })
-        } else if (sev.type === 'content_block_delta' && sev.delta?.text) {
+          tokenCount++ // each SSE chunk ≈ 1 token
+          const tks = serverTps || _calcTks(tokenCount, startTime)
+          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: outputTokens || tokenCount, tks, toolCount: _agentToolCount, activity: 'Writing response...' })
+        }
+        // Handle OpenAI-compatible tool_calls streaming deltas
+        if (sev.choices?.[0]?.delta?.tool_calls) {
+          stopPromptProgress()
+          for (const tc of sev.choices[0].delta.tool_calls) {
+            const idx = tc.index ?? 0
+            // Initialize accumulator for this tool call index
+            if (!window._rawToolCalls) window._rawToolCalls = {}
+            if (!window._rawToolCalls[idx]) {
+              window._rawToolCalls[idx] = { id: '', name: '', arguments: '' }
+            }
+            const acc = window._rawToolCalls[idx]
+            if (tc.id) acc.id = tc.id
+            if (tc.function?.name) acc.name = tc.function.name
+            if (tc.function?.arguments) acc.arguments += tc.function.arguments
+            // When we have a name and this is the first chunk, show the tool block
+            if (acc.name && !acc._shown) {
+              acc._shown = true
+              _agentToolCount++
+              lastToolName = acc.name
+              allTextSegments.push('')
+              document.getElementById(respId+'-tools').insertAdjacentHTML('beforeend', renderToolUse(acc.name, acc.arguments || '{}', 'running'))
+              document.getElementById(respId+'-status').textContent = `🔧 Using tool: ${acc.name}`
+              updateAgentStatsBar({ state: 'tool', toolName: acc.name, inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: `Running ${acc.name}...` })
+              scrollOutput()
+            }
+          }
+        }
+        // Handle OpenAI-compatible finish_reason for tool_calls
+        if (sev.choices?.[0]?.finish_reason === 'tool_calls' || sev.choices?.[0]?.finish_reason === 'stop') {
+          if (window._rawToolCalls) {
+            // Update tool blocks with final parsed arguments
+            for (const idx of Object.keys(window._rawToolCalls)) {
+              const acc = window._rawToolCalls[idx]
+              if (acc.name && acc._shown) {
+                let parsedInput = acc.arguments
+                try { parsedInput = JSON.parse(acc.arguments) } catch {}
+                // Update the last tool block with final input
+                const toolsDiv = document.getElementById(respId+'-tools')
+                const lastTool = toolsDiv.querySelector('.tool-block:last-child')
+                if (lastTool) {
+                  const bodyRaw = lastTool.querySelector('.tool-body-raw')
+                  if (bodyRaw) bodyRaw.textContent = typeof parsedInput === 'string' ? parsedInput : JSON.stringify(parsedInput, null, 2)
+                }
+              }
+            }
+            window._rawToolCalls = null
+          }
+        }
+        if (sev.type === 'content_block_delta' && sev.delta?.text) {
           stopPromptProgress()
           if (!startTime) startTime = Date.now()
           const deltaText = sev.delta.text
           lastText += deltaText
+          // Keep allTextSegments in sync for content_block_delta path
+          if (allTextSegments.length === 0) allTextSegments.push(deltaText)
+          else allTextSegments[allTextSegments.length - 1] = lastText
           const thinkInText2 = extractThinking(lastText)
           if (thinkInText2) {
             document.getElementById(respId+'-think').style.display = ''
             document.getElementById(respId+'-think-body').textContent = thinkInText2 + '▌'
           }
           scheduleRender()
-          tokenCount += deltaText.length
-          const tks2 = _calcTks(tokenCount, startTime)
-          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, tks: tks2, toolCount: _agentToolCount, activity: 'Writing response...' })
+          tokenCount++ // each content_block_delta ≈ 1 token
+          const tks2 = serverTps || _calcTks(tokenCount, startTime)
+          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: outputTokens || tokenCount, tks: tks2, toolCount: _agentToolCount, activity: 'Writing response...' })
         } else if (sev.type === 'content_block_delta' && sev.delta?.thinking) {
           stopPromptProgress()
           lastThinking += sev.delta.thinking
           document.getElementById(respId+'-think').style.display = ''
           document.getElementById(respId+'-think-body').textContent = lastThinking + '▌'
-          updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Reasoning...' })
+          updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: 'Reasoning...' })
         } else if (sev.usage) {
           inputTokens = sev.usage.prompt_tokens || inputTokens
           outputTokens = sev.usage.completion_tokens || outputTokens || tokenCount
           const genTps = sev.x_stats?.generation_tps
           const promptTps = sev.x_stats?.prompt_tps
+          if (genTps) serverTps = genTps // lock in the server's real tps
           updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks: genTps, promptTps, peakMemory: sev.x_stats?.peak_memory_gb, toolCount: _agentToolCount })
         }
         break
@@ -858,6 +1462,8 @@ async function sendAgentMode(prompt) {
     model: loadedModelId,
     images: sentImages.length > 0 ? sentImages : undefined,
     conversationHistory: historyForAgent.length > 0 ? historyForAgent : undefined,
+    samplingParams: getSamplingParams(),
+    taskGraphPath: currentTasksPath || undefined,
   })
 }
 
@@ -875,7 +1481,15 @@ function appendMsg(role, text) {
   scrollOutput()
 }
 
-function scrollOutput() { const o=document.getElementById('agentOutput'); o.scrollTop=o.scrollHeight }
+function scrollOutput() {
+  const o = document.getElementById('agentOutput')
+  // Only auto-scroll if the user is near the bottom (within 150px).
+  // If they've scrolled up to read earlier messages, don't yank them down.
+  const distanceFromBottom = o.scrollHeight - o.scrollTop - o.clientHeight
+  if (distanceFromBottom < 150) {
+    o.scrollTop = o.scrollHeight
+  }
+}
 
 // ── vision ────────────────────────────────────────────────────────────────────
 function loadImage(e){const f=e.target.files[0];if(f)readImageFile(f)}
@@ -898,105 +1512,7 @@ async function sendVision(){
   btn.disabled=false;btn.textContent='Ask ↵';isGenerating=false
 }
 
-// ── markdown ──────────────────────────────────────────────────────────────────
-function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
-function stripThinking(t){
-  // Remove complete <think>...</think> blocks (case-insensitive)
-  t = t.replace(/<think>([\s\S]*?)<\/think>/gi, '')
-  // Remove unclosed <think> block at end (streaming)
-  t = t.replace(/<think>[\s\S]*$/gi, '')
-  // Remove any orphaned </think> tags
-  t = t.replace(/<\/think>/gi, '')
-  return t.trim()
-}
-function extractThinking(t){
-  const parts = []
-  // extract completed think blocks (case-insensitive, handles <Think>...</Think>)
-  t.replace(/<think>([\s\S]*?)<\/think>/gi, (_, content) => { parts.push(content.trim()); return '' })
-  // extract unclosed (streaming) think block
-  const unclosed = t.match(/<think>([\s\S]*)$/i)
-  if (unclosed) parts.push(unclosed[1].trim())
-  return parts.join('\n\n')
-}
-function stripToolCallMarkup(t){return t.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi,'').replace(/<tool_call>[\s\S]*$/gi,'').trim()}
-
-let _codeBlockId = 0
-function renderMd(text, isStreaming){
-  if(!text) return ''
-  text = stripThinking(text)
-  text = stripToolCallMarkup(text)
-  let html = esc(text)
-
-  // code blocks (fenced)
-  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-    const id = 'cb-' + (++_codeBlockId)
-    const trimmed = code.trim()
-    const lc = trimmed.split('\n').length
-    const lines = trimmed.split('\n').map((l,i) => `<span class="ln">${i+1}</span>${l}`).join('\n')
-    const canPreview = ['html','htm','svg'].includes((lang||'').toLowerCase())
-    return `<div class="code-block"><div class="code-header"><span class="code-lang">${lang||'code'}</span><span class="code-lines">${lc} lines</span><button class="code-copy" onclick="copyCodeBlock('${id}',this)">Copy</button><button class="code-copy" onclick="saveCodeToFile('${id}','${lang||'txt'}',this)">💾 Save</button>${canPreview?`<button class="code-preview" onclick="previewCode('${id}')">▶ Preview</button>`:''}</div><pre id="${id}"><code>${lines}</code></pre></div>`
-  })
-
-  // streaming partial code block
-  if(isStreaming){
-    html = html.replace(/```(\w*)\n?([\s\S]*)$/, (_, lang, code) => {
-      const trimmed = code.trim()
-      if(!trimmed) return `<div class="code-block streaming"><div class="code-header"><span class="code-lang">${lang||'code'}</span><span class="code-lines">writing...</span></div><pre><code></code></pre></div>`
-      const lines = trimmed.split('\n').map((l,i) => `<span class="ln">${i+1}</span>${l}`).join('\n')
-      return `<div class="code-block streaming"><div class="code-header"><span class="code-lang">${lang||'code'}</span><span class="code-lines">${trimmed.split('\n').length} lines...</span></div><pre><code>${lines}</code></pre></div>`
-    })
-  }
-
-  // markdown tables
-  html = html.replace(/((?:^\|.+\|$\n?)+)/gm, (tableBlock) => {
-    const rows = tableBlock.trim().split('\n').filter(r => r.trim())
-    if (rows.length < 2) return tableBlock
-    // check if row 2 is a separator (|---|---|)
-    const isSep = r => /^\|[\s\-:]+(\|[\s\-:]+)+\|?$/.test(r.trim())
-    let headerRow = rows[0], bodyRows
-    if (isSep(rows[1])) {
-      bodyRows = rows.slice(2)
-    } else {
-      headerRow = null
-      bodyRows = rows
-    }
-    const parseRow = r => r.replace(/^\||\|$/g, '').split('|').map(c => c.trim())
-    let t = '<div class="md-table-wrap"><table class="md-table">'
-    if (headerRow) {
-      const cells = parseRow(headerRow)
-      t += '<thead><tr>' + cells.map(c => `<th>${c}</th>`).join('') + '</tr></thead>'
-    }
-    t += '<tbody>'
-    for (const r of bodyRows) {
-      if (isSep(r)) continue
-      const cells = parseRow(r)
-      t += '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>'
-    }
-    t += '</tbody></table></div>'
-    return t
-  })
-
-  // checklists: - [x] done, - [ ] todo
-  html = html.replace(/^- \[x\] (.+)$/gm, '<div class="md-check"><span class="md-check-box checked">✓</span><span class="md-check-text checked">$1</span></div>')
-  html = html.replace(/^- \[ \] (.+)$/gm, '<div class="md-check"><span class="md-check-box">☐</span><span class="md-check-text">$1</span></div>')
-
-  // horizontal rule
-  html = html.replace(/^---+$/gm, '<hr class="md-hr">')
-
-  html = html.replace(/`([^`\n]+)`/g, '<code class="inline-code">$1</code>')
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>')
-  html = html.replace(/^### (.+)$/gm, '<div class="md-h3">$1</div>')
-  html = html.replace(/^## (.+)$/gm, '<div class="md-h2">$1</div>')
-  html = html.replace(/^# (.+)$/gm, '<div class="md-h1">$1</div>')
-  html = html.replace(/^- (.+)$/gm, '<div class="md-li">• $1</div>')
-  html = html.replace(/^\* (.+)$/gm, '<div class="md-li">• $1</div>')
-  html = html.replace(/^(\d+)\. (.+)$/gm, '<div class="md-li"><span class="md-num">$1.</span> $2</div>')
-  html = html.replace(/\n/g, '<br>')
-  // collapse excessive line breaks (3+ consecutive <br> → 2)
-  html = html.replace(/(<br\s*\/?>){3,}/gi, '<br><br>')
-  return html
-}
+// ── markdown (loaded from lib/markdown.js) ─────────────────────────────────────
 
 function copyCodeBlock(id, btn) {
   const el = document.getElementById(id)
@@ -1038,11 +1554,13 @@ async function loadContextSettings() {
   if (el('cs-autoCompact')) el('cs-autoCompact').checked = projectSettings.autoCompact !== false
   if (el('cs-compactThreshold')) el('cs-compactThreshold').value = projectSettings.compactThreshold || 30
   if (el('cs-keepRecent')) el('cs-keepRecent').value = projectSettings.compactKeepRecent || 10
+  loadSamplingSettings()
 }
 
 async function saveContextSettings() {
   if (!activeProjectId) return
   const settings = {
+    ...projectSettings,
     maxContextTokens: parseInt(document.getElementById('cs-maxTokens')?.value) || 8000,
     maxFileTokens: parseInt(document.getElementById('cs-maxFileTokens')?.value) || 2000,
     maxHistoryMessages: parseInt(document.getElementById('cs-maxHistory')?.value) || 40,
@@ -1052,6 +1570,78 @@ async function saveContextSettings() {
     compactKeepRecent: parseInt(document.getElementById('cs-keepRecent')?.value) || 10,
   }
   projectSettings = await window.app.saveSettings(activeProjectId, settings)
+}
+
+// ── sampling settings ─────────────────────────────────────────────────────────
+const SAMPLING_PRESETS = {
+  recommended: { label: '⚡ Recommended (Coding)', temperature: 0.6, top_p: 0.9, repetition_penalty: 1.05 },
+  qwen_official: { label: '🤖 Qwen Official (Thinking)', temperature: 0.6, top_p: 0.95, repetition_penalty: 1.0 },
+  creative: { label: '🎨 Creative', temperature: 0.9, top_p: 0.95, repetition_penalty: 1.0 },
+  precise: { label: '🎯 Precise / Deterministic', temperature: 0.2, top_p: 0.8, repetition_penalty: 1.1 },
+  custom: { label: '✏️ Custom', temperature: null, top_p: null, repetition_penalty: null },
+}
+
+function getSamplingParams() {
+  return {
+    temperature: parseFloat(document.getElementById('sp-temperature')?.value) || 0.6,
+    top_p: parseFloat(document.getElementById('sp-top-p')?.value) || 0.95,
+    repetition_penalty: parseFloat(document.getElementById('sp-rep-penalty')?.value) || 1.0,
+  }
+}
+
+function applySamplingPreset(presetKey) {
+  const preset = SAMPLING_PRESETS[presetKey]
+  if (!preset || presetKey === 'custom') return
+  const tEl = document.getElementById('sp-temperature')
+  const pEl = document.getElementById('sp-top-p')
+  const rEl = document.getElementById('sp-rep-penalty')
+  if (tEl) tEl.value = preset.temperature
+  if (pEl) pEl.value = preset.top_p
+  if (rEl) rEl.value = preset.repetition_penalty
+  saveSamplingSettings()
+}
+
+function loadSamplingSettings() {
+  const saved = projectSettings || {}
+  const t = saved.samplingTemperature ?? 0.6
+  const p = saved.samplingTopP ?? 0.95
+  const r = saved.samplingRepPenalty ?? 1.05
+  const preset = saved.samplingPreset || 'recommended'
+  const tEl = document.getElementById('sp-temperature')
+  const pEl = document.getElementById('sp-top-p')
+  const rEl = document.getElementById('sp-rep-penalty')
+  const selEl = document.getElementById('sp-preset')
+  if (tEl) tEl.value = t
+  if (pEl) pEl.value = p
+  if (rEl) rEl.value = r
+  if (selEl) selEl.value = preset
+}
+
+async function saveSamplingSettings() {
+  if (!activeProjectId) return
+  const presetEl = document.getElementById('sp-preset')
+  const settings = {
+    ...projectSettings,
+    samplingTemperature: parseFloat(document.getElementById('sp-temperature')?.value) || 0.6,
+    samplingTopP: parseFloat(document.getElementById('sp-top-p')?.value) || 0.95,
+    samplingRepPenalty: parseFloat(document.getElementById('sp-rep-penalty')?.value) || 1.0,
+    samplingPreset: presetEl?.value || 'recommended',
+  }
+  projectSettings = await window.app.saveSettings(activeProjectId, settings)
+}
+
+// ── API keys ──────────────────────────────────────────────────────────────────
+async function loadApiKeys() {
+  const keys = await window.app.getApiKeys()
+  const el = document.getElementById('ak-brave')
+  if (el && keys.brave) el.value = keys.brave
+}
+
+async function saveApiKeys() {
+  const keys = {
+    brave: document.getElementById('ak-brave')?.value?.trim() || '',
+  }
+  await window.app.saveApiKeys(keys)
 }
 
 // ── compactor ─────────────────────────────────────────────────────────────────
@@ -1228,155 +1818,13 @@ async function openLivePreviewFromChat(filePath, fileName) {
   refreshPreview()
 }
 
-// ── tool use rendering ────────────────────────────────────────────────────────
-function _toolDisplayName(name) {
-  // Clean up tool names: mcp__vision__vision_analyze → vision_analyze, read_file → Read File
-  let display = name
-  if (display.startsWith('mcp__')) {
-    const parts = display.split('__')
-    display = parts[parts.length - 1]
-  }
-  return display.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-}
-
-function _renderToolParams(input) {
-  if (!input || (typeof input === 'string' && !input.trim())) return ''
-  const obj = typeof input === 'string' ? (() => { try { return JSON.parse(input) } catch { return null } })() : input
-  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
-    const str = typeof input === 'string' ? input : JSON.stringify(input, null, 2)
-    return `<div class="tool-param"><span class="tool-param-val">${esc(str)}</span></div>`
-  }
-  const entries = Object.entries(obj)
-  if (entries.length === 0) return ''
-  return entries.map(([key, val]) => {
-    let display
-    if (typeof val === 'string') {
-      display = val.length > 300 ? val.slice(0, 300) + '…' : val
-    } else {
-      const s = JSON.stringify(val, null, 2)
-      display = s.length > 300 ? s.slice(0, 300) + '…' : s
-    }
-    return `<div class="tool-param">
-      <span class="tool-param-key">${esc(key)}</span>
-      <span class="tool-param-val">${esc(display)}</span>
-    </div>`
-  }).join('')
-}
-
-function renderToolUse(name, input, status='running') {
-  const id = 'tool-' + Date.now() + '-' + Math.random().toString(36).slice(2,6)
-
-  // Special rendering for todo_write — show as a nice checklist UI
-  if (name === 'todo_write') {
-    return _renderTodoBlock(id, input, status)
-  }
-
-  const icons = { read_file:'📖', write_file:'✏️', edit_file:'✏️', bash:'⚡', search:'🔍', list_dir:'📁',
-    browser_navigate:'🌐', browser_screenshot:'📸', browser_click:'👆', browser_type:'⌨️',
-    browser_get_text:'📄', browser_get_html:'🧾', browser_evaluate:'⚙️', browser_wait_for:'⏳',
-    browser_select_option:'☑️', browser_close:'🚪', vision_analyze:'👁️', default:'🔧' }
-  const icon = icons[name] || icons[name.split('__').pop()] || icons.default
-  const displayName = _toolDisplayName(name)
-  const statusLabel = status === 'running' ? 'Running…' : status === 'done' ? 'Done' : status === 'error' ? 'Error' : status
-  const statusIcon = status === 'running' ? '<span class="tool-spinner"></span>' : status === 'done' ? '✓' : status === 'error' ? '✗' : ''
-  const params = _renderToolParams(input)
-  return `<div class="tool-block ${status}" id="${id}">
-    <div class="tool-header" onclick="this.parentElement.toggleAttribute('open')">
-      <span class="tool-icon">${icon}</span>
-      <div class="tool-header-info">
-        <span class="tool-name">${esc(displayName)}</span>
-        <span class="tool-name-raw">${esc(name)}</span>
-      </div>
-      <span class="tool-status ${status}">${statusIcon} ${statusLabel}</span>
-      <span class="tool-chevron">▸</span>
-    </div>
-    ${params ? `<div class="tool-params">${params}</div>` : ''}
-    <div class="tool-body-raw">${esc(typeof input === 'string' ? input : JSON.stringify(input, null, 2))}</div>
-  </div>`
-}
-
-function _renderTodoBlock(id, input, status) {
-  const obj = typeof input === 'string' ? (() => { try { return JSON.parse(input) } catch { return null } })() : input
-  const todos = obj?.todos || (Array.isArray(obj) ? obj : [])
-
-  // Update the persistent todo panel instead of rendering inline
-  updateTodoPanel(todos, status)
-
-  // Return a minimal inline indicator instead of a full block
-  const statusLabel = status === 'running' ? 'Updating…' : status === 'done' ? '✓ Done' : status === 'error' ? '✗ Error' : status
-  const statusCls = status === 'done' ? 'todo-status-done' : status === 'error' ? 'todo-status-error' : 'todo-status-running'
-  return `<div class="tool-block todo-block ${status}" id="${id}" style="display:none">
-    <span class="todo-status ${statusCls}">${statusLabel}</span>
-  </div>`
-}
-
-function updateTodoPanel(todos, status) {
-  const panel = document.getElementById('todoPanel')
-  const body = document.getElementById('todoPanelBody')
-  const countEl = document.getElementById('todoPanelCount')
-  if (!panel || !body) return
-
-  panel.style.display = 'block'
-
-  // Persist todos to session storage
-  currentTodos = todos
-  if (activeProjectId && activeSessionId) {
-    window.app.saveSessionTodos(activeProjectId, activeSessionId, todos)
-  }
-
-  const done = todos.filter(t => t.status === 'completed' || t.status === 'done').length
-  const total = todos.length
-  countEl.textContent = `${done}/${total}`
-
-  let itemsHtml = ''
-  for (const todo of todos) {
-    const isDone = todo.status === 'completed' || todo.status === 'done'
-    const isActive = todo.status === 'in_progress' || todo.status === 'active'
-    const checkCls = isDone ? 'todo-check done' : isActive ? 'todo-check active' : 'todo-check'
-    const checkIcon = isDone ? '✓' : isActive ? '◉' : '○'
-    const textCls = isDone ? 'todo-text done' : isActive ? 'todo-text active' : 'todo-text'
-    const content = todo.content || todo.title || todo.text || JSON.stringify(todo)
-    const todoId = todo.id != null ? `<span class="todo-id">${esc(String(todo.id))}</span>` : ''
-    itemsHtml += `<div class="todo-item ${isDone ? 'completed' : ''} ${isActive ? 'in-progress' : ''}">
-      <span class="${checkCls}">${checkIcon}</span>
-      ${todoId}
-      <span class="${textCls}">${esc(content)}</span>
-    </div>`
-  }
-
-  body.innerHTML = itemsHtml || '<div style="color:var(--muted);font-size:11px;padding:4px 8px">No items</div>'
-}
-
-function toggleTodoPanel() {
-  const panel = document.getElementById('todoPanel')
-  if (panel) panel.classList.toggle('collapsed')
-}
-
-function renderToolResult(content, isError=false) {
-  const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2)
-  const escaped = esc(text)
-  const limit = 8000
-  const cls = isError ? 'tool-result error' : 'tool-result'
-  const icon = isError ? '✗' : '✓'
-  const label = isError ? 'Error' : 'Output'
-  if (escaped.length > limit) {
-    const id = 'tr-' + Date.now() + Math.random().toString(36).slice(2,6)
-    return `<div class="${cls}" id="${id}">
-      <div class="tool-result-header"><span class="tool-result-icon ${isError?'error':''}">${icon}</span> ${label}</div>
-      <div class="tool-result-body">${escaped.slice(0, limit)}<span class="tool-result-more" onclick="this.parentElement.innerHTML=window._toolResultFull['${id}'];delete window._toolResultFull['${id}']">… show all (${text.length} chars)</span></div>
-    </div>`
-      + `<script>if(!window._toolResultFull)window._toolResultFull={};window._toolResultFull['${id}']=\`${escaped.replace(/`/g,'\\`').replace(/<\/script/gi,'<\\/script')}\`</script>`
-  }
-  return `<div class="${cls}">
-    <div class="tool-result-header"><span class="tool-result-icon ${isError?'error':''}">${icon}</span> ${label}</div>
-    <div class="tool-result-body">${escaped}</div>
-  </div>`
-}
+// ── tool use rendering (loaded from lib/tools-render.js) ──────────────────────
 
 // ── task graph panel ──────────────────────────────────────────────────────────
 let currentTaskGraph = null
 let selectedTaskNodeId = null
 let currentTasksPath = null
+let _currentAgentType = null
 
 async function loadTaskGraph(filePath) {
   if (!currentProject) return
@@ -1395,6 +1843,7 @@ async function loadTaskGraph(filePath) {
   currentTaskGraph = graph
   currentTasksPath = tasksPath
   renderTaskGraph(graph)
+  saveWorkflowState() // persist for session restore
 }
 
 function renderTaskGraph(graph) {
@@ -1415,12 +1864,18 @@ function renderTaskGraph(graph) {
   container.innerHTML = ids.map(id => {
     const node = nodes[id]
     const indent = (node.depth || 0) * 12
-    return `<div class="tg-node" style="padding-left:${8 + indent}px" onclick="showTaskDetail('${id}')">
+    const agentTag = node.agentType && node.agentType !== 'general' ? `<span class="tg-node-agent">${esc(node.agentType)}</span>` : ''
+    return `<div class="tg-node status-${node.status}" data-node-id="${id}" style="padding-left:${8 + indent}px" onclick="showTaskDetail('${id}')">
       <span class="tg-node-dot ${node.status}"></span>
       <span class="tg-node-id">${esc(id)}</span>
       <span class="tg-node-title">${esc(node.title)}</span>
+      ${agentTag}
     </div>`
   }).join('')
+
+  // Auto-scroll the active (in_progress) task into view
+  const activeNode = container.querySelector('.status-in_progress')
+  if (activeNode) activeNode.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
 }
 
 function showTaskDetail(nodeId) {
@@ -1433,21 +1888,39 @@ function showTaskDetail(nodeId) {
     return
   }
   const node = currentTaskGraph.nodes[nodeId]
+  const agentType = node.agentType || node.metadata?.agentType || 'general'
   content.innerHTML = `<div><strong>ID:</strong> ${esc(node.id)}</div>
     <div><strong>Title:</strong> ${esc(node.title)}</div>
     <div><strong>Status:</strong> <span class="tg-node-dot ${node.status}" style="display:inline-block;width:8px;height:8px;border-radius:50%;vertical-align:middle"></span> ${node.status}</div>
-    <div><strong>Agent Type:</strong> ${node.metadata?.agentType || 'general'}</div>
+    <div><strong>Agent Type:</strong> ${agentType}</div>
     <div><strong>Dependencies:</strong> ${(node.dependencies||[]).join(', ') || 'none'}</div>`
 }
 
 async function taskGraphRun() {
   if (!currentProject) { appendMsg('system', '⚠️ Open a project first.'); return }
   const tasksPath = currentTasksPath || currentProject + '/tasks.md'
+
+  // Ensure the task graph is loaded before execution so status events can update it
+  if (!currentTaskGraph) {
+    await loadTaskGraph(tasksPath)
+    if (!currentTaskGraph) { appendMsg('system', '❌ No task graph found at ' + tasksPath); return }
+  }
+
   const result = await window.app.taskGraphExecute(tasksPath)
   if (result.error) { appendMsg('system', '❌ ' + result.error); return }
   document.getElementById('tgPauseBtn').style.display = 'inline-block'
   document.getElementById('tgAbortBtn').style.display = 'inline-block'
   document.getElementById('tgRunBtn').style.display = 'none'
+
+  // Listen for orchestrator completion to reload the final persisted state
+  window.app.onOrchestratorCompleted(() => {
+    window.app.offOrchestratorCompleted()
+    if (currentTasksPath) loadTaskGraph(currentTasksPath).catch(() => {})
+    document.getElementById('tgRunBtn').style.display = 'inline-block'
+    document.getElementById('tgPauseBtn').style.display = 'none'
+    document.getElementById('tgResumeBtn').style.display = 'none'
+    document.getElementById('tgAbortBtn').style.display = 'none'
+  })
 }
 
 async function taskGraphPause() {
@@ -1483,9 +1956,48 @@ async function openTasksMd() {
 // Listen for task status events
 if (window.app.onTaskStatusEvent) {
   window.app.onTaskStatusEvent(evt => {
-    if (currentTaskGraph && currentTaskGraph.nodes[evt.nodeId]) {
-      currentTaskGraph.nodes[evt.nodeId].status = evt.status
-      renderTaskGraph(currentTaskGraph)
+    // Track the current agent type for the stats bar
+    if (evt.agentType) _currentAgentType = evt.agentType
+    if (evt.status === 'completed' || evt.status === 'failed') {
+      // Clear agent type when task finishes (will be set again by next task)
+      _currentAgentType = null
+    }
+
+    if (currentTaskGraph && currentTaskGraph.nodes) {
+      if (currentTaskGraph.nodes[evt.nodeId]) {
+        currentTaskGraph.nodes[evt.nodeId].status = evt.status
+        if (evt.agentType) currentTaskGraph.nodes[evt.nodeId].agentType = evt.agentType
+        renderTaskGraph(currentTaskGraph)
+        renderSpecTaskProgress() // sync spec panel
+      } else {
+        // Node not found — task graph may be stale, try reloading
+        if (currentTasksPath) loadTaskGraph(currentTasksPath).catch(() => {})
+      }
+    }
+    // Also update the todo panel if it's showing items
+    if (currentTodos.length > 0) {
+      const statusMap = { 'in_progress': 'in_progress', 'completed': 'completed', 'failed': 'pending', 'not_started': 'pending' }
+      const todoStatus = statusMap[evt.status] || evt.status
+      const updated = currentTodos.map(t => {
+        if (String(t.id) === String(evt.nodeId)) {
+          return { ...t, status: todoStatus }
+        }
+        return t
+      })
+
+      // Show status change in chat (read from updated array, not stale currentTodos)
+      const todo = updated.find(t => String(t.id) === String(evt.nodeId))
+      const label = todo ? todo.content : `Task ${evt.nodeId}`
+      if (evt.status === 'in_progress') {
+        const agentTag = evt.agentType && evt.agentType !== 'general' ? ` [${evt.agentType}]` : ''
+        appendMsg('system', `🔄 Task ${evt.nodeId}${agentTag}: ${esc(label)}`)
+      } else if (evt.status === 'completed') {
+        appendMsg('system', `✅ Task ${evt.nodeId}: ${esc(label)}`)
+      } else if (evt.status === 'failed') {
+        appendMsg('system', `❌ Task ${evt.nodeId}: ${esc(label)}${evt.error ? ' — ' + esc(evt.error) : ''}`)
+      }
+
+      updateTodoPanel(updated, 'done')
     }
   })
 }
@@ -1494,6 +2006,46 @@ if (window.app.onTaskStatusEvent) {
 let currentSpecDir = null
 let currentSpecName = null
 let specGenerating = false
+
+// ── spec task progress (in spec sidebar panel) ───────────────────────────────
+function renderSpecTaskProgress() {
+  const panel = document.getElementById('specTaskProgress')
+  const list = document.getElementById('specTaskList')
+  const countEl = document.getElementById('specTaskProgressCount')
+  if (!panel || !list) return
+
+  if (!currentTaskGraph || !currentTaskGraph.nodes) {
+    panel.style.display = 'none'
+    return
+  }
+
+  const nodes = currentTaskGraph.nodes
+  const ids = Object.keys(nodes).sort((a, b) => {
+    const ap = a.split('.').map(Number), bp = b.split('.').map(Number)
+    for (let i = 0; i < Math.max(ap.length, bp.length); i++) {
+      if ((ap[i]||0) !== (bp[i]||0)) return (ap[i]||0) - (bp[i]||0)
+    }
+    return 0
+  })
+
+  if (ids.length === 0) { panel.style.display = 'none'; return }
+
+  const completed = ids.filter(id => nodes[id].status === 'completed').length
+  const total = ids.length
+  if (countEl) countEl.textContent = `${completed}/${total}`
+
+  panel.style.display = ''
+  list.innerHTML = ids.map(id => {
+    const node = nodes[id]
+    const indent = (node.depth || 0) * 10
+    const statusClass = node.status || 'not_started'
+    return `<div class="spec-task-item ${statusClass}" style="padding-left:${6 + indent}px">
+      <span class="st-dot ${statusClass}"></span>
+      <span class="st-id">${esc(id)}</span>
+      <span class="st-title">${esc(node.title)}</span>
+    </div>`
+  }).join('')
+}
 
 async function restoreActiveSpec() {
   if (!window.app.specList) return
@@ -1510,7 +2062,8 @@ async function restoreActiveSpec() {
 }
 
 function openSpecPanel() {
-  // Show spec workflow inline in the main chat area
+  // Open the sidebar spec panel AND show inline workflow in chat
+  showPanel('specs', document.querySelector('[data-panel="specs"]'))
   showInlineSpecWorkflow()
 }
 
@@ -1653,7 +2206,14 @@ async function showInlineSpecWorkflow() {
   }
 
   scrollOutput()
-  if (currentSpecDir) refreshInlineSpecStepper()
+  if (currentSpecDir) {
+    await refreshInlineSpecStepper()
+    // Load the task graph if this spec has tasks.md
+    const specTasksPath = currentSpecDir + '/tasks.md'
+    if (!currentTaskGraph || currentTasksPath !== specTasksPath) {
+      try { await loadTaskGraph(specTasksPath) } catch (_) { /* tasks may not exist yet */ }
+    }
+  }
 }
 
 async function switchToSpec(specDir, name) {
@@ -1666,6 +2226,10 @@ async function switchToSpec(specDir, name) {
   document.getElementById('inlineSpecArtifactContent').style.display = 'none'
   document.getElementById('inlineSpecArtifactEmpty').style.display = ''
   await refreshInlineSpecStepper()
+  // Load the task graph if this spec has tasks.md
+  const specTasksPath = specDir + '/tasks.md'
+  try { await loadTaskGraph(specTasksPath) } catch (_) { /* tasks may not exist yet */ }
+  saveWorkflowState() // persist spec context for session restore
 }
 
 async function refreshInlineSpecSwitcher() {
@@ -1700,6 +2264,7 @@ async function createInlineSpec() {
   await refreshInlineSpecStepper()
   // Update the switcher dropdown with the new spec
   await refreshInlineSpecSwitcher()
+  saveWorkflowState() // persist spec context for session restore
   appendMsg('system', `📐 Spec "${name}" created. Generating requirements...`)
   // Auto-start generating requirements immediately
   generateInlineSpecPhase('requirements')
@@ -1710,6 +2275,7 @@ function closeInlineSpec() {
   currentSpecName = null
   const workflow = document.getElementById('inlineSpecWorkflow')
   if (workflow) workflow.remove()
+  saveWorkflowState() // persist cleared spec state
 }
 
 async function refreshInlineSpecStepper() {
@@ -1857,11 +2423,41 @@ async function generateInlineSpecPhase(phase) {
 
 async function startInlineSpecImplementation() {
   if (!currentSpecDir || !currentProject) return
+  if (isGenerating) return
   const artifacts = await window.app.specArtifacts(currentSpecDir)
   if (!artifacts.tasks) { appendMsg('system', '⚠️ Generate tasks first.'); return }
-  const prompt = `I have a spec for "${currentSpecName}". Here are the implementation tasks:\n\n${artifacts.tasks}\n\nPlease start implementing these tasks in order. The requirements are:\n\n${artifacts.requirements || '(none)'}\n\nThe design is:\n\n${artifacts.design || '(none)'}`
-  document.getElementById('agentPrompt').value = prompt
-  appendMsg('system', `📐 Spec tasks loaded. Hit Send to start implementation.`)
+
+  // Load task graph into the sidebar panel first
+  const tasksPath = currentProject + '/.kiro/specs/' + currentSpecName + '/tasks.md'
+  try {
+    await loadTaskGraph(tasksPath)
+    renderSpecTaskProgress()
+  } catch (e) { /* best-effort */ }
+
+  // Count tasks for the summary
+  const taskLines = artifacts.tasks.split('\n').filter(l => /^- \[[ x]\]/.test(l.trim()))
+  const taskCount = taskLines.length
+
+  // Show a clean formatted card in chat
+  appendMsg('system', `📐 Starting implementation for "${currentSpecName}"...`)
+  const out = document.getElementById('agentOutput')
+  out.insertAdjacentHTML('beforeend', `<div class="msg-user">
+    <div class="msg-user-label">Spec Implementation</div>
+    <div style="margin:6px 0 4px;font-weight:600">📐 ${esc(currentSpecName)}</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${taskCount} tasks · ${esc(currentProject)}</div>
+    <details style="cursor:pointer">
+      <summary style="font-size:11px;color:var(--accent2);user-select:none">View task list ▸</summary>
+      <div style="font-size:11px;margin-top:6px;max-height:300px;overflow-y:auto;white-space:pre-wrap;color:var(--muted);font-family:'SF Mono',monospace">${esc(artifacts.tasks)}</div>
+    </details>
+  </div>`)
+  scrollOutput()
+
+  // Use the orchestrator — trigger it via sendAgentMode's built-in orchestrator path
+  // by setting _pendingTasksExecute so the agent result handler picks it up
+  window._pendingTasksExecute = tasksPath
+
+  // Send a minimal prompt that will immediately finish and trigger the orchestrator
+  sendAgentMode(`The spec "${currentSpecName}" tasks are ready at ${tasksPath}. The orchestrator will execute them automatically.`, { skipUserMsg: true, historyLabel: `📐 Implement spec "${currentSpecName}" (${taskCount} tasks)` })
 }
 
 async function createNewSpec() {
@@ -1895,6 +2491,7 @@ function closeSpec() {
   document.getElementById('specActive').style.display = 'none'
   document.getElementById('specArtifactContent').style.display = 'none'
   document.getElementById('specArtifactEmpty').style.display = ''
+  saveWorkflowState() // persist cleared spec state
 }
 
 async function refreshSpecStepper() {
@@ -2077,13 +2674,44 @@ async function generateSpecPhase(phase) {
 
 async function startSpecImplementation() {
   if (!currentSpecDir || !currentProject) return
+  if (isGenerating) return
   const artifacts = await window.app.specArtifacts(currentSpecDir)
   if (!artifacts.tasks) { appendMsg('system', '⚠️ Generate tasks first.'); return }
-  // Switch to agent tab and send the tasks as a prompt
+
+  // Switch to agent tab
   switchMainTab('agent', document.querySelector('[data-tab="agent"]'))
-  const prompt = `I have a spec for "${currentSpecName}". Here are the implementation tasks:\n\n${artifacts.tasks}\n\nPlease start implementing these tasks in order. The requirements are:\n\n${artifacts.requirements || '(none)'}\n\nThe design is:\n\n${artifacts.design || '(none)'}`
-  document.getElementById('agentPrompt').value = prompt
-  appendMsg('system', `📐 Spec tasks loaded into agent. Hit Send to start implementation.`)
+
+  // Load task graph into sidebar
+  const tasksPath = currentProject + '/.kiro/specs/' + currentSpecName + '/tasks.md'
+  try {
+    await loadTaskGraph(tasksPath)
+    renderSpecTaskProgress()
+  } catch (e) { /* best-effort */ }
+
+  // Show spec panel with task progress visible
+  showPanel('tasks', document.querySelector('[data-panel="tasks"]'))
+
+  // Count tasks for the summary
+  const taskLines = artifacts.tasks.split('\n').filter(l => /^- \[[ x]\]/.test(l.trim()))
+  const taskCount = taskLines.length
+
+  // Show a clean formatted card in chat
+  appendMsg('system', `📐 Starting implementation for "${currentSpecName}"...`)
+  const out = document.getElementById('agentOutput')
+  out.insertAdjacentHTML('beforeend', `<div class="msg-user">
+    <div class="msg-user-label">Spec Implementation</div>
+    <div style="margin:6px 0 4px;font-weight:600">📐 ${esc(currentSpecName)}</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${taskCount} tasks · ${esc(currentProject)}</div>
+    <details style="cursor:pointer">
+      <summary style="font-size:11px;color:var(--accent2);user-select:none">View task list ▸</summary>
+      <div style="font-size:11px;margin-top:6px;max-height:300px;overflow-y:auto;white-space:pre-wrap;color:var(--muted);font-family:'SF Mono',monospace">${esc(artifacts.tasks)}</div>
+    </details>
+  </div>`)
+  scrollOutput()
+
+  // Use the orchestrator via sendAgentMode's built-in orchestrator path
+  window._pendingTasksExecute = tasksPath
+  sendAgentMode(`The spec "${currentSpecName}" tasks are ready at ${tasksPath}. The orchestrator will execute them automatically.`, { skipUserMsg: true, historyLabel: `📐 Implement spec "${currentSpecName}" (${taskCount} tasks)` })
 }
 
 async function loadSpecPanel() {
@@ -2093,6 +2721,11 @@ async function loadSpecPanel() {
     document.getElementById('specActive').style.display = 'flex'
     document.getElementById('specNameLabel').textContent = currentSpecName || 'Spec'
     await refreshSpecStepper()
+    // Load the task graph if this spec has tasks
+    const specTasksPath = currentSpecDir + '/tasks.md'
+    if (!currentTaskGraph || currentTasksPath !== specTasksPath) {
+      try { await loadTaskGraph(specTasksPath) } catch (_) { /* tasks may not exist yet */ }
+    }
   }
 }
 
@@ -2123,9 +2756,10 @@ async function checkSearchEngine() {
   const el = document.getElementById('searchEngineStatus')
   const hint = document.getElementById('searchInstallHint')
   if (!el) return
-  const label = status.backend === 'ast-grep' ? `🔍 ast-grep ${status.version || ''}` :
-                status.backend === 'ripgrep' ? `🔍 ripgrep ${status.version || ''}` :
-                '🔍 built-in (basic)'
+  const label = status.backend === 'ast-grep'
+    ? `🔍 ast-grep ${status.version || ''}${status.bundled ? ' (bundled)' : ''}`
+    : status.backend === 'ripgrep' ? `🔍 ripgrep ${status.version || ''}`
+    : '🔍 built-in (basic)'
   el.textContent = label
   el.style.color = status.backend === 'ast-grep' ? 'var(--green)' : status.backend === 'ripgrep' ? 'var(--yellow)' : 'var(--muted)'
   if (hint) hint.style.display = status.backend !== 'ast-grep' ? 'flex' : 'none'
@@ -2321,7 +2955,7 @@ function updateAgentStatsBar(opts = {}) {
   const bar = document.getElementById('agentStats')
   if (!bar) return
 
-  const { state, inputTokens, outputTokens, tks, promptTps, peakMemory, toolName, progress, activity, toolCount } = opts
+  const { state, inputTokens, outputTokens, tks, promptTps, peakMemory, toolName, progress, activity, toolCount, agentType } = opts
 
   // Always show the stats bar when agent is active
   if (state === 'idle' && !inputTokens && !outputTokens) {
@@ -2345,19 +2979,25 @@ function updateAgentStatsBar(opts = {}) {
   let html = ''
 
   // Model chip (always show when active)
-  const modelName = loadedModelId ? loadedModelId.split('/').pop() : null
+  const modelName = loadedModelId ? _formatModelName(loadedModelId) : null
   if (modelName) {
     html += `<div class="stat-chip model-chip"><span class="stat-label">Model</span><span class="stat-val">${modelName}</span></div>`
   }
 
   html += `<div class="stat-chip state-chip ${s.cls}"><span class="stat-label">Status</span><span class="stat-val">${s.icon} ${s.text}</span></div>`
 
+  // Sub-agent chip (shown when an agent type is active)
+  const effectiveAgentType = agentType || _currentAgentType
+  if (effectiveAgentType && effectiveAgentType !== 'general' && state !== 'done') {
+    html += `<div class="stat-chip agent-type-chip"><span class="stat-label">Agent</span><span class="stat-val">🤖 ${effectiveAgentType}</span></div>`
+  }
+
   // Progress chip (shown during prompt eval or when progress is provided)
   if (progress != null) {
     const pct = progress < 0 ? '...' : Math.round(progress) + '%'
     const fillClass = progress < 0 ? 'indeterminate' : ''
     const fillWidth = progress < 0 ? '' : `width:${Math.min(100, progress)}%`
-    html += `<div class="stat-chip progress-chip"><span class="stat-label">Progress</span><span class="stat-val">${pct}</span><div class="progress-mini"><div class="progress-mini-fill ${fillClass}" style="${fillWidth}"></div></div></div>`
+    html += `<div class="stat-chip progress-chip"><span class="stat-label">Prompt</span><span class="stat-val">${pct}</span><div class="progress-mini"><div class="progress-mini-fill ${fillClass}" style="${fillWidth}"></div></div></div>`
   }
 
   // Input tokens

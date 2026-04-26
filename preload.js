@@ -19,7 +19,7 @@ contextBridge.exposeInMainWorld('app', {
   offStream:      ()        => { for (const c of ['chat-stream-chunk','chat-stream-stats','chat-stream-done','chat-stream-error']) ipcRenderer.removeAllListeners(c) },
 
   // qwen code agent
-  qwenRun:        (p)       => ipcRenderer.invoke('qwen-run', { prompt: p.prompt, cwd: p.cwd, permissionMode: p.permissionMode, model: p.model, images: p.images, conversationHistory: p.conversationHistory }),
+  qwenRun:        (p)       => ipcRenderer.invoke('qwen-run', { prompt: p.prompt, cwd: p.cwd, permissionMode: p.permissionMode, model: p.model, images: p.images, conversationHistory: p.conversationHistory, samplingParams: p.samplingParams, taskGraphPath: p.taskGraphPath }),
   qwenInterrupt:  ()        => ipcRenderer.invoke('qwen-interrupt'),
   onQwenEvent:    (cb)      => ipcRenderer.on('qwen-event', (_, d) => cb(d)),
   offQwenEvents:  ()        => ipcRenderer.removeAllListeners('qwen-event'),
@@ -66,10 +66,18 @@ contextBridge.exposeInMainWorld('app', {
   getSessionSnapshot: (pid,sid) => ipcRenderer.invoke('get-session-chat-snapshot', pid, sid),
   saveSessionSnapshot:(pid,sid,s) => ipcRenderer.invoke('save-session-chat-snapshot', pid, sid, s),
 
+  // session workflow state (spec + task graph)
+  getSessionWorkflowState:  (pid,sid) => ipcRenderer.invoke('get-session-workflow-state', pid, sid),
+  saveSessionWorkflowState: (pid,sid,s) => ipcRenderer.invoke('save-session-workflow-state', pid, sid, s),
+
   // context settings
   getSettings:    (id)      => ipcRenderer.invoke('get-settings', id),
   saveSettings:   (id, s)   => ipcRenderer.invoke('save-settings', id, s),
   getDefaultSettings: ()    => ipcRenderer.invoke('get-default-settings'),
+
+  // API keys
+  getApiKeys:     ()        => ipcRenderer.invoke('get-api-keys'),
+  saveApiKeys:    (k)       => ipcRenderer.invoke('save-api-keys', k),
 
   // compactor
   compactorStatus:()        => ipcRenderer.invoke('compactor-status'),
@@ -97,9 +105,16 @@ contextBridge.exposeInMainWorld('app', {
   specInit:         (n)     => ipcRenderer.invoke('spec-init', n),
   specPhase:        (d)     => ipcRenderer.invoke('spec-phase', d),
   specAdvance:      (d)     => ipcRenderer.invoke('spec-advance', d),
+  specArtifacts:    (d)     => ipcRenderer.invoke('spec-artifacts', d),
+  specSaveArtifact: (d,p,c) => ipcRenderer.invoke('spec-save-artifact', d, p, c),
+  specConfig:       (d)     => ipcRenderer.invoke('spec-config', d),
+  specList:         ()      => ipcRenderer.invoke('spec-list'),
 
   // events
   onTaskStatusEvent:(cb)    => ipcRenderer.on('task-status-event', (_, d) => cb(d)),
+  onOrchestratorEvent:(cb)  => ipcRenderer.on('orchestrator-agent-event', (_, d) => cb(d)),
+  onOrchestratorCompleted:(cb) => ipcRenderer.on('orchestrator-completed', () => cb()),
+  offOrchestratorCompleted:() => ipcRenderer.removeAllListeners('orchestrator-completed'),
   onBgTaskEvent:    (cb)    => ipcRenderer.on('bg-task-event', (_, d) => cb(d)),
   onFilesChanged:   (cb)    => ipcRenderer.on('files-changed', (_, d) => cb(d)),
   offFilesChanged:  ()      => ipcRenderer.removeAllListeners('files-changed'),

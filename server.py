@@ -20,7 +20,24 @@ _model_id = None
 _model_path = None
 _chat_template = None
 _models_root = Path.home() / ".lmstudio" / "models"
-_inference_lock = threading.Lock()  # MLX is not thread-safe — serialize all inference
+
+# ── inference queue ───────────────────────────────────────────────────────────
+# Instead of a single threading.Lock that blocks all callers, we use an
+# asyncio.Queue(maxsize=1) as a semaphore. This lets FastAPI's event loop
+# stay responsive while requests wait their turn, and enables fair FIFO
+# ordering with a configurable queue depth.
+_INFERENCE_QUEUE_SIZE = int(os.environ.get("MLX_QUEUE_SIZE", "4"))
+_inference_semaphore: asyncio.Semaphore | None = None  # initialized at startup
+
+
+def _get_inference_semaphore() -> asyncio.Semaphore:
+    """Lazy-init the semaphore on the running event loop."""
+    global _inference_semaphore
+    if _inference_semaphore is None:
+        # MLX is single-threaded on Metal, so concurrency=1 serializes inference
+        # but the semaphore lets waiters queue without blocking the event loop.
+        _inference_semaphore = asyncio.Semaphore(1)
+    return _inference_semaphore
 
 
 def find_models():
@@ -110,8 +127,10 @@ class Tool(BaseModel):
 class ChatRequest(BaseModel):
     model: Optional[str] = None
     messages: list[Message]
-    max_tokens: Optional[int] = 512
-    temperature: Optional[float] = 0.7
+    max_tokens: Optional[int] = 8192
+    temperature: Optional[float] = 0.6
+    top_p: Optional[float] = 0.95
+    repetition_penalty: Optional[float] = 1.05
     stream: Optional[bool] = False
     tools: Optional[list[Tool]] = None
     tool_choice: Optional[Any] = None
@@ -324,7 +343,13 @@ def _build_prompt_and_kwargs(req: ChatRequest):
             system_prompt=system,
         )
 
-    kwargs = dict(max_tokens=req.max_tokens or 1024, verbose=False)
+    kwargs = dict(max_tokens=min(req.max_tokens or 1024, 16384), verbose=False)
+    if req.temperature is not None:
+        kwargs["temp"] = req.temperature
+    if req.top_p is not None:
+        kwargs["top_p"] = req.top_p
+    if req.repetition_penalty is not None:
+        kwargs["repetition_penalty"] = req.repetition_penalty
     if images:
         kwargs["image"] = images[0] if len(images) == 1 else images
     return prompt, kwargs, images
@@ -383,14 +408,12 @@ async def chat_completions(req: ChatRequest):
     # clean up the check images (they'll be re-extracted in _build_prompt_and_kwargs)
     _cleanup_images(images_check)
 
-    # Clear MLX cache before vision requests to free memory
-    if has_images:
-        try:
-            import mlx.core as mx
-            mx.metal.clear_cache()
-            print(f"[server] Cleared MLX cache for vision request", file=sys.stderr)
-        except Exception:
-            pass
+    # Clear MLX cache before every request to free memory and prevent OOM crashes
+    try:
+        import mlx.core as mx
+        mx.metal.clear_cache()
+    except Exception:
+        pass
 
     # debug logging
     for msg in req.messages:
@@ -411,15 +434,23 @@ async def chat_completions(req: ChatRequest):
         prompt, kwargs, images = _build_prompt_and_kwargs(req)
         cid = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created = int(time.time())
+        print(f"[server] Streaming: prompt_len={len(prompt)}, temp={kwargs.get('temp', 'default')}, top_p={kwargs.get('top_p', 'default')}", file=sys.stderr)
+
+        # Clear cache before large prompts to maximize available memory
+        try:
+            import mlx.core as mx
+            mx.metal.clear_cache()
+        except Exception:
+            pass
 
         async def event_stream():
+            sem = _get_inference_semaphore()
             loop = asyncio.get_event_loop()
             queue: asyncio.Queue = asyncio.Queue()
             full_text_parts = []
 
             def run_stream():
                 try:
-                    _inference_lock.acquire()
                     gen = stream_generate(_model, _processor, prompt, **kwargs)
                     last_result = None
                     for chunk in gen:
@@ -432,77 +463,76 @@ async def chat_completions(req: ChatRequest):
                 except Exception as e:
                     loop.call_soon_threadsafe(queue.put_nowait, ("error", str(e)))
                 finally:
-                    # Clear cache after streaming to free memory for next request
                     try:
                         import mlx.core as mx
                         mx.metal.clear_cache()
                     except Exception:
                         pass
-                    _inference_lock.release()
                     loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
 
-            loop.run_in_executor(None, run_stream)
+            # Acquire the semaphore asynchronously — other requests wait here
+            # without blocking the event loop.
+            async with sem:
+                loop.run_in_executor(None, run_stream)
 
-            accumulated = ""
-            while True:
-                kind, data = await queue.get()
-                if kind == "token":
-                    accumulated += data
-                    full_text_parts.append(data)
-                    chunk_data = {
-                        "id": cid, "object": "chat.completion.chunk",
-                        "created": created, "model": _model_id,
-                        "choices": [{"index": 0, "delta": {"content": data}, "finish_reason": None}],
-                    }
-                    yield f"data: {json.dumps(chunk_data)}\n\n"
-                elif kind == "stats":
-                    stats_chunk = {
-                        "id": cid, "object": "chat.completion.chunk",
-                        "created": created, "model": _model_id,
-                        "choices": [{"index": 0, "delta": {}, "finish_reason": None}],
-                        "usage": {
-                            "prompt_tokens": getattr(data, "prompt_tokens", 0),
-                            "completion_tokens": getattr(data, "generation_tokens", 0),
-                            "total_tokens": getattr(data, "total_tokens", 0),
-                        },
-                        "x_stats": {
-                            "prompt_tps": round(getattr(data, "prompt_tps", 0), 2),
-                            "generation_tps": round(getattr(data, "generation_tps", 0), 2),
-                            "peak_memory_gb": round(getattr(data, "peak_memory", 0), 3),
-                        },
-                    }
-                    yield f"data: {json.dumps(stats_chunk)}\n\n"
-                elif kind == "error":
-                    yield f"event: error\ndata: {json.dumps({'error': data})}\n\n"
-                    break
-                elif kind == "done":
-                    # check for tool calls in accumulated text
-                    full_text = "".join(full_text_parts)
-                    if has_tools:
-                        tool_calls = parse_tool_calls(full_text)
-                        if tool_calls:
-                            # send a final chunk with tool_calls
-                            tc_chunk = {
-                                "id": cid, "object": "chat.completion.chunk",
-                                "created": created, "model": _model_id,
-                                "choices": [{
-                                    "index": 0,
-                                    "delta": {"tool_calls": tool_calls},
-                                    "finish_reason": "tool_calls",
-                                }],
-                            }
-                            yield f"data: {json.dumps(tc_chunk)}\n\n"
-                            yield "data: [DONE]\n\n"
-                            break
+                accumulated = ""
+                while True:
+                    kind, data = await queue.get()
+                    if kind == "token":
+                        accumulated += data
+                        full_text_parts.append(data)
+                        chunk_data = {
+                            "id": cid, "object": "chat.completion.chunk",
+                            "created": created, "model": _model_id,
+                            "choices": [{"index": 0, "delta": {"content": data}, "finish_reason": None}],
+                        }
+                        yield f"data: {json.dumps(chunk_data)}\n\n"
+                    elif kind == "stats":
+                        stats_chunk = {
+                            "id": cid, "object": "chat.completion.chunk",
+                            "created": created, "model": _model_id,
+                            "choices": [{"index": 0, "delta": {}, "finish_reason": None}],
+                            "usage": {
+                                "prompt_tokens": getattr(data, "prompt_tokens", 0),
+                                "completion_tokens": getattr(data, "generation_tokens", 0),
+                                "total_tokens": getattr(data, "total_tokens", 0),
+                            },
+                            "x_stats": {
+                                "prompt_tps": round(getattr(data, "prompt_tps", 0), 2),
+                                "generation_tps": round(getattr(data, "generation_tps", 0), 2),
+                                "peak_memory_gb": round(getattr(data, "peak_memory", 0), 3),
+                            },
+                        }
+                        yield f"data: {json.dumps(stats_chunk)}\n\n"
+                    elif kind == "error":
+                        yield f"event: error\ndata: {json.dumps({'error': data})}\n\n"
+                        break
+                    elif kind == "done":
+                        full_text = "".join(full_text_parts)
+                        if has_tools:
+                            tool_calls = parse_tool_calls(full_text)
+                            if tool_calls:
+                                tc_chunk = {
+                                    "id": cid, "object": "chat.completion.chunk",
+                                    "created": created, "model": _model_id,
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {"tool_calls": tool_calls},
+                                        "finish_reason": "tool_calls",
+                                    }],
+                                }
+                                yield f"data: {json.dumps(tc_chunk)}\n\n"
+                                yield "data: [DONE]\n\n"
+                                break
 
-                    final = {
-                        "id": cid, "object": "chat.completion.chunk",
-                        "created": created, "model": _model_id,
-                        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                    }
-                    yield f"data: {json.dumps(final)}\n\n"
-                    yield "data: [DONE]\n\n"
-                    break
+                        final = {
+                            "id": cid, "object": "chat.completion.chunk",
+                            "created": created, "model": _model_id,
+                            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                        }
+                        yield f"data: {json.dumps(final)}\n\n"
+                        yield "data: [DONE]\n\n"
+                        break
 
             _cleanup_images(images)
 
@@ -514,19 +544,19 @@ async def chat_completions(req: ChatRequest):
     prompt, kwargs, images = _build_prompt_and_kwargs(req)
 
     def _run_generate():
-        with _inference_lock:
-            result = generate(_model, _processor, prompt, **kwargs)
-            # Clear cache after vision inference to free memory
-            if images:
-                try:
-                    import mlx.core as mx
-                    mx.metal.clear_cache()
-                except Exception:
-                    pass
-            return result
+        result = generate(_model, _processor, prompt, **kwargs)
+        if images:
+            try:
+                import mlx.core as mx
+                mx.metal.clear_cache()
+            except Exception:
+                pass
+        return result
 
     try:
-        result = await asyncio.get_event_loop().run_in_executor(None, _run_generate)
+        sem = _get_inference_semaphore()
+        async with sem:
+            result = await asyncio.get_event_loop().run_in_executor(None, _run_generate)
     except Exception as e:
         _cleanup_images(images)
         raise HTTPException(500, f"Inference error: {str(e)}")

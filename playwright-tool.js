@@ -50,7 +50,7 @@ function createPlaywrightInstance() {
     return `Navigated to: ${pageUrl}\nTitle: ${title}\n\n--- Page Text ---\n${snapshot}`
   }
 
-  async function browser_screenshot({ selector, fullPage }) {
+  async function browser_screenshot({ selector, fullPage, prompt }) {
     const page = await ensureBrowser()
     let buf
     if (selector) {
@@ -60,7 +60,38 @@ function createPlaywrightInstance() {
     } else {
       buf = await page.screenshot({ type: 'png', fullPage: fullPage || false })
     }
-    return `[screenshot captured, ${buf.length} bytes base64]\ndata:image/png;base64,${buf.toString('base64').slice(0, 200)}...`
+    const b64 = `data:image/png;base64,${buf.toString('base64')}`
+
+    // Send the screenshot through the vision endpoint for analysis
+    const visionPrompt = prompt || 'Describe what you see on this web page screenshot in detail. Note any text, UI elements, layout, errors, or notable content.'
+    const content = [
+      { type: 'text', text: visionPrompt },
+      { type: 'image_url', image_url: { url: b64 } },
+    ]
+    try {
+      const http = require('http')
+      const body = JSON.stringify({ messages: [{ role: 'user', content }], max_tokens: 1024 })
+      const result = await new Promise((resolve, reject) => {
+        const req = http.request({
+          hostname: '127.0.0.1', port: 8090,
+          path: '/v1/chat/completions', method: 'POST',
+          timeout: 120000,
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        }, (res) => {
+          let data = ''
+          res.on('data', chunk => data += chunk)
+          res.on('end', () => { try { resolve(JSON.parse(data)) } catch { reject(new Error(data || 'Empty response')) } })
+        })
+        req.on('timeout', () => { req.destroy(); reject(new Error('Vision request timed out')) })
+        req.on('error', reject)
+        req.write(body)
+        req.end()
+      })
+      const desc = result.choices?.[0]?.message?.content || 'Could not analyze screenshot.'
+      return `[Screenshot captured, ${buf.length} bytes]\n\nVision analysis:\n${desc}`
+    } catch (err) {
+      return `[Screenshot captured, ${buf.length} bytes, but vision analysis failed: ${err.message}]`
+    }
   }
 
   async function browser_click({ selector }) {
@@ -183,12 +214,13 @@ const BROWSER_TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'browser_screenshot',
-      description: 'Take a screenshot of the current page or a specific element.',
+      description: 'Take a screenshot of the current page or a specific element and analyze it with the vision model. Returns a text description of what is visible.',
       parameters: {
         type: 'object',
         properties: {
           selector: { type: 'string', description: 'Optional CSS selector to screenshot a specific element' },
           fullPage: { type: 'boolean', description: 'Capture the full scrollable page (default: false)' },
+          prompt: { type: 'string', description: 'Optional question to ask about the screenshot (e.g. "Is there an error on this page?")' },
         },
       },
     },

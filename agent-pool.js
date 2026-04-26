@@ -13,10 +13,12 @@ const DEFAULT_TIMEOUT = 300000; // 5 minutes
  * Each key is a subagent type name, value is an array of keywords.
  */
 const CATEGORY_KEYWORDS = {
-  'code-search': ['search', 'find', 'grep', 'locate', 'lookup', 'ast', 'query'],
+  'explore': ['explore', 'understand', 'analyze', 'overview', 'structure', 'architecture', 'how does', 'explain'],
+  'context-gather': ['context', 'gather', 'find relevant', 'related files', 'dependencies', 'what files'],
+  'code-search': ['search', 'find', 'grep', 'locate', 'lookup', 'ast', 'query', 'where is', 'usage'],
   'requirements': ['requirement', 'requirements', 'spec', 'specification', 'user story', 'acceptance'],
-  'design': ['design', 'architecture', 'diagram', 'interface', 'schema', 'model'],
-  'implementation': ['implement', 'code', 'build', 'create', 'write', 'develop', 'refactor', 'fix', 'bug'],
+  'design': ['design', 'architecture', 'diagram', 'interface', 'schema', 'model', 'plan'],
+  'implementation': ['implement', 'code', 'build', 'create', 'write', 'develop', 'refactor', 'fix', 'bug', 'add', 'update', 'modify', 'change', 'set up', 'configure', 'install'],
 };
 
 // --- AgentPool ---
@@ -157,6 +159,11 @@ class AgentPool extends EventEmitter {
     const agentType = this.selectType(task);
     const timeout = agentType?.timeout ?? this._defaultTimeout;
     const taskId = task.id || crypto.randomUUID();
+    const agentTypeName = agentType?.name || 'general';
+
+    // Emit agent-type-selected immediately so the UI can show which agent
+    // is handling this task before the (potentially long) execution starts.
+    this.emit('agent-type-selected', { taskId: task.id, agentType: agentTypeName });
 
     await this._acquireSlot();
 
@@ -165,7 +172,7 @@ class AgentPool extends EventEmitter {
       task,
       startTime: Date.now(),
       abortController,
-      agentType: agentType?.name || 'general',
+      agentType: agentTypeName,
     });
 
     try {

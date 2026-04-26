@@ -200,6 +200,26 @@ function saveSessionChatSnapshot(projectId, sessionId, snapshot) {
   return snapshot
 }
 
+// ── session workflow state (spec + task graph) ────────────────────────────────
+function getSessionWorkflowState(projectId, sessionId) {
+  const p = sessionPath(projectId, sessionId)
+  try {
+    const data = JSON.parse(fs.readFileSync(p, 'utf-8'))
+    return data.workflowState || null
+  } catch { return null }
+}
+
+function saveSessionWorkflowState(projectId, sessionId, state) {
+  const p = sessionPath(projectId, sessionId)
+  let data
+  try { data = JSON.parse(fs.readFileSync(p, 'utf-8')) } catch { data = { name: 'Session', created: Date.now(), messages: [] } }
+  data.workflowState = state
+  data.lastUsed = Date.now()
+  ensureDir(path.dirname(p))
+  fs.writeFileSync(p, JSON.stringify(data, null, 2))
+  return state
+}
+
 // ── legacy history (backward compat) ──────────────────────────────────────────
 function getHistory(projectId) {
   const histPath = path.join(PROJECTS_DIR, projectId, 'history.json')
@@ -242,7 +262,7 @@ function buildProjectContext(directory, settings) {
       }
     }
     walk(directory, '')
-    if (!files.length) return ''
+    if (!files.length) return `\n\nProject directory: ${directory}\nThis is an empty project directory. Create files directly in this directory.\n`
     return `\n\nProject directory: ${directory}\nProject files:\n${files.map(f => '- ' + f).join('\n')}\n`
   } catch { return '' }
 }
@@ -273,6 +293,21 @@ function saveSettings(projectId, settings) {
   return merged
 }
 
+// ── API keys (global, not per-project) ────────────────────────────────────────
+const API_KEYS_PATH = path.join(DATA_DIR, 'api-keys.json')
+
+function getApiKeys() {
+  try {
+    return JSON.parse(fs.readFileSync(API_KEYS_PATH, 'utf-8'))
+  } catch { return {} }
+}
+
+function saveApiKeys(keys) {
+  ensureDir(DATA_DIR)
+  fs.writeFileSync(API_KEYS_PATH, JSON.stringify(keys, null, 2))
+  return keys
+}
+
 module.exports = {
   listProjects, createProject, openProject, deleteProject,
   getHistory, appendHistory, clearHistory, buildProjectContext,
@@ -281,4 +316,6 @@ module.exports = {
   getSessionMessages, appendSessionMessage, clearSessionMessages, setSessionMessages,
   getSessionTodos, saveSessionTodos,
   getSessionChatSnapshot, saveSessionChatSnapshot,
+  getSessionWorkflowState, saveSessionWorkflowState,
+  getApiKeys, saveApiKeys,
 }

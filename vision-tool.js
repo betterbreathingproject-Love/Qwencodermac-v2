@@ -184,6 +184,59 @@ const visionAnalyzeTool = tool(
   }
 )
 
+// ── standalone analyze function (for DirectBridge) ────────────────────────────
+
+/**
+ * Analyze image(s) by calling the local MLX vision endpoint directly.
+ * @param {string} imageId - "img_0", "img_1", or "all"
+ * @param {string} prompt - What to ask about the image
+ * @returns {{ text: string, isError: boolean }}
+ */
+async function analyzeImage(imageId, prompt) {
+  let imageUrls = []
+  if (imageId === 'all') {
+    imageUrls = Array.from(_images.values())
+  } else {
+    const b64 = _images.get(imageId)
+    if (!b64) {
+      const available = Array.from(_images.keys()).join(', ') || 'none'
+      return { text: `Image "${imageId}" not found. Available images: ${available}`, isError: true }
+    }
+    imageUrls = [b64]
+  }
+
+  const content = [{ type: 'text', text: prompt }]
+  for (const url of imageUrls) {
+    content.push({ type: 'image_url', image_url: { url } })
+  }
+
+  const MAX_RETRIES = 2
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const result = await chatCompletions({
+        messages: [{ role: 'user', content }],
+        max_tokens: 1024,
+      })
+      if (result.error) {
+        return { text: `Vision error: ${result.error}`, isError: true }
+      }
+      const text = result.choices?.[0]?.message?.content || JSON.stringify(result)
+      let response = text
+      if (result.usage) {
+        const u = result.usage
+        response += `\n\n[Vision stats: ${u.prompt_tokens} prompt tokens, ${u.completion_tokens || u.generation_tokens || 0} gen tokens]`
+      }
+      return { text: response, isError: false }
+    } catch (err) {
+      if (attempt < MAX_RETRIES) {
+        await new Promise((r) => setTimeout(r, 4000))
+        continue
+      }
+      return { text: `Vision tool error after ${MAX_RETRIES + 1} attempts: ${err.message}`, isError: true }
+    }
+  }
+}
+
 // ── create the MCP server ─────────────────────────────────────────────────────
 
 function createVisionServer() {
@@ -200,4 +253,5 @@ module.exports = {
   clearImages,
   getImageCount,
   getImageIds,
+  analyzeImage,
 }

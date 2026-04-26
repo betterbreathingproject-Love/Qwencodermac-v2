@@ -9,6 +9,7 @@
 const { query, isSDKAssistantMessage, isSDKPartialAssistantMessage,
         isSDKSystemMessage, isSDKResultMessage } = require('@qwen-code/sdk')
 const path = require('path')
+const fs = require('node:fs')
 const { createPlaywrightServer } = require('./playwright-tool')
 const { createVisionServer, registerImages, clearImages } = require('./vision-tool')
 
@@ -120,6 +121,17 @@ class QwenBridge {
     }
     finalPrompt += imageContext
 
+    // Detect empty project directory and add guidance so the model doesn't loop
+    const effectiveCwd = cwd || process.cwd()
+    let emptyDirHint = ''
+    try {
+      const entries = fs.readdirSync(effectiveCwd).filter(e => !e.startsWith('.'))
+      if (entries.length === 0) {
+        emptyDirHint = `\n\nNOTE: The working directory "${effectiveCwd}" is empty. This is a new project — start by creating files directly using write_file. Do NOT repeatedly list or search the directory. Just begin writing the code.`
+      }
+    } catch { /* ignore */ }
+    finalPrompt += emptyDirHint
+
     const opts = {
       cwd: cwd || process.cwd(),
       permissionMode: permissionMode || 'auto-edit',
@@ -153,7 +165,11 @@ Always prefer using these tools over writing code. Call browser_navigate first, 
 You also have access to a Vision tool for analyzing images:
 - vision_analyze: Analyze an attached image using the vision model. Takes an image_id (e.g. "img_0") and a prompt. Use image_id "all" to analyze all images together.
 
-When the user attaches images, you MUST use vision_analyze to see them. You cannot see images directly in the conversation — always use the tool. This is your eyes. Do not claim you cannot see images.` +
+When the user attaches images, you MUST use vision_analyze to see them. You cannot see images directly in the conversation — always use the tool. This is your eyes. Do not claim you cannot see images.
+
+CRITICAL: When implementing code changes, you MUST use the write_file or edit_file tools to actually create or modify files. NEVER just output code in your text response — that does nothing. The user cannot copy-paste from chat. Always use the file tools to make real changes on disk.
+
+CRITICAL FILE SIZE LIMIT: Each write_file call must be under 200 lines. For larger files, write the first ~150 lines with write_file, then use bash with heredoc to append more: bash({command: "cat >> file.js << 'CHUNK_END'\\n...code...\\nCHUNK_END"}). NEVER try to write an entire large file in a single write_file call — the JSON will break and the file will NOT be written.` +
         (permissionMode === 'auto-edit' ? `\n\nIMPORTANT: You are running in auto-edit mode. When you use the question/ask tool and receive an empty or default response, this does NOT mean the user cancelled. It means the system auto-approved your action. Proceed with your best judgment — do NOT repeat that the user cancelled. Never say "the user cancelled the question" — just continue working.` : ''),
       },
       mcpServers: {

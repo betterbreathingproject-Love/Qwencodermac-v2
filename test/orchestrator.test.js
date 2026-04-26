@@ -196,10 +196,10 @@ describe('Orchestrator - branch evaluation', () => {
     await orch.start();
 
     // A completes, sets context['A'] = 'Result for A' (truthy)
-    // B branch evaluates condition 'A' → truthy → completed
+    // B branch dispatched to pool, no RoutingDecision in output → fallback to _evaluateCondition('A') → truthy → completed
     // C executes
     assert.equal(orch.getStatus().state, 'completed');
-    assert.equal(pool.calls.length, 2); // A and C dispatched, B is branch (not dispatched to pool)
+    assert.equal(pool.calls.length, 3); // A, B (branch dispatched to pool), and C
   });
 
   it('fails branch when condition is false', async () => {

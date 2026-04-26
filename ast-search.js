@@ -64,6 +64,33 @@ class FileCache {
 
 const fileCache = new FileCache();
 
+// --- Bundled binary resolution ---
+
+/**
+ * Resolve the path to a bundled binary in resources/bin.
+ * Works both in development (project root) and in a packaged Electron app
+ * (where extraResources land inside the .app's Resources directory).
+ */
+function getBundledBinPath(name) {
+  const candidates = [];
+
+  // Packaged Electron app: process.resourcesPath points to <app>/Contents/Resources
+  if (process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, 'bin', name));
+  }
+
+  // Development: resources/bin relative to this file
+  candidates.push(path.join(__dirname, 'resources', 'bin', name));
+
+  for (const p of candidates) {
+    try {
+      fs.accessSync(p, fs.constants.X_OK);
+      return p;
+    } catch (_) { /* not here */ }
+  }
+  return null;
+}
+
 // --- Backend detection ---
 
 let _cachedBackend = null;
@@ -71,7 +98,20 @@ let _cachedBackend = null;
 function detectBackend() {
   if (_cachedBackend) return _cachedBackend;
 
-  // Try ast-grep (sg)
+  // Try bundled ast-grep first, then system sg
+  const bundledSg = getBundledBinPath('sg');
+  if (bundledSg) {
+    try {
+      const env = Object.assign({}, process.env, {
+        PATH: path.dirname(bundledSg) + path.delimiter + (process.env.PATH || '')
+      });
+      const ver = execFileSync(bundledSg, ['--version'], { encoding: 'utf8', timeout: 5000, env }).trim();
+      _cachedBackend = { backend: 'ast-grep', version: ver, path: bundledSg, bundled: true };
+      return _cachedBackend;
+    } catch (_) { /* bundled binary failed */ }
+  }
+
+  // Try system-installed sg
   try {
     const ver = execFileSync('sg', ['--version'], { encoding: 'utf8', timeout: 5000 }).trim();
     _cachedBackend = { backend: 'ast-grep', version: ver, path: findBinaryPath('sg') };
@@ -171,12 +211,20 @@ function astGrepSearch(pattern, cwd, language) {
   if (language) {
     args.push('--lang', language);
   }
-  try {
-    const output = execFileSync('sg', args, {
-      encoding: 'utf8',
-      cwd,
-      timeout: 10000,
+
+  const status = detectBackend();
+  const sgBin = status.path || 'sg';
+  const opts = { encoding: 'utf8', cwd, timeout: 10000 };
+
+  // When using bundled binary, ensure ast-grep is on PATH so sg shim can find it
+  if (status.bundled) {
+    opts.env = Object.assign({}, process.env, {
+      PATH: path.dirname(sgBin) + path.delimiter + (process.env.PATH || '')
     });
+  }
+
+  try {
+    const output = execFileSync(sgBin, args, opts);
     return parseAstGrepOutput(output);
   } catch (err) {
     // ast-grep returns non-zero when no matches found
@@ -445,6 +493,7 @@ function getSearchStatus() {
 
 module.exports = {
   detectBackend,
+  getBundledBinPath,
   resetBackendCache,
   validatePattern,
   astSearch,

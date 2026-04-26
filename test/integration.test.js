@@ -587,16 +587,17 @@ describe('7.1 Verify main.js wiring', () => {
   });
 
   it('main.js creates orchestrator instances per execution', () => {
-    const mainSource = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf-8');
+    // Orchestrator creation moved to main/ipc-tasks.js during modularization
+    const tasksSource = fs.readFileSync(path.join(__dirname, '..', 'main', 'ipc-tasks.js'), 'utf-8');
 
     // The task-graph-execute handler should create a new Orchestrator
     assert.ok(
-      mainSource.includes('new Orchestrator'),
-      'main.js should create Orchestrator instances'
+      tasksSource.includes('new Orchestrator'),
+      'ipc-tasks.js should create Orchestrator instances'
     );
     assert.ok(
-      mainSource.includes('task-graph-execute'),
-      'main.js should have task-graph-execute IPC handler'
+      tasksSource.includes('task-graph-execute'),
+      'ipc-tasks.js should have task-graph-execute IPC handler'
     );
   });
 });
