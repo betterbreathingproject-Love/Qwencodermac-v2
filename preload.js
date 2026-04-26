@@ -114,6 +114,7 @@ contextBridge.exposeInMainWorld('app', {
   specSaveArtifact: (d,p,c) => ipcRenderer.invoke('spec-save-artifact', d, p, c),
   specConfig:       (d)     => ipcRenderer.invoke('spec-config', d),
   specList:         ()      => ipcRenderer.invoke('spec-list'),
+  specDelete:       (n)     => ipcRenderer.invoke('spec-delete', n),
 
   // LSP
   lspStatus:         ()     => ipcRenderer.invoke('lsp-status'),

@@ -191,6 +191,76 @@ function generateTaskGraphFromDesign(designMd) {
   return taskLines.join('\n') + '\n';
 }
 
+/**
+ * List all specs in a project.
+ *
+ * @param {string} projectDir - Root project directory
+ * @returns {Array<{ name: string, specDir: string, currentPhase: string, lastModified: number|null, config: object|null }>}
+ */
+function listSpecs(projectDir) {
+  if (!projectDir || typeof projectDir !== 'string') {
+    throw new Error('projectDir is required and must be a non-empty string');
+  }
+  const specsDir = path.join(projectDir, '.maccoder', 'specs');
+  if (!fs.existsSync(specsDir)) return [];
+
+  const entries = fs.readdirSync(specsDir, { withFileTypes: true });
+  const specs = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const specDir = path.join(specsDir, entry.name);
+    const configPath = path.join(specDir, '.config.maccoder');
+    let config = null;
+    let currentPhase = 'requirements';
+    let lastModified = null;
+    try {
+      const raw = fs.readFileSync(configPath, 'utf-8');
+      config = JSON.parse(raw);
+      currentPhase = config.currentPhase || 'requirements';
+      lastModified = config.lastModified || null;
+    } catch { /* config missing or corrupt — still list the spec */ }
+
+    specs.push({ name: entry.name, specDir, currentPhase, lastModified, config });
+  }
+
+  specs.sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
+  return specs;
+}
+
+/**
+ * Delete a spec by name. Removes the entire spec directory.
+ *
+ * @param {string} specName - Name of the spec (directory name under .maccoder/specs/)
+ * @param {string} projectDir - Root project directory
+ * @returns {{ deleted: boolean, specDir: string }}
+ */
+function deleteSpec(specName, projectDir) {
+  if (!specName || typeof specName !== 'string') {
+    throw new Error('specName is required and must be a non-empty string');
+  }
+  if (!projectDir || typeof projectDir !== 'string') {
+    throw new Error('projectDir is required and must be a non-empty string');
+  }
+
+  const safeName = specName.replace(/\s+/g, '-').toLowerCase();
+  const specDir = path.join(projectDir, '.maccoder', 'specs', safeName);
+
+  if (!fs.existsSync(specDir)) {
+    throw new Error(`Spec not found: ${safeName}`);
+  }
+
+  // Safety: ensure we're deleting inside .maccoder/specs/ only
+  const specsRoot = path.join(projectDir, '.maccoder', 'specs');
+  const resolved = path.resolve(specDir);
+  if (!resolved.startsWith(path.resolve(specsRoot) + path.sep)) {
+    throw new Error('Invalid spec path — refusing to delete outside .maccoder/specs/');
+  }
+
+  fs.rmSync(specDir, { recursive: true, force: true });
+  return { deleted: true, specDir };
+}
+
 module.exports = {
   PHASE_ORDER,
   createSpecConfig,
@@ -199,4 +269,6 @@ module.exports = {
   advancePhase,
   getSpecArtifacts,
   generateTaskGraphFromDesign,
+  listSpecs,
+  deleteSpec,
 };

@@ -5,7 +5,7 @@ const { parseTaskGraph } = require('../task-graph')
 const { Orchestrator } = require('../orchestrator')
 const compactor = require('../compactor')
 const { astSearch, getSupportedPatterns, getSearchStatus } = require('../ast-search')
-const { initSpec, getSpecPhase, advancePhase, getSpecArtifacts } = require('../spec-workflow')
+const { initSpec, getSpecPhase, advancePhase, getSpecArtifacts, listSpecs, deleteSpec } = require('../spec-workflow')
 const { generateSteeringDocs } = require('../steering-generator')
 
 // ── validation ────────────────────────────────────────────────────────────────
@@ -209,26 +209,16 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
   ipcMain.handle('spec-list', async () => {
     const project = getCurrentProject()
     if (!project) return []
-    const path = require('path')
-    const fs = require('fs')
-    const specsDir = path.join(project, '.maccoder', 'specs')
-    if (!fs.existsSync(specsDir)) return []
-    try {
-      const entries = await fsp.readdir(specsDir, { withFileTypes: true })
-      const specs = []
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue
-        const specDir = path.join(specsDir, entry.name)
-        const configPath = path.join(specDir, '.config.maccoder')
-        try {
-          const raw = await fsp.readFile(configPath, 'utf-8')
-          const config = JSON.parse(raw)
-          specs.push({ name: entry.name, specDir, currentPhase: config.currentPhase, lastModified: config.lastModified })
-        } catch { specs.push({ name: entry.name, specDir, currentPhase: 'requirements' }) }
-      }
-      specs.sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0))
-      return specs
-    } catch { return [] }
+    try { return listSpecs(project) }
+    catch { return [] }
+  })
+
+  ipcMain.handle('spec-delete', async (_, specName) => {
+    if (!isNonEmptyString(specName)) return { error: 'specName is required' }
+    const project = getCurrentProject()
+    if (!project) return { error: 'No project open' }
+    try { return deleteSpec(specName, project) }
+    catch (e) { return { error: e.message } }
   })
 
   // ── steering docs ───────────────────────────────────────────────────────

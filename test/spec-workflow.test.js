@@ -12,6 +12,8 @@ const {
   advancePhase,
   getSpecArtifacts,
   generateTaskGraphFromDesign,
+  listSpecs,
+  deleteSpec,
 } = require('../spec-workflow.js');
 
 let tmpDir;
@@ -184,5 +186,114 @@ describe('generateTaskGraphFromDesign', () => {
     assert.ok(!result.includes('Overview'));
     assert.ok(!result.includes('Architecture'));
     assert.ok(result.includes('Real Component'));
+  });
+});
+
+// --- listSpecs ---
+
+describe('listSpecs', () => {
+  it('returns empty array when no specs directory exists', () => {
+    const result = listSpecs(tmpDir);
+    assert.deepEqual(result, []);
+  });
+
+  it('returns empty array when specs directory is empty', () => {
+    fs.mkdirSync(path.join(tmpDir, '.maccoder', 'specs'), { recursive: true });
+    const result = listSpecs(tmpDir);
+    assert.deepEqual(result, []);
+  });
+
+  it('lists a single spec with config', () => {
+    initSpec('alpha', tmpDir);
+    const result = listSpecs(tmpDir);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].name, 'alpha');
+    assert.equal(result[0].currentPhase, 'requirements');
+    assert.ok(result[0].specDir.endsWith('alpha'));
+    assert.ok(result[0].config);
+  });
+
+  it('lists multiple specs sorted by lastModified descending', () => {
+    const a = initSpec('aaa', tmpDir);
+    const b = initSpec('bbb', tmpDir);
+    // Manually bump bbb's lastModified to be older
+    const configPath = path.join(b.specDir, '.config.maccoder');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    config.lastModified = 1000;
+    fs.writeFileSync(configPath, JSON.stringify(config), 'utf-8');
+
+    const result = listSpecs(tmpDir);
+    assert.equal(result.length, 2);
+    assert.equal(result[0].name, 'aaa'); // newer
+    assert.equal(result[1].name, 'bbb'); // older
+  });
+
+  it('lists specs even when config is missing', () => {
+    initSpec('has-config', tmpDir);
+    // Create a spec dir without config
+    const noConfigDir = path.join(tmpDir, '.maccoder', 'specs', 'no-config');
+    fs.mkdirSync(noConfigDir, { recursive: true });
+
+    const result = listSpecs(tmpDir);
+    assert.equal(result.length, 2);
+    const noConfig = result.find(s => s.name === 'no-config');
+    assert.ok(noConfig);
+    assert.equal(noConfig.currentPhase, 'requirements');
+    assert.equal(noConfig.config, null);
+  });
+
+  it('throws on missing projectDir', () => {
+    assert.throws(() => listSpecs(''), /projectDir is required/);
+  });
+});
+
+// --- deleteSpec ---
+
+describe('deleteSpec', () => {
+  it('deletes an existing spec directory', () => {
+    const { specDir } = initSpec('to-delete', tmpDir);
+    assert.ok(fs.existsSync(specDir));
+
+    const result = deleteSpec('to-delete', tmpDir);
+    assert.equal(result.deleted, true);
+    assert.ok(!fs.existsSync(specDir));
+  });
+
+  it('deletes spec with artifacts', () => {
+    const { specDir } = initSpec('with-files', tmpDir);
+    fs.writeFileSync(path.join(specDir, 'requirements.md'), '# Req', 'utf-8');
+    fs.writeFileSync(path.join(specDir, 'design.md'), '# Design', 'utf-8');
+
+    deleteSpec('with-files', tmpDir);
+    assert.ok(!fs.existsSync(specDir));
+  });
+
+  it('normalizes spec name before deleting', () => {
+    initSpec('My Feature', tmpDir);
+    const result = deleteSpec('My Feature', tmpDir);
+    assert.equal(result.deleted, true);
+  });
+
+  it('throws when spec does not exist', () => {
+    assert.throws(() => deleteSpec('nonexistent', tmpDir), /Spec not found/);
+  });
+
+  it('throws on empty specName', () => {
+    assert.throws(() => deleteSpec('', tmpDir), /specName is required/);
+  });
+
+  it('throws on missing projectDir', () => {
+    assert.throws(() => deleteSpec('foo', ''), /projectDir is required/);
+  });
+
+  it('does not affect other specs', () => {
+    initSpec('keep-me', tmpDir);
+    initSpec('delete-me', tmpDir);
+
+    deleteSpec('delete-me', tmpDir);
+
+    const remaining = listSpecs(tmpDir);
+    assert.equal(remaining.length, 1);
+    assert.equal(remaining[0].name, 'keep-me');
   });
 });
