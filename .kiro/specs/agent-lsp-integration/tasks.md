@@ -118,3 +118,64 @@ Integrate the agent-lsp Go binary into the QwenCoder Mac Studio Electron app. Th
     - Fall back to existing file-tree-only context when LSP is not ready
     - _Requirements: 4.1, 4.2, 4.3, 4.4_
 
+- [ ] 5. Modify `orchestrator.js` — Safe-edit workflow injection
+  - [ ] 5.1 Add `SAFE_EDIT_INSTRUCTIONS` constant and inject into implementation agent prompts
+    - Define `SAFE_EDIT_INSTRUCTIONS` string constant with blast radius, speculative edit, and post-edit diagnostic steps
+    - In `_dispatchNode`, detect when the agent type is `implementation` and `lspManager.getStatus().status === 'ready'`
+    - Append `SAFE_EDIT_INSTRUCTIONS` to the task's `specContext` or as a `systemPromptSuffix` on the node
+    - Accept `lspManager` in the Orchestrator constructor options and store as `this._lspManager`
+    - Skip injection when LSP is not ready — use existing prompt without safe-edit instructions
+    - _Requirements: 7.1, 7.2, 7.3_
+
+  - [ ] 5.2 Wire `lspManager` into Orchestrator from `main.js`
+    - Pass `lspManager` to the Orchestrator constructor in `main/ipc-tasks.js` or wherever orchestrator is instantiated
+    - Ensure the orchestrator receives the same `lspManager` instance used by DirectBridge
+    - _Requirements: 7.1_
+
+  - [ ] 5.3 Write unit tests for orchestrator safe-edit injection (`test/orchestrator.test.js`)
+    - Test that `SAFE_EDIT_INSTRUCTIONS` is injected when agent type is `implementation` and LSP is ready
+    - Test that instructions are NOT injected when LSP is not ready
+    - Test that instructions are NOT injected for non-implementation agent types (explore, context-gather, etc.)
+    - Test that the orchestrator works normally when `lspManager` is null/undefined
+    - _Requirements: 7.1, 7.2, 7.3_
+
+- [ ] 6. Add symbol browser UI to renderer
+  - [ ] 6.1 Add "Symbols" sub-section to the file explorer sidebar in `renderer/app.js`
+    - Create a `symbolPanel` div below the file tree in the sidebar
+    - When a file is opened (`openFile`), call `window.app.lspSymbols(filePath)` to fetch symbols
+    - Render symbols as a nested list (functions, classes, variables with kind icons)
+    - When a symbol is clicked, scroll the editor to that symbol's line
+    - Show the panel only when `lspStatus` is `ready`; hide it otherwise
+    - _Requirements: 8.3, 8.4, 8.5_
+
+  - [ ] 6.2 Add symbol popover to LSP status chip click
+    - When the user clicks the `lspChip`, show a popover/tooltip listing active language servers and their languages
+    - Fetch data via `window.app.lspStatus()` on click
+    - _Requirements: 8.2_
+
+  - [ ] 6.3 Add CSS styles for symbol browser and status popover in `renderer/style.css`
+    - Style the symbol list items with indentation for nested symbols
+    - Style the status popover with server names and language badges
+    - Match existing dark theme and design conventions
+    - _Requirements: 8.3, 8.4_
+
+- [ ] 7. Align `agent-pool.js` with LSP tool sets
+  - [ ] 7.1 Add dynamic LSP tool merging in `registerType` or `selectType`
+    - Import or reference `LSP_TOOL_SETS` from `direct-bridge.js` (or extract to a shared module)
+    - In `selectType` or when building the agent's allowed tools, merge the role's LSP tools when LSP is ready
+    - Accept a `getLspStatus` callback in AgentPool constructor or via a setter
+    - When LSP is not ready, return only the base `allowedTools` without LSP tools
+    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
+
+  - [ ] 7.2 Update `main.js` agent pool registration to wire LSP status
+    - Pass `lspManager` or a status getter to the AgentPool instance
+    - Ensure the existing `registerType` calls in `main.js` don't need to hardcode LSP tools
+    - _Requirements: 3.6_
+
+  - [ ] 7.3 Write unit tests for agent pool LSP tool merging (`test/agent-pool.test.js`)
+    - Test that LSP tools are included in allowed tools when LSP is ready for each role
+    - Test that LSP tools are excluded when LSP is not ready
+    - Test that unknown roles get no LSP tools
+    - Test that base allowed tools are always present regardless of LSP status
+    - _Requirements: 3.1–3.6_
+
