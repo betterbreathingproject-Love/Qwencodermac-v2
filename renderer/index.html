@@ -438,12 +438,23 @@
           </div>
           <div class="editor-split">
             <textarea class="editor-area" id="editorArea" placeholder="Open a file from the sidebar..." spellcheck="false"></textarea>
+            <div class="preview-resize-handle" id="previewResizeHandle" style="display:none"></div>
             <div class="preview-pane" id="previewPane" style="display:none">
               <div class="preview-header">
                 <span>Live Preview</span>
+                <div class="preview-devices" id="previewDevices">
+                  <button class="preview-device-btn active" data-device="responsive" onclick="setPreviewDevice('responsive')" title="Responsive (fill)">↔</button>
+                  <button class="preview-device-btn" data-device="desktop" onclick="setPreviewDevice('desktop')" title="Desktop 1440×900">🖥</button>
+                  <button class="preview-device-btn" data-device="laptop" onclick="setPreviewDevice('laptop')" title="Laptop 1280×800">💻</button>
+                  <button class="preview-device-btn" data-device="tablet" onclick="setPreviewDevice('tablet')" title="Tablet 768×1024">📱</button>
+                  <button class="preview-device-btn" data-device="mobile" onclick="setPreviewDevice('mobile')" title="Mobile 375×667">📲</button>
+                </div>
+                <span class="preview-size-label" id="previewSizeLabel"></span>
                 <button class="btn-sm" onclick="refreshPreview()">↻ Refresh</button>
               </div>
-              <iframe id="previewFrame" sandbox="allow-scripts allow-same-origin"></iframe>
+              <div class="preview-viewport" id="previewViewport">
+                <iframe id="previewFrame" sandbox="allow-scripts allow-same-origin"></iframe>
+              </div>
             </div>
           </div>
         </div>

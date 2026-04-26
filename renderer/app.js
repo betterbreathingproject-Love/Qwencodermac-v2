@@ -1956,11 +1956,86 @@ function previewCode(codeBlockId) {
 function togglePreview() {
   previewOpen = !previewOpen
   const pane = document.getElementById('previewPane')
+  const handle = document.getElementById('previewResizeHandle')
   const btn = document.getElementById('previewToggle')
   pane.style.display = previewOpen ? 'flex' : 'none'
+  handle.style.display = previewOpen ? 'block' : 'none'
   btn.textContent = previewOpen ? 'Preview ◂' : 'Preview ▸'
-  if (previewOpen) refreshPreview()
+  if (previewOpen) {
+    setPreviewDevice(_currentPreviewDevice || 'responsive')
+    refreshPreview()
+  }
 }
+
+// ── preview device presets ─────────────────────────────────────────────────
+const _previewDevices = {
+  responsive: { w: null, h: null, label: 'Responsive' },
+  desktop:    { w: 1440, h: 900, label: '1440 × 900' },
+  laptop:     { w: 1280, h: 800, label: '1280 × 800' },
+  tablet:     { w: 768,  h: 1024, label: '768 × 1024' },
+  mobile:     { w: 375,  h: 667, label: '375 × 667' }
+}
+let _currentPreviewDevice = 'responsive'
+
+function setPreviewDevice(name) {
+  _currentPreviewDevice = name
+  const dev = _previewDevices[name]
+  const viewport = document.getElementById('previewViewport')
+  const frame = document.getElementById('previewFrame')
+  const label = document.getElementById('previewSizeLabel')
+
+  // update active button
+  document.querySelectorAll('.preview-device-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.device === name)
+  })
+
+  if (!dev.w) {
+    // responsive — fill the viewport
+    viewport.className = 'preview-viewport responsive'
+    frame.style.width = '100%'
+    frame.style.height = '100%'
+    label.textContent = ''
+  } else {
+    viewport.className = 'preview-viewport device'
+    frame.style.width = dev.w + 'px'
+    frame.style.height = dev.h + 'px'
+    label.textContent = dev.label
+  }
+}
+
+// ── preview pane resize handle ────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  const handle = document.getElementById('previewResizeHandle')
+  const pane = document.getElementById('previewPane')
+  const split = document.querySelector('.editor-split')
+  if (!handle || !pane || !split) return
+
+  let dragging = false
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault()
+    dragging = true
+    handle.classList.add('dragging')
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  })
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return
+    const rect = split.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const total = rect.width
+    const editorW = Math.max(200, Math.min(x, total - 220))
+    const previewW = total - editorW - 5 // 5 = handle width
+    pane.style.width = previewW + 'px'
+    pane.style.flex = 'none'
+  })
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return
+    dragging = false
+    handle.classList.remove('dragging')
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  })
+})
 
 function refreshPreview() {
   const frame = document.getElementById('previewFrame')

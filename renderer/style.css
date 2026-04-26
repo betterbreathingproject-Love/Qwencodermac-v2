@@ -294,11 +294,31 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 
 /* ── editor split + preview ────────────────────────────────────────────────── */
 .editor-split { flex: 1; display: flex; overflow: hidden; }
-.editor-split .editor-area { flex: 1; }
-.preview-pane { flex: 1; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: #fff; }
-.preview-header { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: var(--bg2); border-bottom: 1px solid var(--border); font-size: 11px; color: var(--muted); }
-.preview-header span { flex: 1; }
-#previewFrame { flex: 1; border: none; width: 100%; background: #fff; }
+.editor-split .editor-area { flex: 1; min-width: 200px; }
+
+/* resize handle */
+.preview-resize-handle { width: 5px; cursor: col-resize; background: var(--border); flex-shrink: 0; transition: background 0.15s; position: relative; z-index: 5; }
+.preview-resize-handle:hover, .preview-resize-handle.dragging { background: var(--accent); }
+
+.preview-pane { width: 50%; min-width: 220px; display: flex; flex-direction: column; border-left: none; background: var(--bg2); }
+.preview-header { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: var(--bg2); border-bottom: 1px solid var(--border); font-size: 11px; color: var(--muted); flex-wrap: wrap; }
+.preview-header span:first-child { white-space: nowrap; }
+
+/* device preset buttons */
+.preview-devices { display: flex; gap: 2px; margin-left: auto; }
+.preview-device-btn { width: 26px; height: 22px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg3); color: var(--muted); font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.12s; padding: 0; }
+.preview-device-btn:hover { border-color: var(--accent); color: var(--text); }
+.preview-device-btn.active { border-color: var(--accent); background: rgba(124,106,247,0.12); color: var(--accent2); }
+.preview-size-label { font-size: 10px; color: var(--muted); font-family: 'SF Mono', monospace; white-space: nowrap; }
+
+/* viewport container */
+.preview-viewport { flex: 1; display: flex; align-items: flex-start; justify-content: center; overflow: auto; background: #1a1a1e; position: relative; }
+.preview-viewport.responsive { align-items: stretch; }
+.preview-viewport.responsive #previewFrame { width: 100%; height: 100%; border: none; }
+.preview-viewport.device { padding: 16px; align-items: flex-start; }
+.preview-viewport.device #previewFrame { border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); background: #fff; }
+
+#previewFrame { border: none; background: #fff; }
 
 /* ── tool use blocks (base — overridden by improved section below) ──────────── */
 
