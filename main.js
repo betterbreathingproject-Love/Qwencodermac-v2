@@ -13,6 +13,9 @@ const ipcTasks = require('./main/ipc-tasks')
 const ipcWatcher = require('./main/ipc-watcher')
 const ipcLsp = require('./main/ipc-lsp')
 const { LspManager } = require('./lsp-manager')
+const { TelegramBot } = require('./telegram-bot')
+const { RecordingManager } = require('./recording-manager')
+const { RemoteJobController } = require('./remote-job-controller')
 
 nativeTheme.themeSource = 'dark'
 
@@ -20,6 +23,9 @@ let mainWindow
 let qwenBridge = null
 let currentProject = null
 let lspManager = null
+let telegramBot = null
+let recordingManager = null
+let remoteJobController = null
 const SERVER_PORT = 8090
 const SERVER_URL = `http://127.0.0.1:${SERVER_PORT}`
 
@@ -299,6 +305,71 @@ function createWindow() {
   if (currentProject) {
     lspManager.start(currentProject).catch(() => {})
   }
+
+  // ── Telegram Bot initialization ──
+  const appDataDir = app.getPath('userData')
+  telegramBot = new TelegramBot({ appDataDir })
+  recordingManager = new RecordingManager({ baseDir: path.join(appDataDir, 'telegram-recordings') })
+
+  // Load saved config and auto-start if valid
+  const savedConfig = telegramBot.loadConfig()
+  if (savedConfig && savedConfig.token && savedConfig.pairedChatId) {
+    telegramBot._pairedChatId = savedConfig.pairedChatId
+    telegramBot._botUsername = savedConfig.botUsername
+    telegramBot.start(savedConfig.token).catch(err => {
+      console.warn('[telegram-bot] Auto-start failed:', err.message)
+    })
+  }
+
+  // Wire command events to RemoteJobController
+  telegramBot.on('command', ({ chatId, command, args }) => {
+    if (!remoteJobController && telegramBot.getPairedChatId()) {
+      remoteJobController = new RemoteJobController({
+        telegramBot,
+        chatId: telegramBot.getPairedChatId(),
+        recordingManager,
+      })
+    }
+    if (remoteJobController) {
+      remoteJobController.handleCommand(command, args)
+    }
+  })
+
+  // Re-create RemoteJobController on pairing
+  telegramBot.on('paired', ({ chatId }) => {
+    remoteJobController = new RemoteJobController({
+      telegramBot,
+      chatId,
+      recordingManager,
+    })
+  })
+
+  // ── Telegram IPC handlers ──
+  ipcMain.handle('telegram-pair', async () => {
+    if (!telegramBot) return { error: 'Bot not initialized' }
+    return telegramBot.generatePairingToken()
+  })
+
+  ipcMain.handle('telegram-status', async () => {
+    if (!telegramBot) return { connected: false, bot_username: null, polling: false, last_error: null }
+    return telegramBot.getStatus()
+  })
+
+  ipcMain.handle('telegram-start', async (event, token) => {
+    if (!telegramBot) return { error: 'Bot not initialized' }
+    try {
+      await telegramBot.start(token)
+      return { ok: true }
+    } catch (err) {
+      return { error: err.message }
+    }
+  })
+
+  ipcMain.handle('telegram-stop', async () => {
+    if (!telegramBot) return { error: 'Bot not initialized' }
+    await telegramBot.stop()
+    return { ok: true }
+  })
 }
 
 // ── lifecycle ─────────────────────────────────────────────────────────────────
@@ -313,6 +384,7 @@ app.on('window-all-closed', () => {
   ipcServer.stopServer()
   ipcWatcher.unwatchProject()
   if (lspManager) lspManager.stop().catch(() => {})
+  if (telegramBot) telegramBot.stop()
   app.quit()
 })
 app.on('activate', () => { if (!mainWindow) createWindow() })

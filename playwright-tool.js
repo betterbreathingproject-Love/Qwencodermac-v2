@@ -10,29 +10,67 @@
  */
 'use strict'
 
-function createPlaywrightInstance() {
+function createPlaywrightInstance(options = {}) {
   let _browser = null
   let _context = null
   let _page = null
+  let _recordingPath = null
 
   async function ensureBrowser() {
     if (_page && !_page.isClosed()) return _page
     const { chromium } = require('playwright')
     _browser = await chromium.launch({ headless: true })
-    _context = await _browser.newContext({
+
+    const { recordingOptions } = options
+    const contextOptions = {
       viewport: { width: 1280, height: 720 },
       userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    })
+    }
+
+    if (recordingOptions) {
+      const fs = require('node:fs')
+      if (!fs.existsSync(recordingOptions.dir)) {
+        fs.mkdirSync(recordingOptions.dir, { recursive: true })
+      }
+      contextOptions.recordVideo = {
+        dir: recordingOptions.dir,
+        size: recordingOptions.size || { width: 1280, height: 720 },
+      }
+    }
+
+    try {
+      _context = await _browser.newContext(contextOptions)
+    } catch (err) {
+      if (recordingOptions) {
+        console.warn('[playwright-tool] Recording initialization failed, falling back to non-recording context:', err.message)
+        delete contextOptions.recordVideo
+        _context = await _browser.newContext(contextOptions)
+        _recordingPath = null
+      } else {
+        throw err
+      }
+    }
+
     _page = await _context.newPage()
     _page.setDefaultTimeout(30000)
     return _page
   }
 
   async function closeBrowser() {
+    if (_page && !_page.isClosed()) {
+      try {
+        const video = _page.video()
+        if (video) _recordingPath = await video.path()
+      } catch { /* no video */ }
+    }
     if (_browser) {
       await _browser.close().catch(() => {})
       _browser = null; _context = null; _page = null
     }
+  }
+
+  function getRecordingPath() {
+    return _recordingPath
   }
 
   // ── Tool implementations ──────────────────────────────────────────────────
@@ -192,7 +230,7 @@ function createPlaywrightInstance() {
     }
   }
 
-  return { execute, closeBrowser }
+  return { execute, closeBrowser, getRecordingPath }
 }
 
 // ── Tool definitions for the OpenAI function-calling format ───────────────────

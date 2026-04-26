@@ -13,6 +13,7 @@
 const http = require('http')
 const fs = require('fs')
 const path = require('path')
+const os = require('node:os')
 const { execSync, spawn } = require('child_process')
 const { createPlaywrightInstance, BROWSER_TOOL_DEFS } = require('./playwright-tool')
 const { WEB_TOOL_DEFS, executeWebTool } = require('./web-tools')
@@ -76,6 +77,49 @@ class WorkerSink {
 
   send(channel, data) {
     this.port.postMessage({ channel, data })
+  }
+}
+
+/**
+ * InputRequester — sends questions to a Telegram chat and waits for the user's reply.
+ * Used by the ask_user tool during Telegram-initiated jobs.
+ */
+class InputRequester {
+  constructor(telegramBot, chatId) {
+    this._bot = telegramBot
+    this._chatId = chatId
+    this._pending = false
+  }
+
+  async ask(question) {
+    this._pending = true
+    try {
+      await this._bot.sendMessage(this._chatId, `🤖 Agent asks:\n${question}`)
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          this._bot.removeListener('message', handler)
+          this._pending = false
+          resolve('(No response received within 5 minutes)')
+        }, 5 * 60 * 1000)
+
+        const handler = ({ chatId, text }) => {
+          if (chatId === this._chatId) {
+            clearTimeout(timeout)
+            this._bot.removeListener('message', handler)
+            this._pending = false
+            resolve(text)
+          }
+        }
+        this._bot.on('message', handler)
+      })
+    } catch (err) {
+      this._pending = false
+      return `(Failed to send question: ${err.message})`
+    }
+  }
+
+  hasPendingRequest() {
+    return this._pending
   }
 }
 
@@ -211,6 +255,20 @@ const TOOL_DEFS = [
           key: { type: 'string', description: 'The rewind key from the compression notice' },
         },
         required: ['key'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'ask_user',
+      description: 'Ask the user a question and wait for their reply. Use when you need clarification or input.',
+      parameters: {
+        type: 'object',
+        properties: {
+          question: { type: 'string', description: 'The question to ask the user' },
+        },
+        required: ['question'],
       },
     },
   },
@@ -928,7 +986,7 @@ function detectContentType(toolName, content) {
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
-async function executeTool(name, args, cwd, browserInstance, lspManager) {
+async function executeTool(name, args, cwd, browserInstance, lspManager, inputRequester) {
   // Route web_* tools to the web tools module
   if (name === 'web_search' || name === 'web_fetch') {
     const apiKeys = getApiKeys()
@@ -1084,6 +1142,15 @@ async function executeTool(name, args, cwd, browserInstance, lspManager) {
         }
         return { error: rewindResult.error || 'Content no longer available' }
       }
+      case 'ask_user': {
+        if (!inputRequester) return { result: '(No input channel available — proceeding without user input)' }
+        try {
+          const reply = await inputRequester.ask(args.question)
+          return { result: reply }
+        } catch (err) {
+          return { result: `(User input timed out: ${err.message})` }
+        }
+      }
       default:
         return { error: `Unknown tool: ${name}` }
     }
@@ -1120,6 +1187,7 @@ class DirectBridge {
     this._lspManager = opts.lspManager || null
     this._agentRole = opts.agentRole || 'general'
     this._allowedTools = opts.allowedTools || null
+    this._telegramForwarder = opts.telegramForwarder || null
   }
 
   setLspManager(lspManager) {
@@ -1806,6 +1874,18 @@ class DirectBridge {
           is_error: isError,
         })
 
+        // Screenshot forwarding to Telegram (non-blocking)
+        if (fnName === 'browser_screenshot' && !isError && this._telegramForwarder) {
+          try {
+            const b64Match = (rendererContent || '').match(/data:image\/png;base64,([A-Za-z0-9+/=]+)/)
+            if (b64Match) {
+              const tmpPath = path.join(os.tmpdir(), `screenshot_${Date.now()}.png`)
+              fs.writeFileSync(tmpPath, Buffer.from(b64Match[1], 'base64'))
+              this._telegramForwarder.sendPhoto(tmpPath, 'Browser screenshot').catch(() => {})
+            }
+          } catch { /* non-blocking — don't fail the tool call */ }
+        }
+
         // Add tool result to messages (model gets stripped content)
         messages.push({
           role: 'tool',
@@ -2171,4 +2251,4 @@ ${autoEdit ? '\nYou are in auto-edit mode. Proceed with changes without asking f
   }
 }
 
-module.exports = { DirectBridge, WindowSink, CallbackSink, WorkerSink, executeTool, getToolDefs, LSP_TOOL_SETS, LSP_TOOL_DEFS, buildProjectContext, detectEntryPoints, formatSymbolOutline, detectContentType }
+module.exports = { DirectBridge, WindowSink, CallbackSink, WorkerSink, InputRequester, executeTool, getToolDefs, LSP_TOOL_SETS, LSP_TOOL_DEFS, buildProjectContext, detectEntryPoints, formatSymbolOutline, detectContentType }

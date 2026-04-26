@@ -128,6 +128,12 @@ contextBridge.exposeInMainWorld('app', {
   onLspDiagnostics:  (cb)   => ipcRenderer.on('lsp-diagnostics', (_, d) => cb(d)),
   offLspDiagnostics: ()     => ipcRenderer.removeAllListeners('lsp-diagnostics'),
 
+  // Telegram
+  telegramPair:      ()     => ipcRenderer.invoke('telegram-pair'),
+  telegramStatus:    ()     => ipcRenderer.invoke('telegram-status'),
+  telegramStart:     (token) => ipcRenderer.invoke('telegram-start', token),
+  telegramStop:      ()     => ipcRenderer.invoke('telegram-stop'),
+
   // events
   onTaskStatusEvent:(cb)    => ipcRenderer.on('task-status-event', (_, d) => cb(d)),
   onOrchestratorEvent:(cb)  => ipcRenderer.on('orchestrator-agent-event', (_, d) => cb(d)),
