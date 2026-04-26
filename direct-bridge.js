@@ -1452,8 +1452,10 @@ class DirectBridge {
 
         // Truncate large tool outputs to avoid blowing up the context window.
         // For local models, keep outputs lean to preserve generation quality.
-        if (content && content.length > 8000) {
-          content = content.slice(0, 8000) + '\n\n... [truncated — output was ' + (content.length / 1024).toFixed(0) + 'KB. Use more specific queries to get smaller results.]'
+        // read_file gets a higher limit since the model needs full file content to work with it.
+        const truncateLimit = fnName === 'read_file' ? 24000 : 8000
+        if (content && content.length > truncateLimit) {
+          content = content.slice(0, truncateLimit) + '\n\n... [truncated — output was ' + (content.length / 1024).toFixed(0) + 'KB. Use more specific queries or read smaller sections.]'
         }
 
         // Emit tool-result event
