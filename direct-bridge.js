@@ -2269,6 +2269,16 @@ IMPORTANT: When writing code files, avoid putting backticks, complex template li
 
 CRITICAL: When implementing code changes, you MUST use the write_file or edit_file tools to actually create or modify files. NEVER just output code in your text response — that does nothing. The user cannot copy-paste from chat. Always use the file tools to make real changes on disk.
 
+**Tool call format — ALWAYS include ALL required parameters:**
+\`\`\`
+read_file: requires "path"
+write_file: requires "path" and "content"
+edit_file: requires "path", "old_string", and "new_string"
+search_files: requires "pattern" (and optionally "path", "include")
+bash: requires "command"
+list_dir: requires "path"
+\`\`\`
+
 **Progress tracking:**
 When working on multi-step tasks, use update_todos to show your plan and track progress. Call it at the start with your plan (all items "pending"), then update item statuses to "in_progress" and "done" as you work through each step. This keeps the user informed.
 ${autoEdit ? '\nYou are in auto-edit mode. Proceed with changes without asking for confirmation.' : ''}`

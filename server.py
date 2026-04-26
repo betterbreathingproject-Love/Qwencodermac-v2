@@ -104,6 +104,15 @@ def load_model(model_path: str):
     if jinja_path.exists():
         _chat_template = jinja_path.read_text()
         print(f"[server] Loaded chat_template.jinja (tool calling enabled)")
+        # Log the tool call format the template instructs
+        if '<tool_call>' in _chat_template:
+            if '<function=' in _chat_template:
+                print(f"[server] Template format: XML-parameter style (<function=name><parameter=key>value</parameter>)", file=sys.stderr)
+            elif '"name"' in _chat_template or "'name'" in _chat_template:
+                print(f"[server] Template format: JSON style ({{\"name\": ..., \"arguments\": ...}})", file=sys.stderr)
+            else:
+                print(f"[server] Template format: unknown tool_call style", file=sys.stderr)
+        print(f"[server] Template length: {len(_chat_template)} chars", file=sys.stderr)
     else:
         # try tokenizer_config.json
         tok_cfg_path = Path(model_path) / "tokenizer_config.json"
@@ -398,12 +407,34 @@ def _build_prompt_with_tools(req: ChatRequest):
     env.globals["raise_exception"] = lambda msg: (_ for _ in ()).throw(Exception(msg))
     template = env.from_string(_chat_template)
 
-    prompt = template.render(
-        messages=tmpl_messages,
-        tools=tmpl_tools,
-        add_generation_prompt=True,
-        enable_thinking=True,
-    )
+    try:
+        prompt = template.render(
+            messages=tmpl_messages,
+            tools=tmpl_tools,
+            add_generation_prompt=True,
+            enable_thinking=True,
+        )
+    except Exception as e:
+        print(f"[server] ❌ Jinja template render FAILED: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        # Fallback: render without tools
+        prompt = template.render(
+            messages=tmpl_messages,
+            tools=None,
+            add_generation_prompt=True,
+            enable_thinking=True,
+        )
+
+    # Debug: log whether tools appear in the rendered prompt
+    if tmpl_tools:
+        tool_names_in_prompt = [t["function"]["name"] for t in tmpl_tools if t["function"]["name"] in prompt]
+        if not tool_names_in_prompt:
+            print(f"[server] ⚠️ WARNING: No tool names found in rendered prompt! Template may not be rendering tools.", file=sys.stderr)
+            print(f"[server] Prompt first 500 chars: {prompt[:500]}", file=sys.stderr)
+        else:
+            print(f"[server] ✅ Tools in prompt: {tool_names_in_prompt[:5]}...", file=sys.stderr)
+
     return prompt
 
 
