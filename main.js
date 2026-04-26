@@ -11,12 +11,15 @@ const ipcFiles = require('./main/ipc-files')
 const ipcProjects = require('./main/ipc-projects')
 const ipcTasks = require('./main/ipc-tasks')
 const ipcWatcher = require('./main/ipc-watcher')
+const ipcLsp = require('./main/ipc-lsp')
+const { LspManager } = require('./lsp-manager')
 
 nativeTheme.themeSource = 'dark'
 
 let mainWindow
 let qwenBridge = null
 let currentProject = null
+let lspManager = null
 const SERVER_PORT = 8090
 const SERVER_URL = `http://127.0.0.1:${SERVER_PORT}`
 
@@ -206,8 +209,20 @@ const ctx = {
   getServerUrl: () => SERVER_URL,
   getServerPort: () => SERVER_PORT,
   getCurrentProject: () => currentProject,
-  setCurrentProject: (p) => { currentProject = p },
+  setCurrentProject: (p) => {
+    currentProject = p
+    // Start or restart LSP for the new project directory
+    if (lspManager) {
+      const status = lspManager.getStatus().status
+      if (status === 'stopped') {
+        lspManager.start(p).catch(() => {})
+      } else {
+        lspManager.restart(p).catch(() => {})
+      }
+    }
+  },
   getAgentPool: () => agentPool,
+  getLspManager: () => lspManager,
   findPython: ipcServer.findPython,
   appDir: __dirname,
 }
@@ -219,6 +234,7 @@ ipcFiles.register(ipcMain, ctx)
 ipcProjects.register(ipcMain, ctx)
 ipcTasks.register(ipcMain, ctx)
 ipcWatcher.register(ipcMain, ctx)
+ipcLsp.register(ipcMain, ctx)
 
 // ── IPC: Qwen Code agent ─────────────────────────────────────────────────────
 ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, model, images, conversationHistory, samplingParams, taskGraphPath }) => {
@@ -245,6 +261,16 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'))
   mainWindow.on('closed', () => { ipcServer.stopServer(); mainWindow = null })
   qwenBridge = new DirectBridge(new WindowSink(mainWindow))
+
+  // Start LSP manager asynchronously — does not block window creation
+  lspManager = new LspManager()
+  lspManager.on('status-change', ({ oldStatus, newStatus }) => {
+    mainWindow?.webContents.send('lsp-status-change', { oldStatus, newStatus })
+  })
+  qwenBridge.setLspManager(lspManager)
+  if (currentProject) {
+    lspManager.start(currentProject).catch(() => {})
+  }
 }
 
 // ── lifecycle ─────────────────────────────────────────────────────────────────
@@ -255,7 +281,12 @@ app.whenReady().then(() => {
     mainWindow?.webContents.send('server-status', { running: ok })
   })
 })
-app.on('window-all-closed', () => { ipcServer.stopServer(); ipcWatcher.unwatchProject(); app.quit() })
+app.on('window-all-closed', () => {
+  ipcServer.stopServer()
+  ipcWatcher.unwatchProject()
+  if (lspManager) lspManager.stop().catch(() => {})
+  app.quit()
+})
 app.on('activate', () => { if (!mainWindow) createWindow() })
 
 // ── exports for testing ───────────────────────────────────────────────────────

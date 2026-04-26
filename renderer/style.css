@@ -14,6 +14,9 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--red); }
 .status-dot.online { background: var(--green); }
 #statusText { font-size: 10px; color: var(--muted); }
+.lsp-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border); cursor: default; }
+.lsp-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); }
+.lsp-chip #lspText { font-size: 9px; color: var(--muted); font-weight: 600; letter-spacing: 0.5px; }
 
 /* app layout */
 .app-layout { display: flex; height: calc(100vh - 40px); }

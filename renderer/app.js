@@ -47,6 +47,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   checkCompactor()
   checkSearchEngine()
   refreshWelcomeProjectBar()
+  initLspStatus()
 })
 
 // ── panels ────────────────────────────────────────────────────────────────────
@@ -3031,6 +3032,48 @@ function updateAgentStatsBar(opts = {}) {
 function updateStatusBar() {}
 
 // (status bar init removed — all status in chip bar now)
+
+// ── LSP status indicator ──────────────────────────────────────────────────────
+
+function setLspStatus({ status, servers = [] }) {
+  const chip = document.getElementById('lspChip')
+  const dot  = document.getElementById('lspDot')
+  const txt  = document.getElementById('lspText')
+  if (!chip) return
+
+  if (status === 'stopped') {
+    chip.style.display = 'none'
+    return
+  }
+
+  chip.style.display = 'inline-flex'
+
+  const colors = { ready: 'var(--green)', starting: '#f5a623', degraded: '#f5a623', error: 'var(--red)' }
+  dot.style.background = colors[status] || 'var(--muted)'
+  txt.textContent = 'LSP'
+
+  const serverNames = servers.map(s => s.name).join(', ')
+  chip.title = status === 'ready'
+    ? `LSP ready — ${serverNames || 'no language servers'}`
+    : status === 'degraded'
+    ? `LSP degraded — no language servers found on PATH`
+    : status === 'starting'
+    ? 'LSP starting...'
+    : `LSP error`
+}
+
+async function initLspStatus() {
+  if (!window.app.lspStatus) return // IPC not wired yet
+  try {
+    const s = await window.app.lspStatus()
+    setLspStatus(s)
+  } catch { /* ignore */ }
+
+  window.app.onLspStatusChange(({ oldStatus, newStatus }) => {
+    // Re-fetch full status to get server list
+    window.app.lspStatus().then(setLspStatus).catch(() => {})
+  })
+}
 
 // ── Tools panel ───────────────────────────────────────────────────────────────
 
