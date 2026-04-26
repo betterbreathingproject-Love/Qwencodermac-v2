@@ -3041,25 +3041,26 @@ function setLspStatus({ status, servers = [] }) {
   const txt  = document.getElementById('lspText')
   if (!chip) return
 
-  if (status === 'stopped') {
-    chip.style.display = 'none'
-    return
-  }
-
+  // Always show the chip — gray when stopped/unavailable
   chip.style.display = 'inline-flex'
 
-  const colors = { ready: 'var(--green)', starting: '#f5a623', degraded: '#f5a623', error: 'var(--red)' }
+  const colors = {
+    ready:    'var(--green)',
+    starting: '#f5a623',
+    degraded: '#f5a623',
+    error:    'var(--red)',
+    stopped:  'var(--muted)',
+  }
   dot.style.background = colors[status] || 'var(--muted)'
-  txt.textContent = 'LSP'
 
-  const serverNames = servers.map(s => s.name).join(', ')
-  chip.title = status === 'ready'
-    ? `LSP ready — ${serverNames || 'no language servers'}`
-    : status === 'degraded'
-    ? `LSP degraded — no language servers found on PATH`
-    : status === 'starting'
-    ? 'LSP starting...'
-    : `LSP error`
+  const tooltips = {
+    ready:    `LSP ready — ${servers.map(s => s.name).join(', ') || 'no language servers'}`,
+    starting: 'LSP starting...',
+    degraded: 'LSP degraded — no language servers found on PATH',
+    error:    'LSP error — check logs',
+    stopped:  'LSP not available — install agent-lsp binary',
+  }
+  chip.title = tooltips[status] || 'LSP unknown'
 }
 
 async function initLspStatus() {
