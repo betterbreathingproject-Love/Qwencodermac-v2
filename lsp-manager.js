@@ -379,11 +379,34 @@ class LspManager extends EventEmitter {
    * Sends a ping via call() every healthCheckInterval ms.
    * If the ping fails, logs a warning.
    */
+  /**
+   * Send a lightweight JSON-RPC request (tools/list) to verify the process is responsive.
+   * Unlike call(), this uses the standard MCP tools/list method rather than invoking a tool.
+   */
+  async _ping() {
+    if (this._status !== 'ready' && this._status !== 'degraded') {
+      throw new Error(`LSP not available (status: ${this._status})`);
+    }
+    const id = this._requestId++;
+    const request = { jsonrpc: '2.0', id, method: 'tools/list', params: {} };
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this._pendingRequests.delete(id);
+        reject(new Error('Health check ping timed out'));
+      }, 10000);
+      this._pendingRequests.set(id, {
+        resolve: (result) => { clearTimeout(timeout); resolve(result); },
+        reject: (err) => { clearTimeout(timeout); reject(err); },
+      });
+      this._process.stdin.write(JSON.stringify(request) + '\n');
+    });
+  }
+
   _startHealthCheck() {
     this._stopHealthCheck();
     this._healthTimer = setInterval(async () => {
       try {
-        await this.call('lsp_get_diagnostics', { path: this._projectDir || '.' });
+        await this._ping();
       } catch (err) {
         console.warn('[LspManager] Health check failed:', err.message);
       }
