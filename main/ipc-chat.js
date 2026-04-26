@@ -66,6 +66,9 @@ function register(ipcMain, { getServerPort, getMainWindow }) {
               }
               const delta = parsed.choices?.[0]?.delta?.content
               if (delta) event.sender.send('chat-stream-chunk', parsed)
+              // Forward finish_reason so the renderer can detect truncation
+              const finishReason = parsed.choices?.[0]?.finish_reason
+              if (finishReason) event.sender.send('chat-stream-finish-reason', finishReason)
             } catch {}
           }
         }

@@ -1026,6 +1026,8 @@ class DirectBridge {
    */
   async _agentLoop(messages, cwd, model, maxTurns = 25) {
     let consecutiveErrors = 0
+    let lastTextResponses = []  // Track recent text-only responses for repetition detection
+    let consecutivePlanningNudges = 0  // Track how many times we've nudged for planning-only responses
     for (let turn = 0; turn < maxTurns; turn++) {
       if (this._aborted) return
 
@@ -1124,6 +1126,29 @@ class DirectBridge {
         // If the model hit the token limit, it may have been trying to output
         // code as text instead of using write_file. Nudge it to use tools.
         if (finishReason === 'length' && text && text.length > 200) {
+          // Check if this is a repetition of previous length-truncated output
+          lastTextResponses.push(text.slice(0, 500))
+          if (lastTextResponses.length > 3) lastTextResponses.shift()
+          const prevSimilar = lastTextResponses.length >= 2 &&
+            lastTextResponses[lastTextResponses.length - 2].slice(0, 200) === lastTextResponses[lastTextResponses.length - 1].slice(0, 200)
+
+          if (prevSimilar) {
+            // Model is stuck generating the same long text repeatedly
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: 'Repetition detected in length-truncated output. Resetting context.' })
+            // Aggressive context reset — keep only essentials
+            const systemMsg = messages.find(m => m.role === 'system')
+            const userMsg = messages.find(m => m.role === 'user')
+            messages.length = 0
+            if (systemMsg) messages.push(systemMsg)
+            if (userMsg) messages.push(userMsg)
+            messages.push({
+              role: 'system',
+              content: 'You are STUCK generating the same text repeatedly. STOP outputting text. You MUST use a tool call in your next response. Call write_file, edit_file, read_file, or bash. Do NOT output any text — only a tool call.',
+            })
+            lastTextResponses = []
+            continue
+          }
+
           messages.push({ role: 'assistant', content: text })
           messages.push({
             role: 'system',
@@ -1136,6 +1161,55 @@ class DirectBridge {
         // nudge it to take action. Look for planning language without tool calls.
         const planningPatterns = /\b(let me|i('ll| will)|let's|i need to|i should|first.*then|i'm going to)\b/i
         if (text && text.length > 50 && planningPatterns.test(text) && turn < maxTurns - 1) {
+          consecutivePlanningNudges++
+
+          // Repetition detection: check if the model is producing similar text
+          // across consecutive turns (stuck in a loop)
+          lastTextResponses.push(text.slice(0, 500))
+          if (lastTextResponses.length > 3) lastTextResponses.shift()
+
+          const isRepeating = lastTextResponses.length >= 2 && (() => {
+            const prev = lastTextResponses[lastTextResponses.length - 2]
+            const curr = lastTextResponses[lastTextResponses.length - 1]
+            // Check for high similarity: same first 200 chars or >60% overlap
+            if (prev.slice(0, 200) === curr.slice(0, 200)) return true
+            const words = new Set(prev.toLowerCase().split(/\s+/))
+            const currWords = curr.toLowerCase().split(/\s+/)
+            const overlap = currWords.filter(w => words.has(w)).length
+            return currWords.length > 0 && (overlap / currWords.length) > 0.6
+          })()
+
+          if (isRepeating || consecutivePlanningNudges >= 3) {
+            // Model is stuck in a repetition loop — take aggressive corrective action
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Repetition detected (${consecutivePlanningNudges} planning-only turns). Breaking loop.` })
+
+            // Strip all previous planning messages and nudges to reset context
+            const cleanedMessages = messages.filter(m =>
+              !(m.role === 'system' && m.content && m.content.includes('Use your tools NOW')) &&
+              !(m.role === 'system' && m.content && m.content.includes('You are STUCK'))
+            )
+            // Keep only system prompt + user prompt + last tool result (if any)
+            const systemMsg = cleanedMessages.find(m => m.role === 'system')
+            const userMsg = cleanedMessages.find(m => m.role === 'user')
+            const lastToolResult = [...cleanedMessages].reverse().find(m => m.role === 'tool')
+            const lastAssistantWithTools = [...cleanedMessages].reverse().find(m => m.role === 'assistant' && m.tool_calls)
+
+            messages.length = 0
+            if (systemMsg) messages.push(systemMsg)
+            if (userMsg) messages.push(userMsg)
+            if (lastAssistantWithTools && lastToolResult) {
+              messages.push(lastAssistantWithTools)
+              messages.push(lastToolResult)
+            }
+            messages.push({
+              role: 'system',
+              content: 'You are STUCK in a repetition loop. STOP planning and describing. You MUST call a tool RIGHT NOW in your very next response. Pick the single most important action and do it. If you need to read a file, call read_file. If you need to write code, call write_file. Do NOT output any text — only a tool call.',
+            })
+            consecutivePlanningNudges = 0
+            lastTextResponses = []
+            continue
+          }
+
           messages.push({ role: 'assistant', content: text })
           messages.push({
             role: 'system',
@@ -1351,6 +1425,10 @@ class DirectBridge {
         if (isError) consecutiveErrors++
         else consecutiveErrors = 0
       }
+
+      // Reset planning/repetition counters when tools are used (model is making progress)
+      consecutivePlanningNudges = 0
+      lastTextResponses = []
 
       // If too many consecutive errors, nudge the model
       if (consecutiveErrors >= 3) {

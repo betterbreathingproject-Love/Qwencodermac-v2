@@ -16,7 +16,8 @@ contextBridge.exposeInMainWorld('app', {
   onStreamStats:  (cb)      => ipcRenderer.on('chat-stream-stats', (_, d) => cb(d)),
   onStreamDone:   (cb)      => ipcRenderer.on('chat-stream-done',  ()    => cb()),
   onStreamError:  (cb)      => ipcRenderer.on('chat-stream-error', (_, e) => cb(e)),
-  offStream:      ()        => { for (const c of ['chat-stream-chunk','chat-stream-stats','chat-stream-done','chat-stream-error']) ipcRenderer.removeAllListeners(c) },
+  offStream:      ()        => { for (const c of ['chat-stream-chunk','chat-stream-stats','chat-stream-done','chat-stream-error','chat-stream-finish-reason']) ipcRenderer.removeAllListeners(c) },
+  onStreamFinishReason: (cb) => ipcRenderer.on('chat-stream-finish-reason', (_, d) => cb(d)),
 
   // qwen code agent
   qwenRun:        (p)       => ipcRenderer.invoke('qwen-run', { prompt: p.prompt, cwd: p.cwd, permissionMode: p.permissionMode, model: p.model, images: p.images, conversationHistory: p.conversationHistory, samplingParams: p.samplingParams, taskGraphPath: p.taskGraphPath }),

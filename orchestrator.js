@@ -191,7 +191,10 @@ class Orchestrator extends EventEmitter {
   }
 
   async _dispatchNode(node) {
-    this._updateNodeStatus(node.id, 'in_progress');
+    // Pre-select agent type so the very first in_progress event carries it
+    const preSelectedType = this._agentPool?.selectType?.(node);
+    const preAgentType = preSelectedType?.name || 'general';
+    this._updateNodeStatus(node.id, 'in_progress', { agentType: preAgentType });
 
     try {
       const startTime = Date.now();
