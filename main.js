@@ -414,15 +414,33 @@ function createWindow() {
       }
 
       // Start the tunnel for public HTTPS access
+      // Use a stable subdomain derived from the bot username for consistency
       const localtunnel = require('localtunnel')
       if (!miniAppTunnel) {
-        miniAppTunnel = await localtunnel({ port: MINIAPP_PORT })
+        const subdomain = telegramBot?._botUsername
+          ? 'qc-' + telegramBot._botUsername.replace(/[^a-z0-9]/gi, '').toLowerCase().slice(0, 20)
+          : 'qwencoder-' + require('node:crypto').randomBytes(4).toString('hex')
+
+        miniAppTunnel = await localtunnel({ port: MINIAPP_PORT, subdomain })
         miniAppPublicUrl = miniAppTunnel.url
         // Update the controller's mini app URL
         if (remoteJobController._miniAppUrl !== undefined) {
           remoteJobController._miniAppUrl = miniAppPublicUrl
         }
         miniAppTunnel.on('close', () => { miniAppTunnel = null; miniAppPublicUrl = null })
+
+        // Auto-set the bot's menu button to the mini app URL via Telegram API
+        if (telegramBot?._token && telegramBot.getPairedChatId()) {
+          const { telegramRequest } = require('./telegram-bot')
+          telegramRequest('setChatMenuButton', telegramBot._token, {
+            chat_id: telegramBot.getPairedChatId(),
+            menu_button: JSON.stringify({
+              type: 'web_app',
+              text: '⚡ Agent',
+              web_app: { url: miniAppPublicUrl },
+            }),
+          }).catch(() => {}) // best-effort
+        }
       }
 
       return { ok: true, localUrl: `http://localhost:${MINIAPP_PORT}`, publicUrl: miniAppPublicUrl }
@@ -432,6 +450,14 @@ function createWindow() {
   })
 
   ipcMain.handle('miniapp-stop', async () => {
+    // Reset the bot's menu button back to default
+    if (telegramBot?._token && telegramBot.getPairedChatId()) {
+      const { telegramRequest } = require('./telegram-bot')
+      telegramRequest('setChatMenuButton', telegramBot._token, {
+        chat_id: telegramBot.getPairedChatId(),
+        menu_button: JSON.stringify({ type: 'default' }),
+      }).catch(() => {})
+    }
     if (miniAppTunnel) { miniAppTunnel.close(); miniAppTunnel = null; miniAppPublicUrl = null }
     if (miniAppServer) { miniAppServer.stop(); miniAppServer = null }
     return { ok: true }
