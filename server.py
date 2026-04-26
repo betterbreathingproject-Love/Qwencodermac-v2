@@ -166,6 +166,12 @@ _TOOL_CALL_RE = re.compile(
     r'<tool_call>\s*<function=([^>]+)>(.*?)</function>\s*</tool_call>',
     re.DOTALL
 )
+# Fallback: <tool_call> blocks containing JSON (Qwen 2.5/3.x alternate format)
+# Use greedy match to capture the full JSON including nested braces
+_TOOL_CALL_JSON_RE = re.compile(
+    r'<tool_call>\s*(\{.+\})\s*</tool_call>',
+    re.DOTALL
+)
 _PARAM_RE = re.compile(
     r'<parameter=([^>]+)>\n?(.*?)\n?</parameter>',
     re.DOTALL
@@ -173,7 +179,8 @@ _PARAM_RE = re.compile(
 
 
 def parse_tool_calls(text: str):
-    """Parse Qwen-format <tool_call> blocks into OpenAI tool_calls format."""
+    """Parse Qwen-format <tool_call> blocks into OpenAI tool_calls format.
+    Supports both XML-parameter style and JSON style tool calls."""
     tool_calls = []
     for match in _TOOL_CALL_RE.finditer(text):
         func_name = match.group(1).strip()
@@ -195,6 +202,27 @@ def parse_tool_calls(text: str):
                 "arguments": json.dumps(args),
             }
         })
+
+    # Fallback: if no XML-style tool calls found, try JSON-style
+    # e.g. <tool_call>{"name": "read_file", "arguments": {"path": "index.html"}}</tool_call>
+    if not tool_calls:
+        for match in _TOOL_CALL_JSON_RE.finditer(text):
+            try:
+                obj = json.loads(match.group(1))
+                name = obj.get("name", "")
+                arguments = obj.get("arguments", {})
+                if name:
+                    tool_calls.append({
+                        "id": f"call_{uuid.uuid4().hex[:12]}",
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": json.dumps(arguments) if isinstance(arguments, dict) else str(arguments),
+                        }
+                    })
+            except (json.JSONDecodeError, ValueError):
+                pass
+
     return tool_calls
 
 
@@ -595,6 +623,7 @@ async def chat_completions(req: ChatRequest):
                 _tc_func_name = ""          # function name once detected
                 _tc_name_sent = False       # whether we've sent the name delta
                 _tc_last_args_len = 0       # track how much of args we've sent
+                _tc_json_args = None        # JSON-style args (when model uses JSON instead of XML params)
                 _tc_completed = []          # list of completed tool call chunks
                 _TOOL_OPEN = "<tool_call>"
                 _TOOL_CLOSE = "</tool_call>"
@@ -618,6 +647,7 @@ async def chat_completions(req: ChatRequest):
                                 _tc_func_name = ""
                                 _tc_name_sent = False
                                 _tc_last_args_len = 0
+                                _tc_json_args = None
                                 # Send any unsent content before the tool call tag
                                 unsent = accumulated[_content_sent_len:tc_start]
                                 if unsent:
@@ -659,15 +689,33 @@ async def chat_completions(req: ChatRequest):
                                 fn_match = _FUNC_NAME_RE.search(_tool_call_buf)
                                 if fn_match:
                                     _tc_func_name = fn_match.group(1).strip()
+                                elif tc_close != -1:
+                                    # No <function=...> tag found but tool call is complete.
+                                    # Try JSON-style: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+                                    json_body = _tool_call_buf[:tc_close].strip()
+                                    try:
+                                        obj = json.loads(json_body)
+                                        _tc_func_name = obj.get("name", "")
+                                        _tc_json_args = obj.get("arguments", {})
+                                        print(f"[server] 🔧 JSON-style tool call detected: func={_tc_func_name}, args={json.dumps(_tc_json_args)[:200]}", file=sys.stderr)
+                                    except (json.JSONDecodeError, ValueError):
+                                        print(f"[server] ⚠️ Tool call block has no <function=> and is not valid JSON: {repr(json_body[:200])}", file=sys.stderr)
 
                             # Send incremental tool_calls deltas
                             if _tc_func_name:
-                                # Get the function body (after <function=name>)
-                                fn_tag_end = _tool_call_buf.find(">", _tool_call_buf.find("<function="))
-                                func_body = _tool_call_buf[fn_tag_end + 1:] if fn_tag_end != -1 else ""
-                                # Strip closing tags from body for parsing
-                                clean_body = func_body.replace("</function>", "").replace("</tool_call>", "")
-                                current_args = parse_partial_tool_args(clean_body)
+                                # Check if we parsed JSON-style args directly
+                                if _tc_json_args is not None:
+                                    current_args = json.dumps(_tc_json_args)
+                                else:
+                                    # XML-parameter style: parse from function body
+                                    fn_tag_end = _tool_call_buf.find(">", _tool_call_buf.find("<function="))
+                                    func_body = _tool_call_buf[fn_tag_end + 1:] if fn_tag_end != -1 else ""
+                                    # Strip closing tags from body for parsing
+                                    clean_body = func_body.replace("</function>", "").replace("</tool_call>", "")
+                                    current_args = parse_partial_tool_args(clean_body)
+                                # Debug: log what the model is generating inside the tool call
+                                if tc_close != -1 or close_pos != -1:
+                                    print(f"[server] 🔧 Tool call complete: func={_tc_func_name}, parsed_args={current_args[:200]}", file=sys.stderr)
 
                                 if not _tc_name_sent:
                                     # First delta: send name + initial args
@@ -721,10 +769,13 @@ async def chat_completions(req: ChatRequest):
                                 # to ensure the client has the correct values (earlier deltas
                                 # from parse_partial_tool_args may have had empty/incomplete args)
                                 if _tc_func_name:
-                                    fn_tag_end = _tool_call_buf.find(">", _tool_call_buf.find("<function="))
-                                    func_body = _tool_call_buf[fn_tag_end + 1:] if fn_tag_end != -1 else ""
-                                    clean_body = func_body.replace("</function>", "").replace("</tool_call>", "")
-                                    final_args = parse_partial_tool_args(clean_body)
+                                    if _tc_json_args is not None:
+                                        final_args = json.dumps(_tc_json_args)
+                                    else:
+                                        fn_tag_end = _tool_call_buf.find(">", _tool_call_buf.find("<function="))
+                                        func_body = _tool_call_buf[fn_tag_end + 1:] if fn_tag_end != -1 else ""
+                                        clean_body = func_body.replace("</function>", "").replace("</tool_call>", "")
+                                        final_args = parse_partial_tool_args(clean_body)
                                     tc_final = {
                                         "id": cid, "object": "chat.completion.chunk",
                                         "created": created, "model": _model_id,
@@ -773,6 +824,14 @@ async def chat_completions(req: ChatRequest):
                         full_text = "".join(full_text_parts)
                         if has_tools:
                             tool_calls = parse_tool_calls(full_text)
+                            # Debug: log the raw model output for tool call diagnosis
+                            if tool_calls:
+                                print(f"[server] 🔧 Final parse_tool_calls found {len(tool_calls)} call(s)", file=sys.stderr)
+                                for i, tc in enumerate(tool_calls):
+                                    print(f"[server]   [{i}] {tc['function']['name']}: {tc['function']['arguments'][:200]}", file=sys.stderr)
+                            elif '<tool_call>' in full_text or 'read_file' in full_text:
+                                # Model tried to make a tool call but parse failed
+                                print(f"[server] ⚠️ Tool call parse FAILED. Raw text (last 500 chars): {repr(full_text[-500:])}", file=sys.stderr)
                             if tool_calls:
                                 if _tc_index > 0:
                                     # Re-send the final definitively parsed tool calls
