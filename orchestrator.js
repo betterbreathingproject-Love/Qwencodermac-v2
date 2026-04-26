@@ -47,18 +47,6 @@ class Orchestrator extends EventEmitter {
     this._results = new Map(); // nodeId → TaskResult
     this._loopIterations = new Map(); // nodeId → current iteration count
     this._context = {}; // execution context for branch evaluation
-
-    // Forward agent-type-selected from the pool so the renderer knows
-    // which agent type is handling each task as soon as it's dispatched.
-    if (this._agentPool && typeof this._agentPool.on === 'function') {
-      this._agentPool.on('agent-type-selected', (evt) => {
-        this.emit('task-status-event', {
-          nodeId: evt.taskId,
-          status: 'in_progress',
-          agentType: evt.agentType,
-        });
-      });
-    }
   }
 
   // --- State management ---

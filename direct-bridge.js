@@ -312,8 +312,12 @@ const LSP_TOOL_SETS = {
  * @param {string} agentRole
  * @returns {object[]}
  */
-function getToolDefs(lspManager, agentRole) {
-  const tools = [...TOOL_DEFS]
+function getToolDefs(lspManager, agentRole, allowedTools) {
+  let tools = [...TOOL_DEFS]
+  // Filter base tools when an explicit allowedTools list is provided
+  if (allowedTools && allowedTools.length > 0) {
+    tools = tools.filter(t => allowedTools.includes(t.function.name))
+  }
   if (lspManager?.getStatus().status === 'ready') {
     const toolNames = LSP_TOOL_SETS[agentRole] || []
     for (const name of toolNames) {
@@ -908,6 +912,7 @@ class DirectBridge {
     this._browserInstance = null
     this._lspManager = opts.lspManager || null
     this._agentRole = opts.agentRole || 'general'
+    this._allowedTools = opts.allowedTools || null
   }
 
   setLspManager(lspManager) {
@@ -1510,7 +1515,7 @@ class DirectBridge {
       const body = {
         model: model || 'default',
         messages,
-        tools: getToolDefs(this._lspManager, this._agentRole),
+        tools: getToolDefs(this._lspManager, this._agentRole, this._allowedTools),
         stream: true,
         max_tokens: 16384,
       }
