@@ -50,6 +50,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   await restoreActiveSpec()
   checkCompactor()
   checkSearchEngine()
+  refreshTelegramStatus()
   refreshWelcomeProjectBar()
   initLspStatus()
   refreshSteeringDocs()
@@ -1920,6 +1921,55 @@ async function saveApiKeys() {
     brave: document.getElementById('ak-brave')?.value?.trim() || '',
   }
   await window.app.saveApiKeys(keys)
+}
+
+// ── telegram bot ──────────────────────────────────────────────────────────────
+async function telegramConnect() {
+  const token = document.getElementById('tg-token').value.trim()
+  if (!token) { alert('Enter a bot token first'); return }
+  const btn = document.getElementById('tgConnectBtn')
+  btn.textContent = '⏳ Connecting...'
+  btn.disabled = true
+  try {
+    const res = await window.app.telegramStart(token)
+    if (res.error) { alert('Failed: ' + res.error); return }
+    await refreshTelegramStatus()
+  } catch (e) { alert('Error: ' + e.message) }
+  finally { btn.textContent = '⚡ Connect Bot'; btn.disabled = false }
+}
+
+async function telegramDisconnect() {
+  await window.app.telegramStop()
+  await refreshTelegramStatus()
+}
+
+async function telegramPair() {
+  const res = await window.app.telegramPair()
+  if (res.error) { alert(res.error); return }
+  const link = document.getElementById('tgPairLink')
+  link.textContent = res.qrDataUrl
+  link.href = '#'
+}
+
+async function refreshTelegramStatus() {
+  const status = await window.app.telegramStatus()
+  const el = document.getElementById('tgStatus')
+  const connectBtn = document.getElementById('tgConnectBtn')
+  const disconnectBtn = document.getElementById('tgDisconnectBtn')
+  const pairSection = document.getElementById('tgPairSection')
+  if (status.connected) {
+    el.innerHTML = `<span style="color:var(--green)">● Connected</span> @${status.bot_username}`
+    connectBtn.style.display = 'none'
+    disconnectBtn.style.display = 'inline-block'
+    pairSection.style.display = 'block'
+  } else {
+    el.innerHTML = status.last_error
+      ? `<span style="color:var(--red)">● Error:</span> ${status.last_error}`
+      : '<span style="color:var(--muted)">● Disconnected</span>'
+    connectBtn.style.display = 'inline-block'
+    disconnectBtn.style.display = 'none'
+    pairSection.style.display = 'none'
+  }
 }
 
 // ── compactor ─────────────────────────────────────────────────────────────────

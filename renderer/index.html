@@ -190,6 +190,29 @@
           <button class="btn-sm" onclick="installCompactor()" id="installCompactorBtn" style="margin-top:2px;display:none">📦 Install claw-compactor</button>
         </div>
 
+        <div class="sp-header" style="margin-top:4px"><span class="section-label">TELEGRAM BOT</span></div>
+        <div class="setup-compact" id="telegramSettings">
+          <div class="sc-field">
+            <span class="sc-label">Status</span>
+            <span id="tgStatus" style="font-size:11px;color:var(--muted)">Disconnected</span>
+          </div>
+          <div class="sc-field">
+            <span class="sc-label">Bot Token</span>
+            <input type="password" id="tg-token" class="cs-input cs-wide" placeholder="123456:ABC-DEF...">
+          </div>
+          <div class="sc-field">
+            <span class="sc-label"></span>
+            <a href="#" onclick="window.app.openExternal('https://t.me/BotFather');return false" style="font-size:10px;color:var(--accent2)">Get token from @BotFather →</a>
+          </div>
+          <button class="btn-sm" id="tgConnectBtn" onclick="telegramConnect()" style="margin-top:4px">⚡ Connect Bot</button>
+          <button class="btn-sm" id="tgDisconnectBtn" onclick="telegramDisconnect()" style="margin-top:2px;display:none;background:var(--red)">⏹ Disconnect</button>
+          <div id="tgPairSection" style="display:none;margin-top:6px;padding:6px;background:var(--bg2);border-radius:6px;border:1px solid var(--border)">
+            <div style="font-size:10px;color:var(--muted);margin-bottom:4px">Open this link on your phone to pair:</div>
+            <a href="#" id="tgPairLink" onclick="window.app.openExternal(this.textContent);return false" style="font-size:10px;color:var(--accent2);word-break:break-all"></a>
+            <button class="btn-sm" onclick="telegramPair()" style="margin-top:4px">🔗 Generate Pairing Link</button>
+          </div>
+        </div>
+
         <div class="sp-header" style="margin-top:4px"><span class="section-label">STEERING DOCS</span></div>
         <div class="setup-compact" id="steeringSettings">
           <div class="sc-field">
