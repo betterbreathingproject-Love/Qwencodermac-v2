@@ -2590,6 +2590,204 @@ async function generateInlineSpecPhase(phase) {
   await refreshInlineSpecStepper()
 }
 
+async function _launchOrchestrator(tasksPath, taskCount) {
+  // Parse the task graph first
+  let parsed = null
+  try {
+    parsed = await window.app.taskGraphParse(tasksPath)
+  } catch (_) { /* best-effort */ }
+
+  if (parsed && parsed.nodes) {
+    currentTaskGraph = parsed
+    currentTasksPath = tasksPath
+    renderTaskGraph(parsed)
+    saveWorkflowState()
+
+    const todos = Object.values(parsed.nodes).map(n => ({
+      id: n.id,
+      content: n.title,
+      status: n.status === 'not_started' ? 'pending' : n.status,
+    }))
+    if (todos.length > 0) updateTodoPanel(todos, 'done')
+  }
+
+  agentFinished = false
+  isGenerating = true
+  const btn = document.getElementById('sendBtn')
+  btn.disabled = false; btn.innerHTML = '<span class="spinner"></span>Stop'; btn.className = 'btn-send btn-stop'
+  btn.onclick = () => { window.app.qwenInterrupt(); finishGeneration() }
+
+  // Sync task graph sidebar buttons
+  document.getElementById('tgRunBtn').style.display = 'none'
+  document.getElementById('tgPauseBtn').style.display = 'inline-block'
+  document.getElementById('tgAbortBtn').style.display = 'inline-block'
+
+  // Switch to tasks panel in sidebar
+  showPanel('tasks', document.querySelector('[data-panel="tasks"]'))
+
+  const orchId = 'resp-orch-' + Date.now()
+  const out = document.getElementById('agentOutput')
+  out.insertAdjacentHTML('beforeend', `<div class="msg-block" id="${orchId}">
+    <div class="msg-system" id="${orchId}-status">🚀 Orchestrator: executing ${taskCount || ''} tasks...</div>
+    <div id="${orchId}-tasks"></div>
+  </div>`)
+  scrollOutput()
+
+  window.app.offQwenEvents()
+  let orchToolName = ''
+  let orchTaskBlockId = null
+  let orchTaskText = ''
+  let orchTaskCount = 0
+
+  function newOrchTaskBlock(label) {
+    orchTaskCount++
+    orchTaskText = ''
+    orchTaskBlockId = orchId + '-task-' + orchTaskCount
+    const tasksDiv = document.getElementById(orchId + '-tasks')
+    tasksDiv.insertAdjacentHTML('beforeend', `<div class="msg-block" id="${orchTaskBlockId}" style="margin:6px 0;padding:8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg3)">
+      <div class="msg-system" id="${orchTaskBlockId}-status" style="font-weight:600">${label}</div>
+      <div id="${orchTaskBlockId}-tools"></div>
+      <details class="msg-thinking" id="${orchTaskBlockId}-think" style="display:none">
+        <summary>🧠 Thinking</summary>
+        <div class="msg-thinking-body" id="${orchTaskBlockId}-think-body"></div>
+      </details>
+      <div class="msg-text" id="${orchTaskBlockId}-text"></div>
+    </div>`)
+    scrollOutput()
+  }
+
+  window.app.onQwenEvent(ev => {
+    switch (ev.type) {
+      case 'session-start': {
+        const activeTask = currentTodos.find(t => t.status === 'in_progress')
+        const agentType = _currentAgentType
+        const agentBadge = agentType && agentType !== 'general' ? ` <span class="orch-agent-badge">${agentType}</span>` : ''
+        const taskLabel = activeTask ? `🔧 Task ${activeTask.id}: ${activeTask.content}${agentBadge}` : '🔧 Working on task...'
+        newOrchTaskBlock(taskLabel)
+        document.getElementById(orchId + '-status').textContent = `🚀 Orchestrator: task ${orchTaskCount}...`
+        startPromptProgress()
+        updateAgentStatsBar({ state: 'prompt-eval', inputTokens, outputTokens: tokenCount, progress: 0, toolCount: _agentToolCount, agentType, activity: activeTask ? `Task ${activeTask.id}: Evaluating prompt...` : 'Evaluating prompt...' })
+        break
+      }
+      case 'text-delta': {
+        if (!orchTaskBlockId) newOrchTaskBlock('🔧 Working...')
+        stopPromptProgress()
+        orchTaskText = ev.text
+        let displayText = orchTaskText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+        const openThink = orchTaskText.lastIndexOf('<think>')
+        const closeThink = orchTaskText.lastIndexOf('</think>')
+        if (openThink > closeThink) {
+          displayText = orchTaskText.slice(0, openThink).trim()
+          const thinkContent = orchTaskText.slice(openThink + 7)
+          const thinkEl = document.getElementById(orchTaskBlockId + '-think')
+          if (thinkEl) { thinkEl.style.display = ''; document.getElementById(orchTaskBlockId + '-think-body').textContent = thinkContent + '▌' }
+        }
+        const textEl = document.getElementById(orchTaskBlockId + '-text')
+        if (textEl && displayText) textEl.innerHTML = renderMd(displayText, true) + '<span class="cursor">▌</span>'
+        tokenCount++
+        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, agentType: _currentAgentType, activity: 'Writing response...' })
+        scrollOutput()
+        break
+      }
+      case 'tool-use':
+        if (!orchTaskBlockId) newOrchTaskBlock('🔧 Working...')
+        stopPromptProgress()
+        orchToolName = ev.name || ''
+        _agentToolCount++
+        document.getElementById(orchTaskBlockId + '-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
+        document.getElementById(orchTaskBlockId + '-status').textContent = `🔧 Using tool: ${ev.name}`
+        updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, agentType: _currentAgentType, activity: `Running ${ev.name}...` })
+        scrollOutput()
+        break
+      case 'tool-result': {
+        if (!orchTaskBlockId) break
+        const toolsDiv = document.getElementById(orchTaskBlockId + '-tools')
+        const lastTool = toolsDiv?.querySelector('.tool-block:last-child')
+        if (lastTool) {
+          const newStatus = ev.is_error ? 'error' : 'done'
+          lastTool.className = lastTool.className.replace(/\b(running|done|error)\b/g, '').trim() + ' ' + newStatus
+          const statusEl = lastTool.querySelector('.tool-status')
+          if (statusEl) { statusEl.className = 'tool-status ' + newStatus; statusEl.innerHTML = ev.is_error ? '✗ Error' : '✓ Done' }
+          lastTool.insertAdjacentHTML('beforeend', renderToolResult(ev.content, ev.is_error))
+        }
+        const FILE_TOOLS = ['write_file', 'edit_file', 'create_file', 'bash']
+        if (!ev.is_error && FILE_TOOLS.some(t => orchToolName.includes(t))) {
+          if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
+        }
+        updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, agentType: _currentAgentType, activity: 'Thinking about next step...' })
+        scrollOutput()
+        break
+      }
+      case 'result':
+        if (orchTaskBlockId && ev.result && !ev.is_error) {
+          const textEl = document.getElementById(orchTaskBlockId + '-text')
+          if (textEl) {
+            let cleanResult = ev.result.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+            textEl.innerHTML = renderMd(cleanResult)
+          }
+        }
+        break
+      case 'raw-stream': {
+        const sev = ev.event; if (!sev) break
+        if (sev.usage) {
+          inputTokens = sev.usage.prompt_tokens || inputTokens
+          outputTokens = sev.usage.completion_tokens || outputTokens
+          const genTps = sev.x_stats?.generation_tps
+          const promptTps = sev.x_stats?.prompt_tps
+          if (genTps) serverTps = genTps
+          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks: genTps, promptTps, peakMemory: sev.x_stats?.peak_memory_gb, toolCount: _agentToolCount, agentType: _currentAgentType })
+        }
+        break
+      }
+      case 'session-end':
+        if (orchTaskBlockId) {
+          const statusEl = document.getElementById(orchTaskBlockId + '-status')
+          if (statusEl) statusEl.textContent = '✅ Task completed'
+          const tb = document.getElementById(orchTaskBlockId + '-think-body')
+          if (tb && tb.textContent.endsWith('▌')) tb.textContent = tb.textContent.slice(0, -1)
+        }
+        orchTaskBlockId = null
+        orchTaskText = ''
+        document.getElementById(orchId + '-status').textContent = '🚀 Orchestrator: moving to next task...'
+        scrollOutput()
+        break
+      case 'error':
+        appendMsg('system', '❌ Task error: ' + ev.error)
+        break
+    }
+  })
+
+  window.app.onOrchestratorCompleted(() => {
+    window.app.offOrchestratorCompleted()
+    window.app.offQwenEvents()
+    const allDone = currentTodos.every(t => t.status === 'completed' || t.status === 'done')
+    document.getElementById(orchId + '-status').textContent = allDone ? '✅ All tasks completed' : '⚠️ Orchestrator stopped'
+    if (allDone) appendMsg('system', '🎉 All tasks completed!')
+    if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
+    saveChatSnapshot()
+    agentFinished = true
+    isGenerating = false
+    updateStatusBar('idle')
+    updateAgentStatsBar({ state: 'done', inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount })
+    finishGeneration()
+
+    document.getElementById('tgRunBtn').style.display = 'inline-block'
+    document.getElementById('tgPauseBtn').style.display = 'none'
+    document.getElementById('tgResumeBtn').style.display = 'none'
+    document.getElementById('tgAbortBtn').style.display = 'none'
+
+    if (currentTasksPath) loadTaskGraph(currentTasksPath).catch(() => {})
+  })
+
+  window.app.taskGraphExecute(tasksPath).then(r => {
+    console.log('[orchestrator] Result:', r)
+    if (r.error) appendMsg('system', `⚠️ Orchestrator error: ${r.error}`)
+  }).catch(err => {
+    console.error('[orchestrator] Error:', err)
+    appendMsg('system', `⚠️ Orchestrator failed: ${err.message}`)
+  })
+}
+
 async function startInlineSpecImplementation() {
   if (!currentSpecDir || !currentProject) return
   if (isGenerating) return
@@ -2621,12 +2819,8 @@ async function startInlineSpecImplementation() {
   </div>`)
   scrollOutput()
 
-  // Use the orchestrator — trigger it via sendAgentMode's built-in orchestrator path
-  // by setting _pendingTasksExecute so the agent result handler picks it up
-  window._pendingTasksExecute = tasksPath
-
-  // Send a minimal prompt that will immediately finish and trigger the orchestrator
-  sendAgentMode(`The spec "${currentSpecName}" tasks are ready at ${tasksPath}. The orchestrator will execute them automatically.`, { skipUserMsg: true, historyLabel: `📐 Implement spec "${currentSpecName}" (${taskCount} tasks)` })
+  // Launch orchestrator directly — no chat agent intermediary
+  _launchOrchestrator(tasksPath, taskCount)
 }
 
 async function createNewSpec() {
@@ -2765,21 +2959,23 @@ ${requirements}
 Design:
 ${design}
 
-Generate a structured task list using this exact format:
+Generate a structured task list using this EXACT format (no other format):
 - [ ] 1 Task title
   - [ ] 1.1 Subtask title
   - [ ] 1.2 Subtask title
+  - dep: 1.1
 - [ ] 2 Next task title
+  - dep: 1
 
-Include tasks for:
-- Setup and scaffolding
-- Core implementation (broken into logical pieces)
-- Tests (unit and integration)
-- Documentation updates
+RULES:
+- Use "- dep: <id>" lines to declare dependencies between tasks (things that must be done first)
+- Top-level tasks should depend on the previous top-level task (e.g. task 2 depends on task 1)
+- Subtasks within a group can depend on sibling subtasks
+- Each task should be small enough to complete in 1-2 hours
+- Include: Setup/scaffolding, Core implementation, Tests, Documentation
+- Use action verbs that match these categories: "Explore/analyze" for exploration, "Gather context/find related" for context gathering, "Search/find/locate" for code search, "Design/architect/plan" for design, "Write requirements/spec" for requirements, "Implement/build/create/fix/add/refactor" for implementation
 
-Order tasks by dependency — things that must be done first come first. Each task should be small enough to complete in 1-2 hours.
-
-IMPORTANT: Output ONLY the markdown task list. Do NOT include any thinking process, reasoning steps, or preamble. Start directly with the task list.`,
+OUTPUT ONLY the markdown task list. No thinking, no reasoning, no preamble, no explanation. Start with "- [ ] 1" on the very first line.`,
 }
 
 async function generateSpecPhase(phase) {
@@ -3008,9 +3204,8 @@ async function startSpecImplementation() {
   </div>`)
   scrollOutput()
 
-  // Use the orchestrator via sendAgentMode's built-in orchestrator path
-  window._pendingTasksExecute = tasksPath
-  sendAgentMode(`The spec "${currentSpecName}" tasks are ready at ${tasksPath}. The orchestrator will execute them automatically.`, { skipUserMsg: true, historyLabel: `📐 Implement spec "${currentSpecName}" (${taskCount} tasks)` })
+  // Launch orchestrator directly — no chat agent intermediary
+  _launchOrchestrator(tasksPath, taskCount)
 }
 
 async function loadSpecPanel() {
