@@ -1251,11 +1251,15 @@ class DirectBridge {
         } catch (err) {
           if (this._aborted) return
           const code = err.code || ''
+          const msg = err.message || ''
           const isTransient = code === 'ECONNRESET' || code === 'ECONNREFUSED' || code === 'EPIPE'
-          if (isTransient && attempt < 5) {
-            // Server may need time to restart and reload model after a crash
+          // Also retry on HTTP 500/502/503 — local MLX server can return these
+          // when overloaded (e.g. after processing a large tool output)
+          const isServerError = /Server returned HTTP (500|502|503)/.test(msg)
+          if ((isTransient || isServerError) && attempt < 5) {
+            const reason = isServerError ? msg.match(/HTTP \d+/)?.[0] || 'server error' : code
             const delay = attempt === 0 ? 5 : Math.min((attempt + 1) * 3, 15)
-            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Server not ready (${code}), retrying in ${delay}s... (${attempt + 1}/5)` })
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Server not ready (${reason}), retrying in ${delay}s... (${attempt + 1}/5)` })
             // Sleep in 1s increments so we can check _aborted
             for (let w = 0; w < delay && !this._aborted; w++) {
               await new Promise(r => setTimeout(r, 1000))

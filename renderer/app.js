@@ -1241,16 +1241,27 @@ async function sendAgentMode(prompt, opts = {}) {
           statusLine.textContent = `🔬 LSP: validating ${filePath} before write...`
         } else if (action === 'speculative-ok') {
           statusLine.textContent = `✅ LSP: ${filePath} — no new errors`
+          // Show inline in chat so user can see the check happened
+          const toolsEl = document.getElementById(respId+'-tools')
+          if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--green)">✅ LSP validated ${filePath} — no new errors</div>`)
         } else if (action === 'speculative-warn') {
           statusLine.textContent = `⚠️ LSP: ${filePath} — ${ev.count} issue${ev.count > 1 ? 's' : ''} detected`
+          const toolsEl = document.getElementById(respId+'-tools')
+          if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--yellow)">⚠️ LSP found ${ev.count} issue${ev.count > 1 ? 's' : ''} in ${filePath}</div>`)
         } else if (action === 'diagnostics-check') {
           statusLine.textContent = `🔬 LSP: checking ${filePath} for errors...`
         } else if (action === 'diagnostics-ok') {
           statusLine.textContent = `✅ LSP: ${filePath} — clean`
+          const toolsEl = document.getElementById(respId+'-tools')
+          if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--green)">✅ LSP: ${filePath} — clean</div>`)
         } else if (action === 'diagnostics-errors') {
           statusLine.textContent = `⚠️ LSP: ${filePath} — ${ev.count} error${ev.count > 1 ? 's' : ''} found`
+          const toolsEl = document.getElementById(respId+'-tools')
+          if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--red)">⚠️ LSP: ${filePath} — ${ev.count} error${ev.count > 1 ? 's' : ''} found</div>`)
         } else if (action === 'session-diagnostics') {
           statusLine.textContent = `📋 LSP: ${ev.count} existing error${ev.count > 1 ? 's' : ''} detected — agent is aware`
+          const toolsEl = document.getElementById(respId+'-tools')
+          if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--accent2)">📋 LSP: ${ev.count} existing error${ev.count > 1 ? 's' : ''} in project — agent is aware</div>`)
         }
         break
       }
