@@ -1747,6 +1747,17 @@ class DirectBridge {
 
         // Compress large tool outputs to avoid blowing up the context window.
         // Uses compactor for intelligent compression; falls back to hard truncation on failure.
+        // For screenshots, extract the image first so compression doesn't destroy it.
+        let _screenshotImg = ''
+        if (fnName === 'browser_screenshot' && content && content.includes('![screenshot](data:image')) {
+          const imgRe = /!\[screenshot\]\(data:image\/png;base64,[A-Za-z0-9+/=]+\)/
+          const m = content.match(imgRe)
+          if (m) {
+            _screenshotImg = m[0]
+            content = content.replace(imgRe, '[screenshot image captured]')
+          }
+        }
+
         const truncateLimit = fnName === 'read_file' ? 24000 : 8000
         if (content && content.length > truncateLimit) {
           const contentType = detectContentType(fnName, content)
@@ -1780,8 +1791,11 @@ class DirectBridge {
         // but strip the image data from the model context to save tokens
         let rendererContent = content
         let modelContent = content
-        if (fnName === 'browser_screenshot' && content && content.includes('![screenshot](data:image')) {
-          modelContent = content.replace(/!\[screenshot\]\(data:image\/png;base64,[A-Za-z0-9+/=]+\)/g, '[screenshot image captured]')
+        if (_screenshotImg) {
+          // Re-attach the image for the renderer
+          rendererContent = content.replace('[screenshot image captured]', _screenshotImg)
+          // Model already has the stripped version
+          modelContent = content
         }
 
         // Emit tool-result event (renderer gets full content with images)

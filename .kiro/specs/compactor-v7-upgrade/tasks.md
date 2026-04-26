@@ -43,16 +43,16 @@
 - [x] 6.3 Return error message when rewind key is not found or expired
 
 ## Task 7: Upgrade Builtin JS Compactor with Type-Aware Strategies
-- [-] 7.1 Update `compressText()` to accept and dispatch on `contentType` parameter before falling back to head/tail truncation
-- [~] 7.2 Implement code compression: remove single-line comments (`//`, `#`), collapse consecutive blank lines, remove trailing whitespace
-- [~] 7.3 Implement JSON compression: detect repeated array elements, replace with summary `{ count, schema, first }`
-- [~] 7.4 Implement log compression: fold consecutive repeated lines into single line with `[×N]` count
-- [~] 7.5 Implement search deduplication: merge results sharing same file path with overlapping line ranges
-- [~] 7.6 Ensure all compression paths return stats in `{ original_tokens, compressed_tokens, reduction_pct }` format
+- [x] 7.1 Update `compressText()` to accept and dispatch on `contentType` parameter before falling back to head/tail truncation
+- [x] 7.2 Implement code compression: remove single-line comments (`//`, `#`), collapse consecutive blank lines, remove trailing whitespace
+- [x] 7.3 Implement JSON compression: detect repeated array elements, replace with summary `{ count, schema, first }`
+- [x] 7.4 Implement log compression: fold consecutive repeated lines into single line with `[×N]` count
+- [x] 7.5 Implement search deduplication: merge results sharing same file path with overlapping line ranges
+- [x] 7.6 Ensure all compression paths return stats in `{ original_tokens, compressed_tokens, reduction_pct }` format
 
 ## Task 8: Add Compression Stats Badge to Renderer
-- [~] 8.1 Add module-level `_lastCompactionStats` variable in `renderer/app.js`
-- [~] 8.2 Add `compaction-stats` case to the `onQwenEvent` handler to store stats and trigger stats bar update
+- [x] 8.1 Add module-level `_lastCompactionStats` variable in `renderer/app.js`
+- [x] 8.2 Add `compaction-stats` case to the `onQwenEvent` handler to store stats and trigger stats bar update
 - [~] 8.3 Add compaction stat chip to `updateAgentStatsBar()` showing reduction percentage and engine type icon
 - [~] 8.4 Add tooltip with detailed stats (original tokens, compressed tokens, reduction %, engine, stages) on hover
 - [~] 8.5 Use distinct CSS class for builtin engine badge (amber) vs python engine badge (green)

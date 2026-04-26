@@ -977,3 +977,13 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .symbol-kind-K { background: rgba(250,204,21,0.08); color: var(--yellow); }
 .symbol-name { flex: 1; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
 .symbol-line { font-size: 10px; color: var(--muted); font-family: 'SF Mono', monospace; flex-shrink: 0; }
+
+/* ── compaction stats badge ────────────────────────────────────────────────── */
+.stat-chip.compaction-python {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.3);
+}
+.stat-chip.compaction-builtin {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.3);
+}

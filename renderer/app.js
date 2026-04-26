@@ -12,6 +12,7 @@ let currentLspStatus = 'stopped' // track LSP status globally
 let permMode = 'auto-edit' // 'auto-edit' or 'default'
 let agentRole = 'general' // current agent role for vibe mode
 let currentTodos = [] // persisted todo list for active session
+let _lastCompactionStats = null
 
 // ── init ──────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', async () => {
@@ -1317,6 +1318,10 @@ async function sendAgentMode(prompt, opts = {}) {
         }
         updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: ev.subtype === 'debug' ? ev.data : ev.subtype })
         scrollOutput()
+        break
+      case 'compaction-stats':
+        _lastCompactionStats = ev.data
+        updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: 'Compressed context' })
         break
       case 'usage':
         if (ev.usage) {
@@ -3817,6 +3822,19 @@ function updateAgentStatsBar(opts = {}) {
   // Peak memory if available
   if (peakMemory != null) {
     html += `<div class="stat-chip"><span class="stat-label">Peak VRAM</span><span class="stat-val">${peakMemory} GB</span></div>`
+  }
+
+  // Compaction stats chip
+  if (_lastCompactionStats && _lastCompactionStats.reduction_pct) {
+    const pct = Math.round(_lastCompactionStats.reduction_pct)
+    const engine = _lastCompactionStats.engine || 'builtin'
+    const engineCls = engine === 'python' ? 'compaction-python' : 'compaction-builtin'
+    const engineIcon = engine === 'python' ? '🐍' : '⚡'
+    const origTok = _lastCompactionStats.original_tokens || '?'
+    const compTok = _lastCompactionStats.compressed_tokens || '?'
+    const stages = (_lastCompactionStats.stages_applied && _lastCompactionStats.stages_applied.length) ? _lastCompactionStats.stages_applied.join(', ') : 'N/A'
+    const tooltip = `Original: ${origTok} tokens\nCompressed: ${compTok} tokens\nReduction: ${pct}%\nEngine: ${engine}\nStages: ${stages}`
+    html += `<div class="stat-chip ${engineCls}" title="${tooltip}"><span class="stat-label">Compaction</span><span class="stat-val">${engineIcon} ${pct}% ↓</span></div>`
   }
 
   // Activity log (right-aligned)
