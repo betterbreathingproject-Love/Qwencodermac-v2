@@ -411,6 +411,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .spec-step-dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid #444; background: transparent; flex-shrink: 0; transition: all 0.2s; }
 .spec-step-dot.active { border-color: var(--blue); background: var(--blue); box-shadow: 0 0 6px rgba(96,165,250,0.4); }
 .spec-step-dot.completed { border-color: var(--green); background: var(--green); box-shadow: 0 0 6px rgba(74,222,128,0.3); }
+.spec-step-dot.generating { border-color: var(--yellow); background: var(--yellow); box-shadow: 0 0 10px rgba(250,204,21,0.5); animation: pulse 1s ease-in-out infinite; }
 .spec-step-info { flex: 1; min-width: 0; }
 .spec-step-label { font-size: 11px; font-weight: 600; color: var(--text); }
 .spec-step-status { font-size: 9px; color: var(--muted); margin-top: 1px; }
@@ -422,6 +423,8 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .spec-gen-btn:hover:not(:disabled) { border-color: var(--accent); background: rgba(124,106,247,0.1); color: var(--accent2); }
 .spec-gen-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 .spec-gen-btn.generating { border-color: rgba(250,204,21,0.3); color: var(--yellow); background: rgba(250,204,21,0.06); animation: pulse 1s ease-in-out infinite; }
+/* spec generation agent status — dot animation for active phase */
+.inline-spec-step-dot.generating { border-color: var(--yellow); background: var(--yellow); box-shadow: 0 0 10px rgba(250,204,21,0.5); animation: pulse 1s ease-in-out infinite; }
 
 /* sidebar spec artifact viewer */
 .spec-active { flex: 1; display: flex; flex-direction: column; overflow: hidden; }

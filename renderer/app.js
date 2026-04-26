@@ -2367,7 +2367,11 @@ async function generateInlineSpecPhase(phase) {
   const dot = document.getElementById('inlineStepDot-' + phase)
   if (btn) { btn.textContent = '⏳ Generating...'; btn.classList.add('generating') }
   if (status) { status.textContent = 'Generating...'; status.className = 'inline-spec-step-status generating' }
-  if (dot) { dot.className = 'inline-spec-step-dot active' }
+  if (dot) { dot.className = 'inline-spec-step-dot generating' }
+
+  // Show agent stats bar immediately
+  const phaseLabel = phase.charAt(0).toUpperCase() + phase.slice(1)
+  updateAgentStatsBar({ state: 'initializing', activity: `Spec: preparing ${phaseLabel}...` })
 
   try {
     const artifacts = await window.app.specArtifacts(currentSpecDir)
@@ -2386,24 +2390,84 @@ async function generateInlineSpecPhase(phase) {
       prompt = SPEC_PROMPTS.tasks(currentSpecName, artifacts.requirements || '', artifacts.design || '')
     }
 
-    const result = await window.app.chat({
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 4096,
+    // Use streaming chat for real-time stats bar updates
+    const content = await new Promise((resolve, reject) => {
+      let accumulated = ''
+      let tokenCount = 0
+      let inputTokens = 0
+      let outputTokens = 0
+      let serverTps = null
+      let startTime = null
+
+      // Simulated prompt-eval progress while waiting for first token
+      let promptProgress = 0
+      let promptElapsed = 0
+      const promptTimer = setInterval(() => {
+        promptElapsed += 200
+        promptProgress = 90 * (1 - Math.exp(-promptElapsed / 6000))
+        updateAgentStatsBar({ state: 'prompt-eval', inputTokens, outputTokens, progress: promptProgress, activity: `Spec ${phaseLabel}: evaluating prompt...` })
+      }, 200)
+
+      updateAgentStatsBar({ state: 'prompt-eval', progress: 0, activity: `Spec ${phaseLabel}: evaluating prompt...` })
+
+      window.app.offStream()
+
+      window.app.onStreamChunk((parsed) => {
+        if (!startTime) {
+          startTime = Date.now()
+          clearInterval(promptTimer)
+        }
+        const delta = parsed.choices?.[0]?.delta?.content
+        if (delta) {
+          accumulated += delta
+          tokenCount++
+          outputTokens = tokenCount
+          const tks = serverTps || _calcTks(tokenCount, startTime)
+          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks, activity: `Spec ${phaseLabel}: generating...` })
+        }
+      })
+
+      window.app.onStreamStats((stats) => {
+        inputTokens = stats.prompt_tokens || inputTokens
+        outputTokens = stats.completion_tokens || outputTokens || tokenCount
+        if (stats.generation_tps) serverTps = stats.generation_tps
+        const promptTps = stats.prompt_tps || null
+        const peakMemory = stats.peak_memory_gb || null
+        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks: serverTps, promptTps, peakMemory, activity: `Spec ${phaseLabel}: generating...` })
+      })
+
+      window.app.onStreamDone(() => {
+        clearInterval(promptTimer)
+        window.app.offStream()
+        resolve(accumulated)
+      })
+
+      window.app.onStreamError((err) => {
+        clearInterval(promptTimer)
+        window.app.offStream()
+        reject(new Error(err))
+      })
+
+      window.app.chatStream({
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 4096,
+      })
     })
 
-    if (result.error) {
-      appendMsg('system', `❌ Spec generation failed: ${result.error}`)
+    if (!content) {
+      appendMsg('system', `❌ Spec generation failed: empty response`)
+      updateAgentStatsBar({ state: 'done', activity: 'Spec generation failed' })
     } else {
-      let content = result.choices?.[0]?.message?.content || ''
       // Strip <think> tags
-      content = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+      let cleaned = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
       // Strip plain-text thinking preamble — everything before the first markdown heading
-      if (!/^#/m.test(content.split('\n')[0]) && /^#/m.test(content)) {
-        content = content.slice(content.search(/^#/m)).trim()
+      if (!/^#/m.test(cleaned.split('\n')[0]) && /^#/m.test(cleaned)) {
+        cleaned = cleaned.slice(cleaned.search(/^#/m)).trim()
       }
-      await window.app.specSaveArtifact(currentSpecDir, phase, content)
+      await window.app.specSaveArtifact(currentSpecDir, phase, cleaned)
       await window.app.specAdvance(currentSpecDir)
-      appendMsg('system', `✅ ${phase.charAt(0).toUpperCase() + phase.slice(1)} generated for "${currentSpecName}"`)
+      appendMsg('system', `✅ ${phaseLabel} generated for "${currentSpecName}"`)
+      updateAgentStatsBar({ state: 'done', activity: `Spec ${phaseLabel}: complete` })
       viewInlineSpecArtifact(phase)
 
       // If tasks were generated, write Tasks.md and load into task graph
@@ -2420,6 +2484,7 @@ async function generateInlineSpecPhase(phase) {
     }
   } catch (e) {
     appendMsg('system', `❌ Error: ${e.message}`)
+    updateAgentStatsBar({ state: 'done', activity: 'Spec generation failed' })
   }
 
   if (btn) { btn.classList.remove('generating') }
@@ -2628,7 +2693,11 @@ async function generateSpecPhase(phase) {
   const dot = document.getElementById('stepDot-' + phase)
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating...'; btn.classList.add('generating') }
   if (status) { status.textContent = 'Generating...'; status.className = 'spec-step-status generating' }
-  if (dot) { dot.className = 'spec-step-dot active' }
+  if (dot) { dot.className = 'spec-step-dot generating' }
+
+  // Show agent stats bar immediately
+  const phaseLabel = phase.charAt(0).toUpperCase() + phase.slice(1)
+  updateAgentStatsBar({ state: 'initializing', activity: `Spec: preparing ${phaseLabel}...` })
 
   try {
     const artifacts = await window.app.specArtifacts(currentSpecDir)
@@ -2647,30 +2716,90 @@ async function generateSpecPhase(phase) {
       prompt = SPEC_PROMPTS.tasks(currentSpecName, artifacts.requirements || '', artifacts.design || '')
     }
 
-    // Call the AI via the chat endpoint (non-streaming for simplicity)
-    const result = await window.app.chat({
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 4096,
+    // Use streaming chat for real-time stats bar updates
+    const content = await new Promise((resolve, reject) => {
+      let accumulated = ''
+      let tokenCount = 0
+      let inputTokens = 0
+      let outputTokens = 0
+      let serverTps = null
+      let startTime = null
+
+      // Simulated prompt-eval progress while waiting for first token
+      let promptProgress = 0
+      let promptElapsed = 0
+      const promptTimer = setInterval(() => {
+        promptElapsed += 200
+        promptProgress = 90 * (1 - Math.exp(-promptElapsed / 6000))
+        updateAgentStatsBar({ state: 'prompt-eval', inputTokens, outputTokens, progress: promptProgress, activity: `Spec ${phaseLabel}: evaluating prompt...` })
+      }, 200)
+
+      updateAgentStatsBar({ state: 'prompt-eval', progress: 0, activity: `Spec ${phaseLabel}: evaluating prompt...` })
+
+      window.app.offStream()
+
+      window.app.onStreamChunk((parsed) => {
+        if (!startTime) {
+          startTime = Date.now()
+          clearInterval(promptTimer)
+        }
+        const delta = parsed.choices?.[0]?.delta?.content
+        if (delta) {
+          accumulated += delta
+          tokenCount++
+          outputTokens = tokenCount
+          const tks = serverTps || _calcTks(tokenCount, startTime)
+          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks, activity: `Spec ${phaseLabel}: generating...` })
+        }
+      })
+
+      window.app.onStreamStats((stats) => {
+        inputTokens = stats.prompt_tokens || inputTokens
+        outputTokens = stats.completion_tokens || outputTokens || tokenCount
+        if (stats.generation_tps) serverTps = stats.generation_tps
+        const promptTps = stats.prompt_tps || null
+        const peakMemory = stats.peak_memory_gb || null
+        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks: serverTps, promptTps, peakMemory, activity: `Spec ${phaseLabel}: generating...` })
+      })
+
+      window.app.onStreamDone(() => {
+        clearInterval(promptTimer)
+        window.app.offStream()
+        resolve(accumulated)
+      })
+
+      window.app.onStreamError((err) => {
+        clearInterval(promptTimer)
+        window.app.offStream()
+        reject(new Error(err))
+      })
+
+      window.app.chatStream({
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 4096,
+      })
     })
 
-    if (result.error) {
-      appendMsg('system', `❌ Spec generation failed: ${result.error}`)
+    if (!content) {
+      appendMsg('system', `❌ Spec generation failed: empty response`)
+      updateAgentStatsBar({ state: 'done', activity: 'Spec generation failed' })
     } else {
-      let content = result.choices?.[0]?.message?.content || ''
       // Strip thinking tags if present
-      content = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+      let cleaned = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
       // Strip plain-text thinking preamble before first markdown heading
-      if (!/^#/m.test(content.split('\n')[0]) && /^#/m.test(content)) {
-        content = content.slice(content.search(/^#/m)).trim()
+      if (!/^#/m.test(cleaned.split('\n')[0]) && /^#/m.test(cleaned)) {
+        cleaned = cleaned.slice(cleaned.search(/^#/m)).trim()
       }
-      await window.app.specSaveArtifact(currentSpecDir, phase, content)
+      await window.app.specSaveArtifact(currentSpecDir, phase, cleaned)
       // Advance phase
       await window.app.specAdvance(currentSpecDir)
-      appendMsg('system', `✅ ${phase.charAt(0).toUpperCase() + phase.slice(1)} generated for "${currentSpecName}"`)
+      appendMsg('system', `✅ ${phaseLabel} generated for "${currentSpecName}"`)
+      updateAgentStatsBar({ state: 'done', activity: `Spec ${phaseLabel}: complete` })
       viewSpecArtifact(phase)
     }
   } catch (e) {
     appendMsg('system', `❌ Error: ${e.message}`)
+    updateAgentStatsBar({ state: 'done', activity: 'Spec generation failed' })
   }
 
   if (btn) { btn.classList.remove('generating') }
