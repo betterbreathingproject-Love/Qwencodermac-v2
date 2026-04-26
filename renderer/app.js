@@ -1118,6 +1118,23 @@ async function sendAgentMode(prompt, opts = {}) {
         if (previewToRemove) previewToRemove.remove()
         // Start a new text segment for the next turn after this tool call
         allTextSegments.push('')
+
+        // Route update_todos to the todo panel instead of showing a tool block
+        if (ev.name === 'update_todos' && ev.input?.todos) {
+          // Map status values to what updateTodoPanel expects
+          const mapped = ev.input.todos.map(t => ({
+            id: t.id,
+            content: t.content || t.title || t.text || '',
+            status: t.status === 'done' ? 'completed' : t.status === 'in_progress' ? 'in_progress' : 'pending',
+          }))
+          updateTodoPanel(mapped, 'running')
+          document.getElementById(respId+'-status').textContent = `📋 Updated todo list`
+          updateStatusBar('tool', { toolName: ev.name, activity: 'Updating progress...' })
+          updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: 'Updating progress...' })
+          scrollOutput()
+          break
+        }
+
         document.getElementById(respId+'-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
         document.getElementById(respId+'-status').textContent = `🔧 Using tool: ${ev.name}`
         updateStatusBar('tool', { toolName: ev.name, activity: `Running ${ev.name}...` })
@@ -1125,6 +1142,12 @@ async function sendAgentMode(prompt, opts = {}) {
         scrollOutput()
         break
       case 'tool-result': {
+        // Skip rendering tool-result for update_todos — it's handled by the todo panel
+        if (lastToolName === 'update_todos') {
+          document.getElementById(respId+'-status').textContent = '🤖 Agent processing...'
+          updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: 'Thinking about next step...' })
+          break
+        }
         const toolsDiv = document.getElementById(respId+'-tools')
         const lastTool = toolsDiv.querySelector('.tool-block:last-child')
 
@@ -1174,6 +1197,41 @@ async function sendAgentMode(prompt, opts = {}) {
         updateStatusBar('processing', { activity: 'Processing response...' })
         updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens, toolCount: _agentToolCount, activity: 'Processing response...' })
         scrollOutput()
+        break
+      }
+      case 'lsp-activity': {
+        // Show LSP activity in the status line and flash the LSP chip
+        const lspChip = document.getElementById('lspChip')
+        const lspDot = document.getElementById('lspDot')
+        const statusLine = document.getElementById(respId+'-status')
+        const action = ev.action || ''
+        const filePath = ev.path ? ev.path.split('/').pop() : ''
+
+        // Flash the LSP dot to indicate activity
+        if (lspDot) {
+          lspDot.style.background = 'var(--accent2)'
+          lspDot.style.boxShadow = '0 0 6px var(--accent2)'
+          setTimeout(() => {
+            // Restore to current status color
+            const colors = { ready: 'var(--green)', starting: '#f5a623', degraded: '#f5a623', error: 'var(--red)', stopped: 'var(--muted)' }
+            lspDot.style.background = colors[currentLspStatus] || 'var(--muted)'
+            lspDot.style.boxShadow = ''
+          }, 800)
+        }
+
+        if (action === 'speculative-check') {
+          statusLine.textContent = `🔬 LSP: validating ${filePath} before write...`
+        } else if (action === 'speculative-ok') {
+          statusLine.textContent = `✅ LSP: ${filePath} — no new errors`
+        } else if (action === 'speculative-warn') {
+          statusLine.textContent = `⚠️ LSP: ${filePath} — ${ev.count} issue${ev.count > 1 ? 's' : ''} detected`
+        } else if (action === 'diagnostics-check') {
+          statusLine.textContent = `🔬 LSP: checking ${filePath} for errors...`
+        } else if (action === 'diagnostics-ok') {
+          statusLine.textContent = `✅ LSP: ${filePath} — clean`
+        } else if (action === 'diagnostics-errors') {
+          statusLine.textContent = `⚠️ LSP: ${filePath} — ${ev.count} error${ev.count > 1 ? 's' : ''} found`
+        }
         break
       }
       case 'system':

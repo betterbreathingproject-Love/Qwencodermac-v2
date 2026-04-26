@@ -160,6 +160,32 @@ const TOOL_DEFS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'update_todos',
+      description: 'Update the todo/progress list shown to the user. Use this to track your plan and progress during multi-step tasks. Call at the start to set your plan, then update item statuses as you complete each step. Keeps the user informed of what you are doing and what is left.',
+      parameters: {
+        type: 'object',
+        properties: {
+          todos: {
+            type: 'array',
+            description: 'Array of todo items. Each item has id, content, and status.',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'number', description: 'Unique numeric ID for this item (1, 2, 3, ...)' },
+                content: { type: 'string', description: 'Short description of the task' },
+                status: { type: 'string', enum: ['pending', 'in_progress', 'done'], description: 'Current status' },
+              },
+              required: ['id', 'content', 'status'],
+            },
+          },
+        },
+        required: ['todos'],
+      },
+    },
+  },
   ...BROWSER_TOOL_DEFS,
   ...WEB_TOOL_DEFS,
 ]
@@ -906,6 +932,14 @@ async function executeTool(name, args, cwd, browserInstance, lspManager) {
           return { error: `Command failed (exit ${exitCode}):\n${combined || execErr.message}` }
         }
       }
+      case 'update_todos': {
+        // update_todos is handled by the renderer via the tool-use/tool-result event flow.
+        // We just validate and return success here — the renderer picks up the input from the tool-use event.
+        const todos = args.todos
+        if (!Array.isArray(todos)) return { error: 'todos must be an array' }
+        const done = todos.filter(t => t.status === 'done' || t.status === 'completed').length
+        return { result: `Updated todo list: ${done}/${todos.length} complete` }
+      }
       case 'search_files': {
         if (typeof args.pattern !== 'string' || !args.pattern.trim()) return { error: 'pattern must be a non-empty string' }
         const searchV = validatePath(args.path || '.')
@@ -1418,6 +1452,7 @@ class DirectBridge {
         // Speculative edit hook: simulate write_file before executing it
         let speculativeMsg = ''
         if (fnName === 'write_file' && this._lspManager?.getStatus().status === 'ready') {
+          this.send('qwen-event', { type: 'lsp-activity', action: 'speculative-check', path: fnArgs.path })
           try {
             const simResult = await Promise.race([
               this._lspManager.call('lsp_simulate_edit_atomic', { path: fnArgs.path, content: fnArgs.content }),
@@ -1426,8 +1461,10 @@ class DirectBridge {
             if (simResult?.newDiagnostics?.length > 0) {
               const diagLines = simResult.newDiagnostics.map(d => `  ${d.severity || 'error'}: ${d.message} (line ${d.line || '?'})`).join('\n')
               speculativeMsg = `⚠️ Speculative edit preview found new diagnostics:\n${diagLines}\n\n`
+              this.send('qwen-event', { type: 'lsp-activity', action: 'speculative-warn', path: fnArgs.path, count: simResult.newDiagnostics.length })
             } else {
               speculativeMsg = '✅ Speculative edit validation passed — no new errors detected.\n\n'
+              this.send('qwen-event', { type: 'lsp-activity', action: 'speculative-ok', path: fnArgs.path })
             }
           } catch {
             // On failure/timeout, skip speculative check and proceed normally
@@ -1446,6 +1483,7 @@ class DirectBridge {
 
         // Post-edit diagnostic hook: check for errors after write_file/edit_file
         if ((fnName === 'write_file' || fnName === 'edit_file') && !isError && this._lspManager?.getStatus().status === 'ready') {
+          this.send('qwen-event', { type: 'lsp-activity', action: 'diagnostics-check', path: fnArgs.path })
           try {
             const diags = await Promise.race([
               this._lspManager.call('lsp_get_diagnostics', { path: fnArgs.path }),
@@ -1456,7 +1494,12 @@ class DirectBridge {
               if (errorDiags.length > 0) {
                 const diagLines = errorDiags.map(d => `  ${d.severity || 'error'}: ${d.message} (line ${d.line || '?'})`).join('\n')
                 content = `⚠️ Edit introduced errors:\n${diagLines}\n\n${content}`
+                this.send('qwen-event', { type: 'lsp-activity', action: 'diagnostics-errors', path: fnArgs.path, count: errorDiags.length })
+              } else {
+                this.send('qwen-event', { type: 'lsp-activity', action: 'diagnostics-ok', path: fnArgs.path })
               }
+            } else {
+              this.send('qwen-event', { type: 'lsp-activity', action: 'diagnostics-ok', path: fnArgs.path })
             }
           } catch {
             // On failure/timeout, skip diagnostics silently
@@ -1800,6 +1843,9 @@ NEVER try to write an entire large file in a single write_file call — it WILL 
 IMPORTANT: When writing code files, avoid putting backticks, complex template literals, or deeply nested quotes in write_file content. If the file contains such characters, prefer using bash with heredoc syntax instead.
 
 CRITICAL: When implementing code changes, you MUST use the write_file or edit_file tools to actually create or modify files. NEVER just output code in your text response — that does nothing. The user cannot copy-paste from chat. Always use the file tools to make real changes on disk.
+
+**Progress tracking:**
+When working on multi-step tasks, use update_todos to show your plan and track progress. Call it at the start with your plan (all items "pending"), then update item statuses to "in_progress" and "done" as you work through each step. This keeps the user informed.
 ${autoEdit ? '\nYou are in auto-edit mode. Proceed with changes without asking for confirmation.' : ''}`
   }
 
