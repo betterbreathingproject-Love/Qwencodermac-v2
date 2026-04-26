@@ -141,7 +141,7 @@ const agentPool = new AgentPool({
     const cwd = task.cwd || currentProject || process.cwd()
     console.log('[agent-factory] Creating', typeName, 'agent for task:', task.id, task.title)
 
-    const bridge = new DirectBridge(new WindowSink(mainWindow), { agentRole: typeName, allowedTools: agentType?.allowedTools || null })
+    const bridge = new DirectBridge(new WindowSink(mainWindow), { agentRole: typeName, allowedTools: agentType?.allowedTools || null, lspManager })
 
     // Pick the specialized system prompt for this agent type
     const promptBuilder = SUBAGENT_PROMPTS[typeName] || SUBAGENT_PROMPTS['general']
