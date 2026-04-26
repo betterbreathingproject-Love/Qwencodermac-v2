@@ -715,8 +715,33 @@ async def chat_completions(req: ChatRequest):
                                     yield f"data: {json.dumps(tc_delta)}\n\n"
                                     _tc_last_args_len = len(current_args)
 
-                            # If tool call block is complete, reset for potential next one
+                            # If tool call block is complete, send final args and reset
                             if tc_close != -1:
+                                # Send a final delta with the definitively parsed arguments
+                                # to ensure the client has the correct values (earlier deltas
+                                # from parse_partial_tool_args may have had empty/incomplete args)
+                                if _tc_func_name:
+                                    fn_tag_end = _tool_call_buf.find(">", _tool_call_buf.find("<function="))
+                                    func_body = _tool_call_buf[fn_tag_end + 1:] if fn_tag_end != -1 else ""
+                                    clean_body = func_body.replace("</function>", "").replace("</tool_call>", "")
+                                    final_args = parse_partial_tool_args(clean_body)
+                                    tc_final = {
+                                        "id": cid, "object": "chat.completion.chunk",
+                                        "created": created, "model": _model_id,
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {
+                                                "tool_calls": [{
+                                                    "index": _tc_index,
+                                                    "function": {
+                                                        "arguments": final_args,
+                                                    }
+                                                }]
+                                            },
+                                            "finish_reason": None,
+                                        }],
+                                    }
+                                    yield f"data: {json.dumps(tc_final)}\n\n"
                                 _in_tool_call = False
                                 _tool_call_buf = ""
                                 _tc_index += 1
@@ -749,9 +774,31 @@ async def chat_completions(req: ChatRequest):
                         if has_tools:
                             tool_calls = parse_tool_calls(full_text)
                             if tool_calls:
-                                # If we already streamed tool_calls incrementally,
-                                # just send the finish_reason chunk
                                 if _tc_index > 0:
+                                    # Re-send the final definitively parsed tool calls
+                                    # to ensure the client has correct arguments (the
+                                    # incremental deltas may have had stale/empty values)
+                                    for i, tc in enumerate(tool_calls):
+                                        tc_final_chunk = {
+                                            "id": cid, "object": "chat.completion.chunk",
+                                            "created": created, "model": _model_id,
+                                            "choices": [{
+                                                "index": 0,
+                                                "delta": {
+                                                    "tool_calls": [{
+                                                        "index": i,
+                                                        "id": tc["id"],
+                                                        "type": "function",
+                                                        "function": {
+                                                            "name": tc["function"]["name"],
+                                                            "arguments": tc["function"]["arguments"],
+                                                        }
+                                                    }]
+                                                },
+                                                "finish_reason": None,
+                                            }],
+                                        }
+                                        yield f"data: {json.dumps(tc_final_chunk)}\n\n"
                                     finish_chunk = {
                                         "id": cid, "object": "chat.completion.chunk",
                                         "created": created, "model": _model_id,

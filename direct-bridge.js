@@ -1028,7 +1028,7 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
 
   // ── path validation: prevent traversal outside the working directory ──
   function validatePath(filePath) {
-    if (!filePath || typeof filePath !== 'string') return { error: 'path is required and must be a string' }
+    if (!filePath || typeof filePath !== 'string') return { error: 'path is required and must be a non-empty string. You must pass a "path" key in the tool arguments, e.g. read_file({"path": "index.html"})' }
     if (filePath.includes('\0')) return { error: 'path contains null bytes' }
     const resolved = path.resolve(cwd, filePath)
     // Ensure the resolved path is within the cwd (or is the cwd itself)
@@ -1917,7 +1917,7 @@ class DirectBridge {
       if (consecutiveErrors >= 3) {
         messages.push({
           role: 'system',
-          content: 'WARNING: Multiple consecutive tool errors. Double-check your tool arguments. For file tools, the "path" parameter must be a non-empty string. Use list_dir first if you are unsure of file paths.',
+          content: 'WARNING: Multiple consecutive tool errors. Double-check your tool arguments. For file tools (read_file, write_file, edit_file), the "path" parameter must be a non-empty string — e.g. read_file({"path": "src/main.js"}). Use list_dir({"path": "."}) first if you are unsure of file paths.',
         })
         consecutiveErrors = 0
       }
