@@ -88,9 +88,9 @@ function createPlaywrightInstance() {
         req.end()
       })
       const desc = result.choices?.[0]?.message?.content || 'Could not analyze screenshot.'
-      return `[Screenshot captured, ${buf.length} bytes]\n\nVision analysis:\n${desc}`
+      return `[Screenshot captured, ${buf.length} bytes]\n\n![screenshot](${b64})\n\nVision analysis:\n${desc}`
     } catch (err) {
-      return `[Screenshot captured, ${buf.length} bytes, but vision analysis failed: ${err.message}]`
+      return `[Screenshot captured, ${buf.length} bytes, but vision analysis failed: ${err.message}]\n\n![screenshot](${b64})`
     }
   }
 

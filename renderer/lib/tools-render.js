@@ -139,7 +139,17 @@ function toggleTodoPanel() {
 
 function renderToolResult(content, isError=false) {
   const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2)
-  const escaped = esc(text)
+
+  // Extract and render inline screenshots from browser_screenshot results
+  const imgMatch = text.match(/!\[screenshot\]\((data:image\/png;base64,[A-Za-z0-9+/=]+)\)/)
+  let imgHtml = ''
+  let displayText = text
+  if (imgMatch) {
+    imgHtml = `<div style="margin:6px 0"><img src="${imgMatch[1]}" style="max-width:100%;max-height:400px;border-radius:6px;border:1px solid var(--border);cursor:pointer" onclick="window.open().document.write('<img src=\\''+this.src+'\\'>')" title="Click to open full size"></div>`
+    displayText = text.replace(imgMatch[0], '').trim()
+  }
+
+  const escaped = esc(displayText)
   const limit = 8000
   const cls = isError ? 'tool-result error' : 'tool-result'
   const icon = isError ? '✗' : '✓'
@@ -148,12 +158,14 @@ function renderToolResult(content, isError=false) {
     const id = 'tr-' + Date.now() + Math.random().toString(36).slice(2,6)
     return `<div class="${cls}" id="${id}">
       <div class="tool-result-header"><span class="tool-result-icon ${isError?'error':''}">${icon}</span> ${label}</div>
-      <div class="tool-result-body">${escaped.slice(0, limit)}<span class="tool-result-more" onclick="this.parentElement.innerHTML=window._toolResultFull['${id}'];delete window._toolResultFull['${id}']">… show all (${text.length} chars)</span></div>
+      ${imgHtml}
+      <div class="tool-result-body">${escaped.slice(0, limit)}<span class="tool-result-more" onclick="this.parentElement.innerHTML=window._toolResultFull['${id}'];delete window._toolResultFull['${id}']">… show all (${displayText.length} chars)</span></div>
     </div>`
       + `<script>if(!window._toolResultFull)window._toolResultFull={};window._toolResultFull['${id}']=\`${escaped.replace(/`/g,'\\`').replace(/<\/script/gi,'<\\/script')}\`</script>`
   }
   return `<div class="${cls}">
     <div class="tool-result-header"><span class="tool-result-icon ${isError?'error':''}">${icon}</span> ${label}</div>
+    ${imgHtml}
     <div class="tool-result-body">${escaped}</div>
   </div>`
 }

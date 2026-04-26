@@ -1677,19 +1677,27 @@ class DirectBridge {
           content = content.slice(0, truncateLimit) + '\n\n... [truncated — output was ' + (content.length / 1024).toFixed(0) + 'KB. Use more specific queries or read smaller sections.]'
         }
 
-        // Emit tool-result event
+        // For screenshots, send the full content (with base64 image) to the renderer
+        // but strip the image data from the model context to save tokens
+        let rendererContent = content
+        let modelContent = content
+        if (fnName === 'browser_screenshot' && content && content.includes('![screenshot](data:image')) {
+          modelContent = content.replace(/!\[screenshot\]\(data:image\/png;base64,[A-Za-z0-9+/=]+\)/g, '[screenshot image captured]')
+        }
+
+        // Emit tool-result event (renderer gets full content with images)
         this.send('qwen-event', {
           type: 'tool-result',
           tool_use_id: tc.id,
-          content: content,
+          content: rendererContent,
           is_error: isError,
         })
 
-        // Add tool result to messages
+        // Add tool result to messages (model gets stripped content)
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
-          content: content,
+          content: modelContent,
         })
 
         if (isError) consecutiveErrors++
