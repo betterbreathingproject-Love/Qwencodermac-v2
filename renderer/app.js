@@ -2373,12 +2373,24 @@ async function generateInlineSpecPhase(phase) {
   const phaseLabel = phase.charAt(0).toUpperCase() + phase.slice(1)
   updateAgentStatsBar({ state: 'initializing', activity: `Spec: preparing ${phaseLabel}...` })
 
+  // Auto-collapse any previous spec phase blocks
+  document.querySelectorAll('.spec-phase-block').forEach(el => {
+    el.querySelectorAll('details[open]').forEach(d => d.removeAttribute('open'))
+  })
+
   // Create a live chat message block for streaming output
   const specRespId = 'spec-resp-' + Date.now()
   const out = document.getElementById('agentOutput')
-  out.insertAdjacentHTML('beforeend', `<div class="msg-block" id="${specRespId}">
+  out.insertAdjacentHTML('beforeend', `<div class="msg-block spec-phase-block" id="${specRespId}">
     <div class="msg-system" id="${specRespId}-status">📐 Generating ${phaseLabel} for "${esc(currentSpecName)}"...</div>
-    <div class="msg-text" id="${specRespId}-text"></div>
+    <details class="msg-thinking" id="${specRespId}-think" style="display:none" open>
+      <summary>🧠 Thinking</summary>
+      <div class="msg-thinking-body" id="${specRespId}-think-body"></div>
+    </details>
+    <details class="spec-phase-output" open>
+      <summary>📄 ${phaseLabel} output</summary>
+      <div class="msg-text" id="${specRespId}-text"></div>
+    </details>
   </div>`)
   scrollOutput()
 
@@ -2418,13 +2430,21 @@ async function generateInlineSpecPhase(phase) {
           _mdRenderTimer = null
           if (_mdDirty) {
             _mdDirty = false
-            // Strip thinking tags from display
+            // Show thinking content in the thinking section
+            const thinkContent = extractThinking(accumulated)
+            if (thinkContent) {
+              const thinkEl = document.getElementById(specRespId + '-think')
+              if (thinkEl) thinkEl.style.display = ''
+              const thinkBody = document.getElementById(specRespId + '-think-body')
+              if (thinkBody) thinkBody.textContent = thinkContent + '▌'
+            }
+            // Strip thinking tags from main display
             let displayText = accumulated.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
             const openThink = accumulated.lastIndexOf('<think>')
             const closeThink = accumulated.lastIndexOf('</think>')
             if (openThink > closeThink) displayText = accumulated.slice(0, openThink).trim()
             const textEl = document.getElementById(specRespId + '-text')
-            if (textEl) textEl.innerHTML = renderMd(displayText, true) + '<span class="cursor">▌</span>'
+            if (textEl && displayText) textEl.innerHTML = renderMd(displayText, true) + '<span class="cursor">▌</span>'
             scrollOutput()
           }
         })
@@ -2489,6 +2509,12 @@ async function generateInlineSpecPhase(phase) {
     // Finalize the chat block with rendered markdown (no cursor)
     const statusEl = document.getElementById(specRespId + '-status')
     const textEl = document.getElementById(specRespId + '-text')
+
+    // Finalize thinking section — remove trailing cursor
+    const thinkBody = document.getElementById(specRespId + '-think-body')
+    if (thinkBody && thinkBody.textContent.endsWith('▌')) {
+      thinkBody.textContent = thinkBody.textContent.slice(0, -1)
+    }
 
     if (!content) {
       if (statusEl) statusEl.textContent = `❌ Spec ${phaseLabel} generation failed: empty response`
@@ -2742,12 +2768,24 @@ async function generateSpecPhase(phase) {
   const phaseLabel = phase.charAt(0).toUpperCase() + phase.slice(1)
   updateAgentStatsBar({ state: 'initializing', activity: `Spec: preparing ${phaseLabel}...` })
 
+  // Auto-collapse any previous spec phase blocks
+  document.querySelectorAll('.spec-phase-block').forEach(el => {
+    el.querySelectorAll('details[open]').forEach(d => d.removeAttribute('open'))
+  })
+
   // Create a live chat message block for streaming output
   const specRespId = 'spec-side-resp-' + Date.now()
   const out = document.getElementById('agentOutput')
-  out.insertAdjacentHTML('beforeend', `<div class="msg-block" id="${specRespId}">
+  out.insertAdjacentHTML('beforeend', `<div class="msg-block spec-phase-block" id="${specRespId}">
     <div class="msg-system" id="${specRespId}-status">📐 Generating ${phaseLabel} for "${esc(currentSpecName)}"...</div>
-    <div class="msg-text" id="${specRespId}-text"></div>
+    <details class="msg-thinking" id="${specRespId}-think" style="display:none" open>
+      <summary>🧠 Thinking</summary>
+      <div class="msg-thinking-body" id="${specRespId}-think-body"></div>
+    </details>
+    <details class="spec-phase-output" open>
+      <summary>📄 ${phaseLabel} output</summary>
+      <div class="msg-text" id="${specRespId}-text"></div>
+    </details>
   </div>`)
   scrollOutput()
 
@@ -2787,12 +2825,20 @@ async function generateSpecPhase(phase) {
           _mdRenderTimer = null
           if (_mdDirty) {
             _mdDirty = false
+            // Show thinking content in the thinking section
+            const thinkContent = extractThinking(accumulated)
+            if (thinkContent) {
+              const thinkEl = document.getElementById(specRespId + '-think')
+              if (thinkEl) thinkEl.style.display = ''
+              const thinkBody = document.getElementById(specRespId + '-think-body')
+              if (thinkBody) thinkBody.textContent = thinkContent + '▌'
+            }
             let displayText = accumulated.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
             const openThink = accumulated.lastIndexOf('<think>')
             const closeThink = accumulated.lastIndexOf('</think>')
             if (openThink > closeThink) displayText = accumulated.slice(0, openThink).trim()
             const textEl = document.getElementById(specRespId + '-text')
-            if (textEl) textEl.innerHTML = renderMd(displayText, true) + '<span class="cursor">▌</span>'
+            if (textEl && displayText) textEl.innerHTML = renderMd(displayText, true) + '<span class="cursor">▌</span>'
             scrollOutput()
           }
         })
@@ -2857,6 +2903,12 @@ async function generateSpecPhase(phase) {
     // Finalize the chat block
     const statusEl = document.getElementById(specRespId + '-status')
     const textEl = document.getElementById(specRespId + '-text')
+
+    // Finalize thinking section — remove trailing cursor
+    const thinkBody = document.getElementById(specRespId + '-think-body')
+    if (thinkBody && thinkBody.textContent.endsWith('▌')) {
+      thinkBody.textContent = thinkBody.textContent.slice(0, -1)
+    }
 
     if (!content) {
       if (statusEl) statusEl.textContent = `❌ Spec ${phaseLabel} generation failed: empty response`

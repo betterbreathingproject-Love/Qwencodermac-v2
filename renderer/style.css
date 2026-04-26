@@ -426,6 +426,13 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 /* spec generation agent status — dot animation for active phase */
 .inline-spec-step-dot.generating { border-color: var(--yellow); background: var(--yellow); box-shadow: 0 0 10px rgba(250,204,21,0.5); animation: pulse 1s ease-in-out infinite; }
 
+/* spec phase output collapsible */
+.spec-phase-output { border: 1px solid rgba(124,106,247,0.12); border-radius: 8px; overflow: hidden; margin-top: 6px; }
+.spec-phase-output summary { padding: 8px 14px; cursor: pointer; font-size: 12px; font-weight: 500; color: var(--accent2); list-style: none; display: flex; align-items: center; gap: 6px; user-select: none; background: rgba(124,106,247,0.03); }
+.spec-phase-output summary::before { content: '▸'; font-size: 10px; transition: transform 0.15s; }
+.spec-phase-output[open] summary::before { transform: rotate(90deg); }
+.spec-phase-output .msg-text { padding: 10px 14px; max-height: 500px; overflow-y: auto; border-top: 1px solid rgba(124,106,247,0.08); }
+
 /* sidebar spec artifact viewer */
 .spec-active { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .spec-create { }
