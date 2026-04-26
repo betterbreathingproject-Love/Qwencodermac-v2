@@ -39,7 +39,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 
 /* sidebar */
 .sidebar { width: 220px; flex-shrink: 0; background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
-.side-panel { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+.side-panel { display: none; flex-direction: column; flex: 1; overflow-y: auto; overflow-x: hidden; }
 .side-panel.active { display: flex; }
 .sp-header { padding: 10px 12px; border-bottom: 1px solid var(--border); }
 .sp-footer { padding: 8px; border-top: 1px solid var(--border); }

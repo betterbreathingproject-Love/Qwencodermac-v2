@@ -249,6 +249,26 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
 })
 ipcMain.handle('qwen-interrupt', async () => { await qwenBridge?.interrupt(); return { ok: true } })
 
+// ── IPC: Steering docs ───────────────────────────────────────────────────────
+ipcMain.handle('steering-list', async () => {
+  if (!currentProject) return { docs: [] }
+  const docs = loadSteeringDocs(currentProject)
+  return { docs }
+})
+
+ipcMain.handle('steering-create', async (_, { name, description, body }) => {
+  if (!currentProject) return { error: 'No project open' }
+  const fs = require('node:fs')
+  const { printSteeringDoc } = require('./steering-loader')
+  const steeringDir = path.join(currentProject, '.maccoder', 'steering')
+  fs.mkdirSync(steeringDir, { recursive: true })
+  const safeName = (name || 'untitled').replace(/\s+/g, '-').toLowerCase()
+  const filePath = path.join(steeringDir, `${safeName}.md`)
+  const content = printSteeringDoc({ name: name || safeName, description: description || '', auto_generated: false }, body || '')
+  fs.writeFileSync(filePath, content, 'utf8')
+  return { ok: true, path: filePath }
+})
+
 // ── background task events ────────────────────────────────────────────────────
 agentPool.on('bg-task-event', (evt) => {
   mainWindow?.webContents.send('bg-task-event', evt)

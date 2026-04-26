@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld('app', {
   onQwenEvent:    (cb)      => ipcRenderer.on('qwen-event', (_, d) => cb(d)),
   offQwenEvents:  ()        => ipcRenderer.removeAllListeners('qwen-event'),
 
+  // steering docs
+  steeringList:   ()        => ipcRenderer.invoke('steering-list'),
+  steeringCreate: (p)       => ipcRenderer.invoke('steering-create', p),
+
   // filesystem
   openFolder:     ()        => ipcRenderer.invoke('open-folder'),
   readDir:        (p)       => ipcRenderer.invoke('read-dir', p),

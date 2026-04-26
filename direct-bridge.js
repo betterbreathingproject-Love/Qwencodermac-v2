@@ -1071,6 +1071,20 @@ class DirectBridge {
     const workDir = cwd || process.cwd()
     const systemPrompt = systemPromptOverride || this._buildSystemPrompt(workDir, permissionMode)
 
+    // Inject steering docs into the system prompt (vibe mode)
+    // For spec mode, systemPromptOverride already includes steering from the agent factory
+    let finalSystemPrompt = systemPrompt
+    if (!systemPromptOverride) {
+      try {
+        const { loadSteeringDocs, formatSteeringForPrompt } = require('./steering-loader')
+        const steeringDocs = loadSteeringDocs(workDir)
+        const steeringContent = formatSteeringForPrompt(steeringDocs)
+        if (steeringContent) {
+          finalSystemPrompt += '\n\n' + steeringContent
+        }
+      } catch { /* steering loader not available — skip */ }
+    }
+
     // Build the final prompt — use lightweight project context when conversation
     // history is large (>8 messages), falling back to full transcript for short chats.
     // This prevents oversized prompts that choke local models on session resume.
@@ -1107,7 +1121,7 @@ class DirectBridge {
     finalPrompt += prompt + imageContext
 
     const messages = [
-      { role: 'system', content: systemPrompt },
+      { role: 'system', content: finalSystemPrompt },
       { role: 'user', content: finalPrompt },
     ]
 

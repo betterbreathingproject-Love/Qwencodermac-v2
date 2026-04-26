@@ -189,6 +189,19 @@
           <button class="btn-sm" onclick="runCompactNow()" id="compactNowBtn" style="margin-top:4px">🦞 Compact Now</button>
           <button class="btn-sm" onclick="installCompactor()" id="installCompactorBtn" style="margin-top:2px;display:none">📦 Install claw-compactor</button>
         </div>
+
+        <div class="sp-header" style="margin-top:4px"><span class="section-label">STEERING DOCS</span></div>
+        <div class="setup-compact" id="steeringSettings">
+          <div class="sc-field">
+            <span class="sc-label">Status</span>
+            <span id="steeringStatus" style="font-size:11px;color:var(--muted)">No project</span>
+          </div>
+          <div class="steering-doc-list" id="steeringDocList">
+            <div class="model-empty" style="font-size:10px">Steering docs customize agent behavior per-project. Stored in <code>.maccoder/steering/*.md</code></div>
+          </div>
+          <button class="btn-sm" onclick="createSteeringDoc()" id="createSteeringBtn" style="margin-top:4px">📝 New Steering Doc</button>
+          <button class="btn-sm" onclick="refreshSteeringDocs()" style="margin-top:2px;background:var(--bg3);color:var(--text);border:1px solid var(--border)">↻ Refresh</button>
+        </div>
       </div>
 
       <!-- tasks panel -->
