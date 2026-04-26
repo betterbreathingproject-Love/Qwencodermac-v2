@@ -194,9 +194,28 @@ class MiniAppServer extends EventEmitter {
     if (req.method === 'GET' && pathname === '/api/status') {
       res.writeHead(200)
       res.end(JSON.stringify({
+        type: 'status',
         state: this._controller.getJobState(),
         jobId: this._controller.getJobId(),
+        logs: this._logs.slice(-30),
       }))
+      return
+    }
+
+    // POST /api/cmd — command endpoint (REST-based control)
+    if (req.method === 'POST' && pathname === '/api/cmd') {
+      this._parseBody(req).then((msg) => {
+        this._handleClientMessage(msg)
+        // Return current status as response
+        const response = {
+          type: 'status',
+          state: this._controller.getJobState(),
+          jobId: this._controller.getJobId(),
+          logs: this._logs.slice(-30),
+        }
+        res.writeHead(200)
+        res.end(JSON.stringify(response))
+      }).catch(() => { res.writeHead(400); res.end('{"error":"Invalid body"}') })
       return
     }
 

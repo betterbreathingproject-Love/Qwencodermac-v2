@@ -278,29 +278,69 @@ const state = {
 };
 
 // ── API Communication ─────────────────────────────────
-// The mini app communicates with the main app via Telegram WebApp.sendData
-// or via a local WebSocket if running in dev mode.
-let ws = null;
-const WS_URL = 'ws://localhost:3847/miniapp';
+// Pure REST communication — works perfectly through cloudflared tunnel.
+// Uses polling for status updates (same approach as the other app).
+let connected = false;
+let pollInterval = null;
 
-function connectWS() {
-  try {
-    ws = new WebSocket(WS_URL);
-    ws.onopen = () => { state.connected = true; sendCmd('status'); render(); };
-    ws.onclose = () => { state.connected = false; ws = null; setTimeout(connectWS, 3000); render(); };
-    ws.onerror = () => { ws?.close(); };
-    ws.onmessage = (ev) => {
-      try { handleMessage(JSON.parse(ev.data)); } catch {}
-    };
-  } catch { setTimeout(connectWS, 3000); }
+function getApiBase() {
+  return window.location.origin;
 }
 
-function sendCmd(type, payload = {}) {
-  if (ws?.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type, ...payload }));
-  } else if (tg) {
-    tg.sendData(JSON.stringify({ type, ...payload }));
+async function sendCmd(type, payload = {}) {
+  try {
+    const res = await fetch(getApiBase() + '/api/cmd', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, ...payload }),
+    });
+    const data = await res.json();
+    if (!connected) { connected = true; state.connected = true; render(); }
+    handleMessage(data);
+  } catch {
+    if (connected) { connected = false; state.connected = false; render(); }
   }
+}
+
+async function pollStatus() {
+  try {
+    const res = await fetch(getApiBase() + '/api/status');
+    const data = await res.json();
+    if (!connected) { connected = true; state.connected = true; render(); }
+    // Update state from poll
+    if (data.state && data.state !== state.jobState) {
+      const prev = state.jobState;
+      state.jobState = data.state;
+      state.jobId = data.jobId || state.jobId;
+      if (data.state === 'running' && prev !== 'running') {
+        state.tab = 'monitor';
+        showToast('Job started');
+      } else if (data.state === 'completed' && prev === 'running') {
+        state.history.unshift({ id: state.jobId, prompt: state.jobPrompt, state: 'completed', time: Date.now() });
+        showToast('Job completed ✓');
+      } else if (data.state === 'failed' && prev === 'running') {
+        state.history.unshift({ id: state.jobId, prompt: state.jobPrompt, state: 'failed', time: Date.now() });
+        showToast('Job failed');
+      }
+      render();
+    }
+    // Fetch logs if running
+    if (data.state === 'running' && data.logs) {
+      state.logs = data.logs;
+      render();
+    }
+  } catch {
+    if (connected) { connected = false; state.connected = false; render(); }
+  }
+}
+
+function startPolling() {
+  pollStatus();
+  pollInterval = setInterval(pollStatus, 3000);
+}
+
+function stopPolling() {
+  if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
 }
 
 function handleMessage(msg) {
@@ -820,16 +860,7 @@ function showToast(msg) {
 
 // ── Init ──────────────────────────────────────────────
 render();
-connectWS();
-
-// Periodic status refresh
-setInterval(() => {
-  if (state.connected && state.jobState === 'running') {
-    requestStatus();
-    // Update elapsed time display
-    render();
-  }
-}, 10000);
+startPolling();
 </script>
 </body>
 </html>
