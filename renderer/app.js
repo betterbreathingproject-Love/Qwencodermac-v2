@@ -1962,7 +1962,7 @@ async function refreshTelegramStatus() {
   const tokenInput = document.getElementById('tg-token')
 
   // Pre-fill the token input if we have a saved token
-  if (!tokenInput.value && status.has_token) {
+  if (!tokenInput.value) {
     const saved = await window.app.telegramGetToken()
     if (saved.token) tokenInput.value = saved.token
   }

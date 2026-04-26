@@ -364,7 +364,10 @@ function createWindow() {
 
   ipcMain.handle('telegram-get-token', async () => {
     if (!telegramBot) return { token: null }
-    return { token: telegramBot._token || null }
+    // Return in-memory token if available, otherwise read from saved config
+    if (telegramBot._token) return { token: telegramBot._token }
+    const saved = telegramBot.loadConfig()
+    return { token: saved?.token || null }
   })
 
   ipcMain.handle('telegram-start', async (event, token) => {
