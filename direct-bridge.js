@@ -17,6 +17,20 @@ const { execSync, spawn } = require('child_process')
 const { createPlaywrightInstance, BROWSER_TOOL_DEFS } = require('./playwright-tool')
 const { WEB_TOOL_DEFS, executeWebTool } = require('./web-tools')
 const { getApiKeys } = require('./projects')
+const compactor = require('./compactor')
+
+// ── Python path resolution (reuse pattern from main/ipc-server.js) ────────────
+function _findPythonPath() {
+  for (const p of [
+    '/Library/Frameworks/Python.framework/Versions/3.13/bin/python3',
+    '/Library/Frameworks/Python.framework/Versions/3.12/bin/python3',
+    '/opt/homebrew/bin/python3', '/usr/local/bin/python3', 'python3',
+  ]) {
+    try { if (p === 'python3' || fs.existsSync(p)) return p } catch {}
+  }
+  return 'python3'
+}
+const pythonPath = _findPythonPath()
 
 // ── EventSink implementations ─────────────────────────────────────────────────
 
@@ -877,6 +891,27 @@ function extractEditFileArgs(raw) {
   return null
 }
 
+/**
+ * Detect the content type hint for compactor based on tool name and content.
+ * JSON and diff overrides take priority over tool-name mapping.
+ */
+function detectContentType(toolName, content) {
+  // JSON override: content starts with { or [ and parses
+  if (content && (content.trimStart().startsWith('{') || content.trimStart().startsWith('['))) {
+    try { JSON.parse(content); return 'json' } catch {}
+  }
+  // Diff override: contains diff markers
+  if (content && /^[-+]{3}\s/m.test(content) && /^@@\s/m.test(content)) return 'diff'
+  // Tool name mapping
+  const map = {
+    read_file: 'code', search_files: 'search', grep_search: 'search',
+    execute_command: 'log', bash: 'log', list_dir: 'log',
+    browser_screenshot: 'prose', browser_navigate: 'prose',
+    browser_click: 'prose', browser_type: 'prose',
+  }
+  return map[toolName] || 'auto'
+}
+
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
 async function executeTool(name, args, cwd, browserInstance, lspManager) {
@@ -1229,17 +1264,36 @@ class DirectBridge {
       // Retry on transient connection errors (ECONNRESET, ECONNREFUSED)
       let completion = null
 
-      // Trim context if it's getting too large — keep input under ~24K tokens
+      // Compress context if it's getting too large — keep input under ~24K tokens
       // to leave room for the model's output (Qwen 3 supports 32K+ native context,
       // Qwen 3.6 supports 1M, but local inference slows dramatically with huge prompts)
       const MAX_INPUT_TOKENS = 24000
       if (estimateMessagesTokens(messages) > MAX_INPUT_TOKENS) {
         const before = messages.length
-        const trimmed = trimMessages(messages, MAX_INPUT_TOKENS)
-        messages.length = 0
-        messages.push(...trimmed)
-        if (messages.length < before) {
-          this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Trimmed context: ${before} → ${messages.length} messages (~${estimateMessagesTokens(messages)} tokens)` })
+        try {
+          const result = await compactor.compressMessages(pythonPath, messages, { dedup: true, keepRecent: 4 })
+          if (result && result.messages) {
+            messages.length = 0
+            messages.push(...result.messages)
+            // Emit compaction stats
+            if (result.stats) {
+              this.send('qwen-event', { type: 'compaction-stats', data: result.stats })
+            }
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Compressed context: ${before} → ${messages.length} messages (~${estimateMessagesTokens(messages)} tokens, engine: ${result.stats?.engine || 'unknown'})` })
+          }
+        } catch (compactErr) {
+          // Compactor failed entirely — fall back to trimMessages
+          this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Compactor error: ${compactErr.message}, falling back to trimMessages` })
+          const trimmed = trimMessages(messages, MAX_INPUT_TOKENS)
+          messages.length = 0
+          messages.push(...trimmed)
+        }
+        // Secondary fallback: if compactor result still exceeds MAX_INPUT_TOKENS, trim
+        if (estimateMessagesTokens(messages) > MAX_INPUT_TOKENS) {
+          const trimmed = trimMessages(messages, MAX_INPUT_TOKENS)
+          messages.length = 0
+          messages.push(...trimmed)
+          this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Post-compaction trim: ${before} → ${messages.length} messages (~${estimateMessagesTokens(messages)} tokens)` })
         }
       }
 
@@ -2049,4 +2103,4 @@ ${autoEdit ? '\nYou are in auto-edit mode. Proceed with changes without asking f
   }
 }
 
-module.exports = { DirectBridge, WindowSink, CallbackSink, WorkerSink, executeTool, getToolDefs, LSP_TOOL_SETS, LSP_TOOL_DEFS, buildProjectContext, detectEntryPoints, formatSymbolOutline }
+module.exports = { DirectBridge, WindowSink, CallbackSink, WorkerSink, executeTool, getToolDefs, LSP_TOOL_SETS, LSP_TOOL_DEFS, buildProjectContext, detectEntryPoints, formatSymbolOutline, detectContentType }
