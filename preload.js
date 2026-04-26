@@ -110,6 +110,12 @@ contextBridge.exposeInMainWorld('app', {
   specConfig:       (d)     => ipcRenderer.invoke('spec-config', d),
   specList:         ()      => ipcRenderer.invoke('spec-list'),
 
+  // LSP
+  lspStatus:         ()     => ipcRenderer.invoke('lsp-status'),
+  lspSymbols:        (p)    => ipcRenderer.invoke('lsp-symbols', p),
+  onLspStatusChange: (cb)   => ipcRenderer.on('lsp-status-change', (_, d) => cb(d)),
+  offLspStatusChange:()     => ipcRenderer.removeAllListeners('lsp-status-change'),
+
   // events
   onTaskStatusEvent:(cb)    => ipcRenderer.on('task-status-event', (_, d) => cb(d)),
   onOrchestratorEvent:(cb)  => ipcRenderer.on('orchestrator-agent-event', (_, d) => cb(d)),

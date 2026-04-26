@@ -120,6 +120,211 @@ const TOOL_DEFS = [
   ...WEB_TOOL_DEFS,
 ]
 
+// ── LSP tool definitions (same shape as TOOL_DEFS entries) ────────────────────
+
+const LSP_TOOL_DEFS = {
+  lsp_get_document_symbols: {
+    type: 'function',
+    function: {
+      name: 'lsp_get_document_symbols',
+      description: 'Get document symbols (functions, classes, variables) for a file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'File path to get symbols for' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  lsp_get_hover: {
+    type: 'function',
+    function: {
+      name: 'lsp_get_hover',
+      description: 'Get hover information (type, documentation) for a symbol at a position.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'File path' },
+          line: { type: 'number', description: 'Line number (0-indexed)' },
+          character: { type: 'number', description: 'Character offset (0-indexed)' },
+        },
+        required: ['path', 'line', 'character'],
+      },
+    },
+  },
+  lsp_get_definition: {
+    type: 'function',
+    function: {
+      name: 'lsp_get_definition',
+      description: 'Go to definition of a symbol at a position.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'File path' },
+          line: { type: 'number', description: 'Line number (0-indexed)' },
+          character: { type: 'number', description: 'Character offset (0-indexed)' },
+        },
+        required: ['path', 'line', 'character'],
+      },
+    },
+  },
+  lsp_get_references: {
+    type: 'function',
+    function: {
+      name: 'lsp_get_references',
+      description: 'Find all references to a symbol at a position.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'File path' },
+          line: { type: 'number', description: 'Line number (0-indexed)' },
+          character: { type: 'number', description: 'Character offset (0-indexed)' },
+        },
+        required: ['path', 'line', 'character'],
+      },
+    },
+  },
+  lsp_get_call_hierarchy: {
+    type: 'function',
+    function: {
+      name: 'lsp_get_call_hierarchy',
+      description: 'Get incoming and outgoing calls for a symbol at a position.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'File path' },
+          line: { type: 'number', description: 'Line number (0-indexed)' },
+          character: { type: 'number', description: 'Character offset (0-indexed)' },
+        },
+        required: ['path', 'line', 'character'],
+      },
+    },
+  },
+  lsp_get_type_definition: {
+    type: 'function',
+    function: {
+      name: 'lsp_get_type_definition',
+      description: 'Go to type definition of a symbol at a position.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'File path' },
+          line: { type: 'number', description: 'Line number (0-indexed)' },
+          character: { type: 'number', description: 'Character offset (0-indexed)' },
+        },
+        required: ['path', 'line', 'character'],
+      },
+    },
+  },
+  lsp_workspace_symbol: {
+    type: 'function',
+    function: {
+      name: 'lsp_workspace_symbol',
+      description: 'Search for symbols across the workspace by name.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Symbol name or pattern to search for' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  lsp_simulate_edit_atomic: {
+    type: 'function',
+    function: {
+      name: 'lsp_simulate_edit_atomic',
+      description: 'Simulate a file edit in memory and report diagnostic changes without writing to disk.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'File path to simulate editing' },
+          content: { type: 'string', description: 'New file content to simulate' },
+        },
+        required: ['path', 'content'],
+      },
+    },
+  },
+  lsp_get_diagnostics: {
+    type: 'function',
+    function: {
+      name: 'lsp_get_diagnostics',
+      description: 'Get current diagnostics (errors, warnings) for a file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'File path to get diagnostics for' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  lsp_get_change_impact: {
+    type: 'function',
+    function: {
+      name: 'lsp_get_change_impact',
+      description: 'Analyze the blast radius of changes to a symbol — which files and symbols are affected.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'File path containing the symbol' },
+          line: { type: 'number', description: 'Line number (0-indexed)' },
+          character: { type: 'number', description: 'Character offset (0-indexed)' },
+        },
+        required: ['path', 'line', 'character'],
+      },
+    },
+  },
+  lsp_apply_code_action: {
+    type: 'function',
+    function: {
+      name: 'lsp_apply_code_action',
+      description: 'Apply a code action (quick fix, refactoring) suggested by the language server.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'File path' },
+          line: { type: 'number', description: 'Line number (0-indexed)' },
+          character: { type: 'number', description: 'Character offset (0-indexed)' },
+          actionTitle: { type: 'string', description: 'Title of the code action to apply' },
+        },
+        required: ['path', 'line', 'character', 'actionTitle'],
+      },
+    },
+  },
+}
+
+// ── Role-to-LSP-tool mapping ──────────────────────────────────────────────────
+
+const LSP_TOOL_SETS = {
+  'explore': ['lsp_get_document_symbols', 'lsp_get_hover', 'lsp_get_definition', 'lsp_get_references', 'lsp_get_call_hierarchy'],
+  'context-gather': ['lsp_get_document_symbols', 'lsp_get_definition', 'lsp_get_references', 'lsp_get_type_definition'],
+  'code-search': ['lsp_get_document_symbols', 'lsp_get_references', 'lsp_workspace_symbol', 'lsp_get_call_hierarchy'],
+  'implementation': ['lsp_simulate_edit_atomic', 'lsp_get_diagnostics', 'lsp_get_definition', 'lsp_get_references', 'lsp_get_change_impact', 'lsp_apply_code_action'],
+  'general': ['lsp_simulate_edit_atomic', 'lsp_get_diagnostics', 'lsp_get_definition', 'lsp_get_references', 'lsp_get_change_impact', 'lsp_apply_code_action'],
+}
+
+/**
+ * Build the tool definitions array, merging built-in TOOL_DEFS with
+ * role-specific LSP tools when the LSP manager is ready.
+ * @param {object|null} lspManager
+ * @param {string} agentRole
+ * @returns {object[]}
+ */
+function getToolDefs(lspManager, agentRole) {
+  const tools = [...TOOL_DEFS]
+  if (lspManager?.getStatus().status === 'ready') {
+    const toolNames = LSP_TOOL_SETS[agentRole] || []
+    for (const name of toolNames) {
+      if (LSP_TOOL_DEFS[name]) {
+        tools.push(LSP_TOOL_DEFS[name])
+      }
+    }
+  }
+  return tools
+}
+
 // ── Context window management ─────────────────────────────────────────────────
 
 /**
@@ -162,11 +367,82 @@ function buildFileTree(dir, maxDepth = 3) {
 }
 
 /**
+ * Detect entry-point files in a project directory.
+ * Checks package.json main field, then looks for common entry-point filenames.
+ * Returns an array of absolute file paths (up to 10).
+ */
+function detectEntryPoints(cwd) {
+  const entries = []
+  const seen = new Set()
+
+  function addIfExists(filePath) {
+    const abs = path.resolve(cwd, filePath)
+    if (!seen.has(abs)) {
+      try {
+        if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
+          seen.add(abs)
+          entries.push(abs)
+        }
+      } catch { /* skip */ }
+    }
+  }
+
+  // 1. Check package.json main field
+  try {
+    const pkgPath = path.join(cwd, 'package.json')
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+      if (pkg.main && typeof pkg.main === 'string') {
+        addIfExists(pkg.main)
+      }
+    }
+  } catch { /* skip */ }
+
+  // 2. Check common entry-point filenames
+  const candidates = [
+    'index.js', 'index.ts', 'main.js', 'main.ts', 'app.js', 'app.ts',
+    'src/index.js', 'src/index.ts', 'src/main.js', 'src/main.ts', 'src/app.js', 'src/app.ts',
+  ]
+  for (const c of candidates) {
+    if (entries.length >= 10) break
+    addIfExists(c)
+  }
+
+  return entries.slice(0, 10)
+}
+
+/**
+ * Format an array of LSP document symbols into a compact outline string.
+ * Each symbol is rendered as "kind: name" on its own line.
+ */
+function formatSymbolOutline(symbols) {
+  if (!Array.isArray(symbols) || symbols.length === 0) return ''
+  const lines = []
+  for (const sym of symbols) {
+    const kind = sym.kind || 'symbol'
+    const name = sym.name || '?'
+    lines.push(`- ${kind}: ${name}`)
+    // Include direct children if present
+    if (Array.isArray(sym.children)) {
+      for (const child of sym.children) {
+        const ck = child.kind || 'symbol'
+        const cn = child.name || '?'
+        lines.push(`  - ${ck}: ${cn}`)
+      }
+    }
+  }
+  return lines.join('\n')
+}
+
+/**
  * Build a compact project context string from the file tree and task graph.
  * This replaces the full conversation transcript for resumed sessions,
  * giving the agent awareness of what exists without the token cost.
+ *
+ * When an lspManager is provided and ready, symbol outlines for entry-point
+ * files are included for richer semantic context.
  */
-function buildProjectContext(cwd, taskGraphPath) {
+async function buildProjectContext(cwd, taskGraphPath, lspManager) {
   const parts = []
 
   // 1. File tree
@@ -188,7 +464,32 @@ function buildProjectContext(cwd, taskGraphPath) {
     } catch { /* task file may not exist */ }
   }
 
-  return parts.length > 0 ? parts.join('\n\n') : ''
+  // 3. Symbol outlines for entry-point files (when LSP is ready)
+  if (lspManager?.getStatus().status === 'ready') {
+    const entryFiles = detectEntryPoints(cwd)
+    const symbolParts = []
+    for (const file of entryFiles.slice(0, 10)) {
+      try {
+        const symbols = await lspManager.call('lsp_get_document_symbols', { path: file })
+        if (Array.isArray(symbols) && symbols.length > 0) {
+          const outline = formatSymbolOutline(symbols)
+          if (outline) {
+            symbolParts.push(`### ${path.relative(cwd, file)}\n${outline}`)
+          }
+        }
+      } catch { /* skip file */ }
+    }
+    if (symbolParts.length > 0) {
+      parts.push(`## Symbol Outlines\n${symbolParts.join('\n')}`)
+    }
+  }
+
+  // Cap total to 4000 chars
+  let combined = parts.length > 0 ? parts.join('\n\n') : ''
+  if (combined.length > 4000) {
+    combined = combined.slice(0, 4000) + '\n... [truncated]'
+  }
+  return combined
 }
 
 /**
@@ -443,7 +744,7 @@ function extractEditFileArgs(raw) {
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
-async function executeTool(name, args, cwd, browserInstance) {
+async function executeTool(name, args, cwd, browserInstance, lspManager) {
   // Route web_* tools to the web tools module
   if (name === 'web_search' || name === 'web_fetch') {
     const apiKeys = getApiKeys()
@@ -453,6 +754,23 @@ async function executeTool(name, args, cwd, browserInstance) {
   // Route browser_* tools to the playwright instance
   if (name.startsWith('browser_') && browserInstance) {
     return browserInstance.execute(name, args)
+  }
+
+  // Route lsp_* tools to the LSP manager
+  if (name.startsWith('lsp_') && lspManager) {
+    const lspStatus = lspManager.getStatus().status
+    if (lspStatus !== 'ready' && lspStatus !== 'degraded') {
+      return { error: 'LSP not available. Use built-in tools instead.' }
+    }
+    try {
+      const result = await Promise.race([
+        lspManager.call(name, args),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('LSP tool timed out (30s)')), 30000))
+      ])
+      return { result: JSON.stringify(result) }
+    } catch (err) {
+      return { error: `LSP tool error: ${err.message}. Try using built-in alternatives.` }
+    }
   }
 
   // ── path validation: prevent traversal outside the working directory ──
@@ -583,11 +901,17 @@ function streamSSE(url, body) {
 // ── DirectBridge ──────────────────────────────────────────────────────────────
 
 class DirectBridge {
-  constructor(sink) {
+  constructor(sink, opts = {}) {
     this.sink = sink
     this._aborted = false
     this._activeReq = null
     this._browserInstance = null
+    this._lspManager = opts.lspManager || null
+    this._agentRole = opts.agentRole || 'general'
+  }
+
+  setLspManager(lspManager) {
+    this._lspManager = lspManager
   }
 
   send(channel, data) {
@@ -654,7 +978,7 @@ class DirectBridge {
       if (estimatedHistoryTokens > 6000) {
         // Large history — use file tree + task graph instead of full transcript.
         // Keep only the last 2 exchanges for immediate conversational context.
-        const projectCtx = buildProjectContext(workDir, taskGraphPath)
+        const projectCtx = await buildProjectContext(workDir, taskGraphPath, this._lspManager)
         const recentHistory = conversationHistory.slice(-4)
         const recentTranscript = recentHistory.map(m => {
           const role = m.role === 'user' ? 'User' : 'Assistant'
@@ -955,10 +1279,53 @@ class DirectBridge {
         // Emit tool-use event
         this.send('qwen-event', { type: 'tool-use', id: tc.id, name: fnName, input: fnArgs })
 
+        // Speculative edit hook: simulate write_file before executing it
+        let speculativeMsg = ''
+        if (fnName === 'write_file' && this._lspManager?.getStatus().status === 'ready') {
+          try {
+            const simResult = await Promise.race([
+              this._lspManager.call('lsp_simulate_edit_atomic', { path: fnArgs.path, content: fnArgs.content }),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('speculative edit timed out')), 10000))
+            ])
+            if (simResult?.newDiagnostics?.length > 0) {
+              const diagLines = simResult.newDiagnostics.map(d => `  ${d.severity || 'error'}: ${d.message} (line ${d.line || '?'})`).join('\n')
+              speculativeMsg = `⚠️ Speculative edit preview found new diagnostics:\n${diagLines}\n\n`
+            } else {
+              speculativeMsg = '✅ Speculative edit validation passed — no new errors detected.\n\n'
+            }
+          } catch {
+            // On failure/timeout, skip speculative check and proceed normally
+          }
+        }
+
         // Execute
-        const result = await executeTool(fnName, fnArgs, cwd, this._browserInstance)
+        const result = await executeTool(fnName, fnArgs, cwd, this._browserInstance, this._lspManager)
         const isError = !!result.error
         let content = result.error || result.result
+
+        // Prepend speculative edit message if available
+        if (speculativeMsg && content) {
+          content = speculativeMsg + content
+        }
+
+        // Post-edit diagnostic hook: check for errors after write_file/edit_file
+        if ((fnName === 'write_file' || fnName === 'edit_file') && !isError && this._lspManager?.getStatus().status === 'ready') {
+          try {
+            const diags = await Promise.race([
+              this._lspManager.call('lsp_get_diagnostics', { path: fnArgs.path }),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('diagnostic timeout')), 10000))
+            ])
+            if (diags?.errors?.length > 0) {
+              const errorDiags = diags.errors.filter(d => d.severity === 'error')
+              if (errorDiags.length > 0) {
+                const diagLines = errorDiags.map(d => `  ${d.severity || 'error'}: ${d.message} (line ${d.line || '?'})`).join('\n')
+                content = `⚠️ Edit introduced errors:\n${diagLines}\n\n${content}`
+              }
+            }
+          } catch {
+            // On failure/timeout, skip diagnostics silently
+          }
+        }
 
         // Truncate large tool outputs to avoid blowing up the context window.
         // For local models, keep outputs lean to preserve generation quality.
@@ -1065,7 +1432,7 @@ class DirectBridge {
       const body = {
         model: model || 'default',
         messages,
-        tools: TOOL_DEFS,
+        tools: getToolDefs(this._lspManager, this._agentRole),
         stream: true,
         max_tokens: 16384,
       }
@@ -1285,4 +1652,4 @@ ${autoEdit ? '\nYou are in auto-edit mode. Proceed with changes without asking f
   }
 }
 
-module.exports = { DirectBridge, WindowSink, CallbackSink, WorkerSink }
+module.exports = { DirectBridge, WindowSink, CallbackSink, WorkerSink, executeTool, getToolDefs, LSP_TOOL_SETS, LSP_TOOL_DEFS, buildProjectContext, detectEntryPoints, formatSymbolOutline }

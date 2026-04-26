@@ -1,0 +1,1994 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Zoom Video Editor</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root {
+  --bg: #111118; --bg2: #1a1a2e; --bg3: #22223a; --bgc: #1e1e32;
+  --bdr: rgba(255,255,255,.08); --txt: #e2e8f0; --txt2: #8892a4;
+  --txt3: #5a6478; --acc: #4a9eff; --accg: rgba(74,158,255,.12);
+  --grn: #48bb78; --pur: #7c5cd0; --red: #f56565; --org: #ed8936;
+  --r: 14px; --rs: 10px; --rx: 6px;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg); color: var(--txt); min-height: 100vh;
+  -webkit-font-smoothing: antialiased; overflow-x: hidden;
+  padding: 0 0 env(safe-area-inset-bottom, 0);
+}
+a { color: var(--acc); text-decoration: none; }
+
+/* ── Header ─────────────────────────────────────────── */
+.header {
+  position: sticky; top: 0; z-index: 100;
+  background: linear-gradient(180deg, var(--bg2) 0%, rgba(26,26,46,.95) 100%);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--bdr); padding: 16px 16px 12px;
+}
+.header-top { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+.header-logo {
+  width:36px; height:36px; border-radius:10px;
+  background: linear-gradient(135deg, var(--pur), var(--acc));
+  display:flex; align-items:center; justify-content:center;
+  font-size:18px; flex-shrink:0;
+}
+.header-title { font-size:17px; font-weight:700; flex:1; }
+.header-subtitle { font-size:12px; color:var(--txt2); margin-top:1px; }
+.header-status {
+  font-size:10px; padding:3px 8px; border-radius:20px; font-weight:600;
+  background: rgba(72,187,120,.12); color: var(--grn); border:1px solid rgba(72,187,120,.2);
+}
+
+/* ── Tabs ────────────────────────────────────────────── */
+.tabs { display:flex; gap:3px; }
+.tab {
+  flex:1; padding:7px 0; text-align:center; font-size:11px; font-weight:600;
+  color:var(--txt3); background:transparent; border:none; border-radius:var(--rx);
+  cursor:pointer; transition:all .2s; white-space:nowrap;
+}
+.tab.active { background:var(--bg3); color:var(--txt); }
+.tab:active { transform:scale(.97); }
+
+/* ── Content ─────────────────────────────────────────── */
+.content { padding:12px 16px 24px; }
+.empty-state { text-align:center; padding:40px 24px; color:var(--txt3); }
+.empty-icon { font-size:40px; margin-bottom:10px; opacity:.6; }
+.empty-title { font-size:15px; font-weight:600; color:var(--txt2); margin-bottom:6px; }
+.empty-desc { font-size:13px; line-height:1.5; }
+</style>
+<style>
+/* ── Create Tab ──────────────────────────────────────── */
+.create-section { margin-bottom:16px; }
+.create-label {
+  font-size:11px; font-weight:700; text-transform:uppercase;
+  letter-spacing:.8px; color:var(--txt3); margin-bottom:8px;
+}
+.prompt-input {
+  width:100%; min-height:80px; padding:12px; border-radius:var(--rs);
+  background:var(--bgc); border:1px solid var(--bdr); color:var(--txt);
+  font-size:14px; font-family:inherit; resize:vertical; outline:none;
+  transition:border-color .2s;
+}
+.prompt-input:focus { border-color:var(--acc); }
+.prompt-input::placeholder { color:var(--txt3); }
+
+.option-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+.option-chip {
+  padding:6px 12px; border-radius:20px; font-size:12px; font-weight:600;
+  background:var(--bgc); border:1px solid var(--bdr); color:var(--txt2);
+  cursor:pointer; transition:all .2s; white-space:nowrap;
+}
+.option-chip.active { background:var(--accg); border-color:var(--acc); color:var(--acc); }
+.option-chip:active { transform:scale(.95); }
+
+.btn-primary {
+  width:100%; padding:14px; border:none; border-radius:var(--rs);
+  background:linear-gradient(135deg, var(--pur), var(--acc));
+  color:#fff; font-size:15px; font-weight:700; cursor:pointer;
+  transition:all .2s; margin-top:8px;
+}
+.btn-primary:active { transform:scale(.98); opacity:.9; }
+.btn-primary:disabled { opacity:.5; cursor:not-allowed; }
+
+.btn-secondary {
+  width:100%; padding:10px; border:1px solid var(--bdr); border-radius:var(--rs);
+  background:var(--bgc); color:var(--txt2); font-size:13px; font-weight:600;
+  cursor:pointer; transition:all .2s; margin-top:8px;
+}
+.btn-secondary:active { transform:scale(.98); }
+
+/* ── Chat Tab ────────────────────────────────────────── */
+.chat-container { display:flex; flex-direction:column; height:calc(100vh - 185px); }
+.chat-messages {
+  flex:1; overflow-y:auto; padding-bottom:12px;
+  -webkit-overflow-scrolling:touch;
+}
+.chat-messages::-webkit-scrollbar { width:4px; }
+.chat-messages::-webkit-scrollbar-thumb { background:var(--bg3); border-radius:2px; }
+
+.msg { margin-bottom:10px; display:flex; }
+.msg.user { justify-content:flex-end; }
+.msg.assistant { justify-content:flex-start; }
+.msg-bubble {
+  max-width:85%; padding:10px 14px; border-radius:16px;
+  font-size:13px; line-height:1.5; word-break:break-word;
+}
+.msg.user .msg-bubble {
+  background:linear-gradient(135deg, var(--pur), var(--acc));
+  color:#fff; border-bottom-right-radius:4px;
+}
+.msg.assistant .msg-bubble {
+  background:var(--bgc); border:1px solid var(--bdr);
+  color:var(--txt); border-bottom-left-radius:4px;
+  max-width:95%;
+}
+
+.chat-input-row {
+  display:flex; gap:8px; padding-top:10px;
+  border-top:1px solid var(--bdr);
+}
+.chat-input {
+  flex:1; padding:10px 14px; border-radius:20px;
+  background:var(--bgc); border:1px solid var(--bdr); color:var(--txt);
+  font-size:14px; font-family:inherit; outline:none;
+}
+.chat-input:focus { border-color:var(--acc); }
+.chat-input::placeholder { color:var(--txt3); }
+.chat-send {
+  width:40px; height:40px; border-radius:50%; border:none;
+  background:linear-gradient(135deg, var(--pur), var(--acc));
+  color:#fff; font-size:16px; cursor:pointer; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+}
+.chat-send:disabled { opacity:.4; cursor:not-allowed; }
+
+/* ── Scene cards in chat ─────────────────────────────── */
+.scene-inline { margin-top:8px; }
+.scene-card-mini {
+  background:var(--bg3); border:1px solid var(--bdr); border-radius:var(--rx);
+  padding:8px 10px; margin-bottom:6px;
+}
+.scene-card-mini-title { font-size:12px; font-weight:700; color:var(--acc); }
+.scene-card-mini-mood { font-size:10px; color:var(--txt3); margin-left:6px; }
+.scene-card-mini-prompt { font-size:11px; color:var(--txt2); margin-top:3px; line-height:1.4; }
+.scene-card-mini-shots { font-size:10px; color:var(--txt3); margin-top:4px; }
+
+/* ── Shot list inside chat scene cards ───────────────── */
+.scene-shots-list { margin-top:8px; display:flex; flex-direction:column; gap:6px; }
+.scene-shot-item {
+  background:rgba(0,0,0,.2); border-radius:4px; padding:6px 8px;
+  border-left:2px solid var(--pur);
+}
+.scene-shot-header {
+  display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:2px;
+}
+.scene-shot-num {
+  font-size:10px; font-weight:700; color:var(--acc);
+}
+.scene-shot-type {
+  font-size:10px; color:var(--txt2); background:rgba(255,255,255,.06);
+  padding:1px 5px; border-radius:3px;
+}
+.scene-shot-cam { font-size:9px; color:var(--txt3); }
+.scene-shot-dur { font-size:9px; color:var(--org); }
+.scene-shot-trans { font-size:9px; color:var(--pur); }
+.scene-shot-prompt {
+  font-size:11px; color:var(--txt2); line-height:1.4; margin-top:2px;
+}
+.shot-prompt-line {
+  font-size:10px; color:var(--txt2); line-height:1.3; margin-top:2px;
+  overflow:hidden; text-overflow:ellipsis;
+}
+.shot-video-prompt { color:#6a9; border-left:2px solid #6a9; padding-left:4px; }
+.shot-dialogue { color:#a96; font-style:italic; }
+
+/* ── Characters Tab ──────────────────────────────────── */
+.char-form { margin-bottom:16px; }
+.char-input {
+  width:100%; padding:10px 12px; border-radius:var(--rx);
+  background:var(--bgc); border:1px solid var(--bdr); color:var(--txt);
+  font-size:13px; font-family:inherit; outline:none; margin-bottom:8px;
+}
+.char-input:focus { border-color:var(--acc); }
+.char-input::placeholder { color:var(--txt3); }
+
+.char-list { display:flex; flex-direction:column; gap:10px; }
+.char-item {
+  display:flex; align-items:center; gap:10px; padding:10px 12px;
+  background:var(--bgc); border:1px solid var(--bdr); border-radius:var(--rs);
+}
+.char-avatar {
+  width:48px; height:48px; border-radius:50%; flex-shrink:0;
+  border:2px solid var(--bdr); overflow:hidden; background:var(--bg3);
+  display:flex; align-items:center; justify-content:center;
+}
+.char-avatar img { width:100%; height:100%; object-fit:cover; }
+.char-avatar-empty { font-size:20px; color:var(--txt3); }
+.char-info { flex:1; min-width:0; }
+.char-name { font-size:13px; font-weight:700; }
+.char-role-tag {
+  font-size:10px; color:var(--pur); background:rgba(124,92,208,.12);
+  padding:1px 6px; border-radius:8px; margin-left:6px;
+}
+.char-desc { font-size:11px; color:var(--txt2); margin-top:2px;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.char-enriched { font-size:9px; color:var(--grn); }
+
+/* ── Project Cards ───────────────────────────────────── */
+.projects { display:flex; flex-direction:column; gap:12px; }
+.project-card {
+  background:var(--bgc); border:1px solid var(--bdr); border-radius:var(--r);
+  overflow:hidden; cursor:pointer; transition:all .2s;
+}
+.project-card:active { transform:scale(.98); opacity:.9; }
+.project-thumb {
+  width:100%; aspect-ratio:16/9; object-fit:cover; background:var(--bg3);
+  display:flex; align-items:center; justify-content:center;
+}
+.project-thumb img { width:100%; height:100%; object-fit:cover; }
+.project-thumb-empty { color:var(--txt3); font-size:32px; }
+.project-info { padding:12px; }
+.project-prompt {
+  font-size:14px; font-weight:600; line-height:1.4;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  overflow:hidden; margin-bottom:6px;
+}
+.project-meta { display:flex; gap:12px; font-size:11px; color:var(--txt2); flex-wrap:wrap; }
+.project-meta-item { display:flex; align-items:center; gap:3px; }
+
+/* ── Detail view ─────────────────────────────────────── */
+.detail-back {
+  display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600;
+  color:var(--acc); background:none; border:none; cursor:pointer; padding:0 0 12px;
+}
+.detail-prompt { font-size:16px; font-weight:700; line-height:1.4; margin-bottom:4px; }
+.detail-meta { font-size:12px; color:var(--txt2); margin-bottom:16px; }
+.section-title {
+  font-size:11px; font-weight:700; text-transform:uppercase;
+  letter-spacing:.8px; color:var(--txt3); margin:16px 0 8px; padding-left:2px;
+}
+.scenes { display:flex; flex-direction:column; gap:10px; }
+.scene-card {
+  background:var(--bgc); border:1px solid var(--bdr); border-radius:var(--rs); overflow:hidden;
+}
+.scene-header {
+  display:flex; align-items:center; gap:8px; padding:10px 12px;
+  border-bottom:1px solid var(--bdr); cursor:pointer;
+}
+.scene-num {
+  width:24px; height:24px; border-radius:50%; font-size:11px; font-weight:700;
+  display:flex; align-items:center; justify-content:center;
+  background:linear-gradient(135deg,var(--pur),var(--acc)); color:#fff; flex-shrink:0;
+}
+.scene-title { font-size:13px; font-weight:600; flex:1; }
+.scene-mood { font-size:10px; color:var(--txt3); }
+.scene-chevron { color:var(--txt3); font-size:12px; transition:transform .2s; }
+.scene-chevron.open { transform:rotate(90deg); }
+.scene-body { padding:10px 12px; }
+.scene-desc { font-size:12px; color:var(--txt2); line-height:1.5; margin-bottom:10px; }
+.scene-prompt-label { font-size:10px; color:var(--txt3); text-transform:uppercase; letter-spacing:.5px; margin-bottom:3px; }
+.scene-prompt-text { font-size:11px; color:var(--acc); line-height:1.4; margin-bottom:10px; font-style:italic; }
+.shots-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(100px,1fr)); gap:8px; }
+.shot-card {
+  border-radius:var(--rx); overflow:hidden; border:1px solid var(--bdr);
+  background:var(--bg3); cursor:pointer; transition:all .2s;
+}
+.shot-card:active { transform:scale(.95); }
+.shot-img { width:100%; aspect-ratio:1; object-fit:cover; background:var(--bg); }
+.shot-img-empty {
+  width:100%; aspect-ratio:1; display:flex; align-items:center; justify-content:center;
+  color:var(--txt3); font-size:20px; background:var(--bg);
+}
+.shot-label { padding:4px 6px; font-size:9px; color:var(--txt2); text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* ── Detail characters ───────────────────────────────── */
+.chars-row { display:flex; gap:10px; overflow-x:auto; padding:4px 0 8px; -webkit-overflow-scrolling:touch; }
+.chars-row::-webkit-scrollbar { display:none; }
+.char-card-sm { flex-shrink:0; width:72px; text-align:center; }
+.char-card-sm .char-avatar { width:56px; height:56px; margin:0 auto 4px; }
+.char-card-sm .char-name { font-size:10px; }
+
+/* ── Staged Videos ───────────────────────────────────── */
+.staged-list { display:flex; flex-direction:column; gap:8px; }
+.staged-item {
+  display:flex; align-items:center; gap:10px; padding:10px 12px;
+  background:var(--bgc); border:1px solid var(--bdr); border-radius:var(--rs);
+}
+.staged-icon { font-size:20px; flex-shrink:0; }
+.staged-info { flex:1; min-width:0; }
+.staged-name { font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.staged-detail { font-size:11px; color:var(--txt2); }
+.staged-badge {
+  font-size:9px; font-weight:700; padding:2px 7px; border-radius:10px;
+  text-transform:uppercase; letter-spacing:.5px;
+}
+.staged-badge.primary { background:rgba(74,158,255,.12); color:var(--acc); }
+.staged-badge.broll { background:rgba(237,137,54,.12); color:var(--org); }
+
+/* ── Lightbox ────────────────────────────────────────── */
+.lightbox {
+  position:fixed; inset:0; z-index:200; background:rgba(0,0,0,.92);
+  display:flex; align-items:center; justify-content:center;
+  opacity:0; pointer-events:none; transition:opacity .25s;
+}
+.lightbox.open { opacity:1; pointer-events:auto; }
+.lightbox img, .lightbox video { max-width:95vw; max-height:85vh; border-radius:var(--rs); object-fit:contain; }
+.lightbox-close {
+  position:absolute; top:16px; right:16px; width:36px; height:36px;
+  border-radius:50%; background:rgba(255,255,255,.15); border:none;
+  color:#fff; font-size:18px; cursor:pointer; display:flex;
+  align-items:center; justify-content:center;
+}
+
+/* ── Project Bar ──────────────────────────────────────── */
+.project-bar {
+  display:flex; align-items:center; gap:8px;
+  padding:8px 16px; background:rgba(124,92,208,.08);
+  border-bottom:1px solid rgba(124,92,208,.18);
+}
+.project-bar-icon {
+  width:28px; height:28px; border-radius:8px; flex-shrink:0;
+  background:linear-gradient(135deg, var(--pur), var(--acc));
+  display:flex; align-items:center; justify-content:center;
+  font-size:13px;
+}
+.project-bar-info { flex:1; min-width:0; }
+.project-bar-name {
+  font-size:12px; font-weight:700; color:var(--txt);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.project-bar-meta {
+  font-size:10px; color:var(--txt2); display:flex; gap:8px; margin-top:1px;
+}
+.project-bar-meta span { white-space:nowrap; }
+.project-bar-new {
+  padding:4px 10px; border-radius:14px; border:1px solid rgba(124,92,208,.3);
+  background:transparent; color:var(--pur); font-size:10px; font-weight:700;
+  cursor:pointer; white-space:nowrap; transition:all .2s;
+}
+.project-bar-new:active { transform:scale(.95); background:rgba(124,92,208,.12); }
+
+/* ── Loading / Spinner ───────────────────────────────── */
+.spinner {
+  width:32px; height:32px; border:3px solid var(--bg3);
+  border-top-color:var(--acc); border-radius:50%;
+  animation:spin .8s linear infinite; margin:24px auto;
+}
+@keyframes spin { to { transform:rotate(360deg); } }
+.loading-text { text-align:center; font-size:13px; color:var(--txt2); }
+.typing-dots { display:inline-flex; gap:3px; padding:4px 0; }
+.typing-dots span {
+  width:6px; height:6px; border-radius:50%; background:var(--txt3);
+  animation:blink 1.4s infinite both;
+}
+.typing-dots span:nth-child(2) { animation-delay:.2s; }
+.typing-dots span:nth-child(3) { animation-delay:.4s; }
+@keyframes blink { 0%,80%,100%{opacity:.3} 40%{opacity:1} }
+
+/* ── Style picker grid ───────────────────────────────── */
+.style-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:12px; }
+.style-card {
+  padding:8px 10px; border-radius:var(--rx); background:var(--bgc);
+  border:1px solid var(--bdr); cursor:pointer; transition:all .2s; text-align:center;
+}
+.style-card.active { border-color:var(--acc); background:var(--accg); }
+.style-card:active { transform:scale(.97); }
+.style-card-icon { font-size:18px; }
+.style-card-name { font-size:10px; font-weight:600; color:var(--txt2); margin-top:2px; }
+
+/* ── Info banner ─────────────────────────────────────── */
+.info-banner {
+  padding:10px 12px; border-radius:var(--rx); margin-bottom:12px;
+  font-size:12px; line-height:1.5;
+}
+.info-banner.success { background:rgba(72,187,120,.1); color:var(--grn); border:1px solid rgba(72,187,120,.2); }
+.info-banner.error { background:rgba(245,101,101,.1); color:var(--red); border:1px solid rgba(245,101,101,.2); }
+.info-banner.info { background:var(--accg); color:var(--acc); border:1px solid rgba(74,158,255,.2); }
+
+/* ── Video Tab ───────────────────────────────────────── */
+.video-subtabs { display:flex; gap:3px; margin-bottom:12px; }
+.video-subtab {
+  flex:1; padding:6px 0; text-align:center; font-size:11px; font-weight:600;
+  color:var(--txt3); background:var(--bgc); border:1px solid var(--bdr);
+  border-radius:var(--rx); cursor:pointer; transition:all .2s;
+}
+.video-subtab.active { background:rgba(72,187,120,.12); border-color:var(--grn); color:var(--grn); }
+.video-gen-section { margin-bottom:14px; }
+.video-gen-label {
+  font-size:11px; font-weight:700; text-transform:uppercase;
+  letter-spacing:.8px; color:var(--txt3); margin-bottom:6px;
+}
+.video-ref-grid {
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(72px,1fr)); gap:6px;
+  max-height:180px; overflow-y:auto; -webkit-overflow-scrolling:touch;
+}
+.video-ref-item {
+  position:relative; border-radius:var(--rx); overflow:hidden;
+  border:2px solid transparent; cursor:pointer; transition:all .2s; aspect-ratio:1; background:var(--bg3);
+}
+.video-ref-item.selected { border-color:var(--grn); }
+.video-ref-item img { width:100%; height:100%; object-fit:cover; display:block; }
+.video-ref-check {
+  position:absolute; top:3px; right:3px; width:16px; height:16px;
+  border-radius:50%; background:var(--grn); display:flex;
+  align-items:center; justify-content:center; font-size:9px; color:#fff;
+  opacity:0; transition:opacity .15s;
+}
+.video-ref-item.selected .video-ref-check { opacity:1; }
+.video-ref-none {
+  padding:6px 10px; border-radius:var(--rx); font-size:11px;
+  color:var(--txt3); background:var(--bgc); border:1px dashed var(--bdr);
+  cursor:pointer; text-align:center; transition:all .2s;
+}
+.video-ref-none.selected { border-color:var(--grn); color:var(--grn); background:rgba(72,187,120,.08); }
+.video-dims-row { display:flex; gap:6px; flex-wrap:wrap; }
+.video-dim-chip {
+  padding:5px 10px; border-radius:14px; font-size:11px; font-weight:600;
+  background:var(--bgc); border:1px solid var(--bdr); color:var(--txt2);
+  cursor:pointer; transition:all .2s; white-space:nowrap;
+}
+.video-dim-chip.active { background:rgba(72,187,120,.12); border-color:var(--grn); color:var(--grn); }
+.video-frames-row { display:flex; align-items:center; gap:8px; }
+.video-frames-slider { flex:1; accent-color:var(--grn); }
+.video-frames-value { font-size:12px; font-weight:700; color:var(--grn); min-width:48px; text-align:right; }
+.video-progress {
+  padding:10px 12px; border-radius:var(--rx); margin-bottom:10px;
+  background:var(--bgc); border:1px solid var(--bdr);
+}
+.video-progress-msg { font-size:12px; color:var(--txt2); margin-bottom:6px; }
+.video-progress-bar { height:4px; border-radius:2px; background:var(--bg3); overflow:hidden; }
+.video-progress-fill {
+  height:100%; border-radius:2px; transition:width .4s;
+  background:linear-gradient(90deg, var(--grn), var(--acc));
+}
+.video-asset-list { display:flex; flex-direction:column; gap:10px; }
+.video-asset {
+  background:var(--bgc); border:1px solid var(--bdr); border-radius:var(--rs); overflow:hidden;
+}
+.video-asset-thumb {
+  width:100%; aspect-ratio:16/9; background:var(--bg3);
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer; position:relative; overflow:hidden;
+}
+.video-asset-thumb video { width:100%; height:100%; object-fit:cover; }
+.video-asset-thumb-empty { font-size:32px; color:var(--txt3); }
+.video-play-btn {
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  background:rgba(0,0,0,.25);
+}
+.video-play-icon {
+  width:44px; height:44px; border-radius:50%; background:rgba(255,255,255,.9);
+  display:flex; align-items:center; justify-content:center; font-size:18px;
+}
+.video-asset-info { padding:8px 12px; }
+.video-asset-prompt {
+  font-size:12px; font-weight:600; line-height:1.4;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; margin-bottom:4px;
+}
+.video-asset-meta { font-size:10px; color:var(--txt2); display:flex; gap:10px; flex-wrap:wrap; }
+
+/* ── Music Tab ───────────────────────────────────────── */
+.music-subtabs { display:flex; gap:3px; margin-bottom:12px; }
+.music-subtab {
+  flex:1; padding:6px 0; text-align:center; font-size:11px; font-weight:600;
+  color:var(--txt3); background:var(--bgc); border:1px solid var(--bdr);
+  border-radius:var(--rx); cursor:pointer; transition:all .2s;
+}
+.music-subtab.active { background:var(--accg); border-color:var(--acc); color:var(--acc); }
+
+.music-gen-section { margin-bottom:14px; }
+.music-gen-label {
+  font-size:11px; font-weight:700; text-transform:uppercase;
+  letter-spacing:.8px; color:var(--txt3); margin-bottom:6px;
+}
+.music-dur-row { display:flex; align-items:center; gap:8px; }
+.music-dur-slider { flex:1; accent-color:var(--acc); }
+.music-dur-value { font-size:12px; font-weight:700; color:var(--acc); min-width:36px; text-align:right; }
+
+.music-tags-input {
+  width:100%; padding:8px 12px; border-radius:var(--rx);
+  background:var(--bgc); border:1px solid var(--bdr); color:var(--txt);
+  font-size:12px; font-family:inherit; outline:none; margin-top:6px;
+}
+.music-tags-input:focus { border-color:var(--acc); }
+.music-tags-input::placeholder { color:var(--txt3); }
+
+.music-lyrics-input {
+  width:100%; min-height:80px; padding:8px 12px; border-radius:var(--rx);
+  background:var(--bgc); border:1px solid var(--bdr); color:var(--txt);
+  font-size:12px; font-family:inherit; outline:none; resize:vertical; margin-top:6px;
+}
+.music-lyrics-input:focus { border-color:var(--acc); }
+.music-lyrics-input::placeholder { color:var(--txt3); }
+
+.music-progress {
+  padding:10px 12px; border-radius:var(--rx); margin-bottom:10px;
+  background:var(--bgc); border:1px solid var(--bdr);
+}
+.music-progress-msg { font-size:12px; color:var(--txt2); margin-bottom:6px; }
+.music-progress-bar {
+  height:4px; border-radius:2px; background:var(--bg3); overflow:hidden;
+}
+.music-progress-fill {
+  height:100%; border-radius:2px; transition:width .3s;
+  background:linear-gradient(90deg, var(--pur), var(--acc));
+}
+
+.music-asset-list { display:flex; flex-direction:column; gap:8px; }
+.music-asset {
+  display:flex; align-items:center; gap:10px; padding:10px 12px;
+  background:var(--bgc); border:1px solid var(--bdr); border-radius:var(--rs);
+  flex-wrap:wrap;
+}
+.music-asset-play {
+  width:36px; height:36px; border-radius:50%; border:none; flex-shrink:0;
+  background:linear-gradient(135deg, var(--pur), var(--acc));
+  color:#fff; font-size:14px; cursor:pointer; display:flex;
+  align-items:center; justify-content:center; transition:all .2s;
+}
+.music-asset-play:active { transform:scale(.9); }
+.music-asset-info { flex:1; min-width:0; }
+.music-asset-prompt {
+  font-size:12px; font-weight:600; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis;
+}
+.music-asset-meta { font-size:10px; color:var(--txt2); margin-top:2px; }
+.music-asset-badge {
+  font-size:9px; font-weight:700; padding:2px 7px; border-radius:10px;
+  background:rgba(124,92,208,.12); color:var(--pur);
+}
+.music-scrub {
+  width:100%; height:10px; background:rgba(255,255,255,.06); border-radius:5px;
+  cursor:pointer; position:relative; margin-top:2px;
+}
+.music-scrub:active { background:rgba(255,255,255,.1); }
+.music-scrub-fill {
+  height:100%; background:linear-gradient(90deg, var(--pur), var(--acc));
+  border-radius:5px; pointer-events:none;
+}
+.music-scrub-thumb {
+  position:absolute; top:50%; width:14px; height:14px;
+  background:#fff; border-radius:50%; transform:translate(-50%,-50%);
+  box-shadow:0 0 6px rgba(0,0,0,.4); pointer-events:none;
+}
+
+/* ── Prompt Lab chat (music) ─────────────────────────── */
+.plab-container { display:flex; flex-direction:column; height:calc(100vh - 200px); }
+.plab-messages {
+  flex:1; overflow-y:auto; padding-bottom:12px;
+  -webkit-overflow-scrolling:touch;
+}
+.plab-messages::-webkit-scrollbar { width:4px; }
+.plab-messages::-webkit-scrollbar-thumb { background:var(--bg3); border-radius:2px; }
+.plab-apply-btn {
+  display:inline-block; margin-top:6px; padding:4px 10px; border-radius:12px;
+  background:linear-gradient(135deg, var(--pur), var(--acc));
+  color:#fff; font-size:10px; font-weight:700; border:none; cursor:pointer;
+}
+.plab-apply-btn:active { transform:scale(.95); }
+.plab-prompt-block {
+  margin-top:8px; padding:8px 10px; border-radius:var(--rx);
+  background:rgba(124,92,208,.08); border:1px solid rgba(124,92,208,.2);
+  font-size:11px; color:var(--txt2); white-space:pre-wrap; line-height:1.5;
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+  <button class="lightbox-close" onclick="closeLightbox()">✕</button>
+  <div id="lightbox-content"></div>
+</div>
+
+<script>
+'use strict';
+
+// ── Telegram Web App SDK ──────────────────────────────────
+const tg = window.Telegram?.WebApp;
+if (tg) {
+  tg.ready();
+  tg.expand();
+  tg.enableClosingConfirmation();
+  if (tg.themeParams?.bg_color) {
+    document.documentElement.style.setProperty('--bg', tg.themeParams.bg_color);
+  }
+}
+
+// ── State ─────────────────────────────────────────────────
+const S = {
+  tab: 'create',
+  loading: true,
+  projects: [],
+  staged: [],
+  styles: [],
+  session: null,
+  detail: null,
+  openScenes: {},
+  chatBusy: false,
+  banner: null, // {type:'success'|'error'|'info', text:'...'}
+  // Create tab state
+  createPrompt: '',
+  selectedStyle: '',
+  selectedWorkflow: 'fast-start',
+  selectedLength: 60,
+  // Video tab state
+  videoSubTab: 'generate', // 'generate' | 'library'
+  videoStatus: null,
+  videoLibrary: [],
+  imageLibrary: [],
+  videoPrompt: '',
+  videoNegPrompt: '',
+  videoSelectedImage: null, // file_path of selected reference image, or null
+  videoDims: '768x512',
+  videoFrames: 65,
+  videoSteps: 30,
+  videoGuidance: 3.5,
+  videoGenerating: false,
+  videoProgress: null,
+  // LLM state (shared by chat, music prompt lab, video prompt lab)
+  llmStatus: null,   // {running, endpoint, omlx_installed}
+  llmStarting: false,
+  // Music tab state
+  musicSubTab: 'generate', // 'generate' | 'promptlab' | 'library'
+  musicStatus: null,
+  musicLibrary: [],
+  musicPrompt: '',
+  musicTags: '',
+  musicLyrics: '',
+  musicDuration: 60,
+  musicInstrumental: true,
+  musicGenerating: false,
+  musicProgress: null,
+  musicPlabHistory: [],
+  musicPlabBusy: false,
+  musicPlayingId: null,
+  musicAudioEl: null,
+  musicPlayPct: 0,
+  musicRafId: null,
+};
+
+const API = window.location.origin;
+
+// ── Helpers ───────────────────────────────────────────────
+async function fetchJSON(path) {
+  const r = await fetch(API + path);
+  if (!r.ok) throw new Error(r.statusText);
+  return r.json();
+}
+async function postJSON(path, body) {
+  const r = await fetch(API + path, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  return r.json();
+}
+function mediaUrl(fp) { return fp ? API+'/media/'+encodeURIComponent(fp) : ''; }
+function esc(s) { const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
+function relTime(ds) {
+  const d=(Date.now()-new Date(ds).getTime())/1000;
+  if(d<60)return 'just now'; if(d<3600)return Math.floor(d/60)+'m ago';
+  if(d<86400)return Math.floor(d/3600)+'h ago';
+  const dd=Math.floor(d/86400);
+  if(dd===1)return 'Yesterday'; if(dd<7)return dd+'d ago';
+  return new Date(ds).toLocaleDateString();
+}
+function fmtDur(ms) { const s=Math.round(ms/1000); return s<60?s+'s':Math.floor(s/60)+'m '+(s%60)+'s'; }
+
+// ── Data loading ──────────────────────────────────────────
+async function loadAll() {
+  await Promise.all([
+    fetchJSON('/api/projects').then(p=>S.projects=p).catch(()=>S.projects=[]),
+    fetchJSON('/api/staged').then(v=>S.staged=v).catch(()=>S.staged=[]),
+    fetchJSON('/api/styles').then(st=>S.styles=st).catch(()=>S.styles=[]),
+    fetchJSON('/api/session').then(ss=>S.session=ss).catch(()=>S.session=null),
+    fetchJSON('/api/llm/status').then(ls=>S.llmStatus=ls).catch(()=>S.llmStatus=null),
+    fetchJSON('/api/video/status').then(vs=>S.videoStatus=vs).catch(()=>S.videoStatus=null),
+    fetchJSON('/api/video/library').then(vl=>S.videoLibrary=vl).catch(()=>S.videoLibrary=[]),
+    fetchJSON('/api/images').then(il=>S.imageLibrary=il).catch(()=>S.imageLibrary=[]),
+    fetchJSON('/api/music/status').then(ms=>S.musicStatus=ms).catch(()=>S.musicStatus=null),
+    fetchJSON('/api/music/library').then(ml=>S.musicLibrary=ml).catch(()=>S.musicLibrary=[]),
+  ]);
+}
+async function loadProjectDetail(id) {
+  S.loading=true; render();
+  try { S.detail=await fetchJSON('/api/projects/'+encodeURIComponent(id)); S.openScenes={}; }
+  catch { S.detail=null; }
+  S.loading=false; render();
+}
+
+// ── Lightbox ──────────────────────────────────────────────
+function openLightbox(src,isVideo) {
+  const lb=document.getElementById('lightbox'), ct=document.getElementById('lightbox-content');
+  ct.innerHTML = isVideo
+    ? '<video src="'+esc(src)+'" controls autoplay playsinline style="max-width:95vw;max-height:85vh;border-radius:10px"></video>'
+    : '<img src="'+esc(src)+'" alt="Preview">';
+  lb.classList.add('open');
+  if(tg) tg.HapticFeedback?.impactOccurred('light');
+}
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('open');
+  document.getElementById('lightbox-content').innerHTML='';
+}
+
+// ── Banner ────────────────────────────────────────────────
+function showBanner(type,text,ms) {
+  S.banner={type,text}; render();
+  if(ms) setTimeout(()=>{S.banner=null;render();},ms);
+}
+</script>
+<script>
+// ── Render ────────────────────────────────────────────────
+function render() {
+  const app=document.getElementById('app');
+  app.innerHTML = renderHeader() + renderProjectBar() + '<div class="content">' +
+    (S.banner ? '<div class="info-banner '+S.banner.type+'">'+esc(S.banner.text)+'</div>' : '') +
+    renderContent() + '</div>';
+  bindEvents();
+}
+
+function renderProjectBar() {
+  const ss = S.session;
+  if(!ss?.active || !ss.project_id) return '';
+  const prompt = ss.prompt || ss.history?.find(m=>m.role==='user')?.content || 'Untitled project';
+  const truncated = prompt.length > 50 ? prompt.slice(0,47)+'…' : prompt;
+  const sceneCount = ss.scenes?.length || 0;
+  const style = ss.style || '';
+  const workflow = ss.workflow || '';
+  const wfLabel = workflow==='full-auto'?'Full Auto':workflow==='production'?'Production':'Fast Start';
+  return `<div class="project-bar">
+    <div class="project-bar-icon">📐</div>
+    <div class="project-bar-info">
+      <div class="project-bar-name">${esc(truncated)}</div>
+      <div class="project-bar-meta">
+        <span>🎞 ${sceneCount} scene${sceneCount!==1?'s':''}</span>
+        ${style?'<span>🎨 '+esc(style)+'</span>':''}
+        <span>⚡ ${esc(wfLabel)}</span>
+      </div>
+    </div>
+    <button class="project-bar-new" id="btn-new-project">+ New</button>
+  </div>`;
+}
+
+function renderHeader() {
+  const tabs = [
+    {id:'create',icon:'✨',label:'Create'},
+    {id:'chat',icon:'💬',label:'Chat'},
+    {id:'characters',icon:'👤',label:'Cast'},
+    {id:'video',icon:'🎬',label:'Video'},
+    {id:'music',icon:'🎵',label:'Music'},
+    {id:'projects',icon:'📁',label:'Projects'},
+    {id:'staged',icon:'📥',label:'Staged'},
+  ];
+  return `<div class="header">
+    <div class="header-top">
+      <div class="header-logo">🎬</div>
+      <div><div class="header-title">Zoom Video Editor</div>
+        <div class="header-subtitle">Storyboard Studio</div></div>
+      <div class="header-status">● Connected</div>
+    </div>
+    <div class="tabs">${tabs.map(t=>
+      `<button class="tab ${S.tab===t.id?'active':''}" data-tab="${t.id}">${t.icon} ${t.label}</button>`
+    ).join('')}</div>
+  </div>`;
+}
+
+function renderContent() {
+  if(S.loading) return '<div class="spinner"></div><div class="loading-text">Loading...</div>';
+  if(S.detail) return renderDetail();
+  switch(S.tab) {
+    case 'create': return renderCreate();
+    case 'chat': return renderChat();
+    case 'characters': return renderCharacters();
+    case 'video': return renderVideo();
+    case 'music': return renderMusic();
+    case 'projects': return renderProjects();
+    case 'staged': return renderStaged();
+    default: return '';
+  }
+}
+
+// ── Create Tab ────────────────────────────────────────────
+function renderCreate() {
+  const lengths = [15,30,60,90,120];
+  const workflows = [
+    {id:'fast-start',label:'⚡ Fast Start',desc:'Quick generation'},
+    {id:'full-auto',label:'🤖 Full Auto',desc:'AI handles everything'},
+    {id:'production',label:'🎬 Production',desc:'Maximum quality'},
+  ];
+  return `
+    <div class="create-section">
+      <div class="create-label">What's your video about?</div>
+      <textarea class="prompt-input" id="create-prompt" placeholder="Describe your video idea... e.g. 'A cinematic tour of Tokyo at night with neon lights and rain'">${esc(S.createPrompt)}</textarea>
+    </div>
+    <div class="create-section">
+      <div class="create-label">Visual Style</div>
+      <div class="style-grid">${S.styles.map(st=>
+        `<div class="style-card ${S.selectedStyle===st.key?'active':''}" data-style="${esc(st.key)}">
+          <div class="style-card-icon">${esc(st.label.split(' ')[0])}</div>
+          <div class="style-card-name">${esc(st.label.split(' ').slice(1).join(' '))}</div>
+        </div>`
+      ).join('')}
+        <div class="style-card ${S.selectedStyle===''?'active':''}" data-style="">
+          <div class="style-card-icon">🎯</div>
+          <div class="style-card-name">No Style</div>
+        </div>
+      </div>
+    </div>
+    <div class="create-section">
+      <div class="create-label">Video Length</div>
+      <div class="option-row">${lengths.map(l=>
+        `<div class="option-chip ${S.selectedLength===l?'active':''}" data-length="${l}">${l}s</div>`
+      ).join('')}</div>
+    </div>
+    <div class="create-section">
+      <div class="create-label">Workflow</div>
+      <div class="option-row">${workflows.map(w=>
+        `<div class="option-chip ${S.selectedWorkflow===w.id?'active':''}" data-workflow="${w.id}">${w.label}</div>`
+      ).join('')}</div>
+    </div>
+    <button class="btn-primary" id="btn-create" ${S.chatBusy?'disabled':''}>
+      ${S.chatBusy?'Creating...':'✨ Create Storyboard'}
+    </button>
+    ${S.session?.active ? '<button class="btn-secondary" id="btn-continue">💬 Continue Current Session</button>' : ''}
+  `;
+}
+
+// ── Chat Tab ──────────────────────────────────────────────
+function renderChat() {
+  const hist = S.session?.history || [];
+  const scenes = S.session?.scenes || [];
+  const llmRunning = S.llmStatus?.running;
+  const canStartLlm = S.llmStatus?.omlx_installed;
+
+  if(!hist.length && !S.chatBusy) {
+    return `<div class="empty-state">
+      <div class="empty-icon">💬</div>
+      <div class="empty-title">No conversation yet</div>
+      <div class="empty-desc">Go to the Create tab to start a storyboard,<br>or type a message below to begin chatting.</div>
+    </div>
+    ${!llmRunning ? `<div class="info-banner ${canStartLlm?'info':'error'}" style="margin-bottom:8px">
+      ${canStartLlm
+        ? `🤖 Local AI not running — <button id="btn-start-llm" style="background:none;border:none;color:var(--acc);font-weight:700;cursor:pointer;padding:0;font-size:inherit" ${S.llmStarting?'disabled':''}>
+            ${S.llmStarting?'Starting...':'tap to start'}
+           </button>`
+        : '⚠️ No local AI installed. Open the main app\'s Chat tab to set one up.'
+      }
+    </div>` : ''}
+    <div class="chat-input-row" style="position:fixed;bottom:0;left:0;right:0;padding:10px 16px;background:var(--bg);border-top:1px solid var(--bdr);">
+      <input class="chat-input" id="chat-input" placeholder="Describe your video idea..." autocomplete="off">
+      <button class="chat-send" id="chat-send">➤</button>
+    </div>`;
+  }
+  let msgs = '';
+  for(const m of hist) {
+    if(m.role==='user') {
+      msgs += `<div class="msg user"><div class="msg-bubble">${esc(m.content)}</div></div>`;
+    } else {
+      const parsed = parseSceneBlocks(m.content);
+      msgs += `<div class="msg assistant"><div class="msg-bubble">${formatAssistantMsg(m.content, parsed)}</div></div>`;
+    }
+  }
+  if(S.chatBusy) {
+    msgs += `<div class="msg assistant"><div class="msg-bubble"><div class="typing-dots"><span></span><span></span><span></span></div></div></div>`;
+  }
+  return `<div class="chat-container">
+    <div class="chat-messages" id="chat-messages">${msgs}</div>
+    ${scenes.length && !S.chatBusy ? '<button class="btn-primary" id="btn-chat-generate" style="margin:0 0 8px;flex-shrink:0">🎬 Generate Movie ('+scenes.length+' scene'+(scenes.length!==1?'s':'')+')</button>' : ''}
+    <div class="chat-input-row">
+      <input class="chat-input" id="chat-input" placeholder="Refine your storyboard..." autocomplete="off" ${S.chatBusy?'disabled':''}>
+      <button class="chat-send" id="chat-send" ${S.chatBusy?'disabled':''}>➤</button>
+    </div>
+  </div>`;
+}
+
+function parseSceneBlocks(text) {
+  const re = /```scene\s*\n([\s\S]*?)```/g;
+  const scenes = [];
+  let m;
+  while((m=re.exec(text))!==null) {
+    const block=m[1];
+    const title = extractField(block,'TITLE')||'Scene';
+    const prompt = extractField(block,'PROMPT')||'';
+    const mood = extractField(block,'MOOD')||'';
+    const duration = extractField(block,'DURATION')||'';
+    // Parse individual shots
+    const shots = [];
+    const shotRe = /SHOT\s+(\d+):\s*(.+)/gi;
+    let sm;
+    while((sm=shotRe.exec(block))!==null) {
+      const parts = sm[2].split('|').map(p=>p.trim());
+      shots.push({
+        num: sm[1],
+        type: parts[0]||'',
+        camera: parts[1]||'',
+        dur: parts[2]||'',
+        prompt: parts[3]||'',
+        transition: parts[4]||'',
+      });
+    }
+    scenes.push({title,prompt,mood,duration,shots});
+  }
+  return scenes;
+}
+function extractField(block,field) {
+  for(const line of block.split('\n')) {
+    const t=line.trim();
+    if(t.toUpperCase().startsWith(field+':')) return t.slice(field.length+1).trim();
+  }
+  return null;
+}
+function formatAssistantMsg(text, scenes) {
+  // Strip scene blocks from raw text first, then escape the rest
+  const stripped = text.replace(/```scene[\s\S]*?```/g, '').replace(/\n{3,}/g,'\n\n').trim();
+  let html = esc(stripped).replace(/\n/g,'<br>');
+  // Append rich scene cards with full shot details
+  if(scenes.length) {
+    html += '<div class="scene-inline">';
+    for(const sc of scenes) {
+      html += `<div class="scene-card-mini">
+        <div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap">
+          <span class="scene-card-mini-title">${esc(sc.title)}</span>
+          <span class="scene-card-mini-mood">${esc(sc.mood)}</span>
+          ${sc.duration?'<span style="font-size:10px;color:var(--txt3)">⏱ '+esc(sc.duration)+'</span>':''}
+        </div>
+        ${sc.prompt?'<div class="scene-card-mini-prompt">'+esc(sc.prompt)+'</div>':''}`;
+      // Render each shot fully
+      if(sc.shots.length) {
+        html += '<div class="scene-shots-list">';
+        for(const sh of sc.shots) {
+          html += `<div class="scene-shot-item">
+            <div class="scene-shot-header">
+              <span class="scene-shot-num">Shot ${esc(sh.num)}</span>
+              <span class="scene-shot-type">${esc(sh.type)}</span>
+              ${sh.camera?'<span class="scene-shot-cam">'+esc(sh.camera)+'</span>':''}
+              ${sh.dur?'<span class="scene-shot-dur">'+esc(sh.dur)+'</span>':''}
+              ${sh.transition&&sh.transition!=='cut'?'<span class="scene-shot-trans">→ '+esc(sh.transition)+'</span>':''}
+            </div>
+            ${sh.prompt?'<div class="scene-shot-prompt">🖼 '+esc(sh.prompt)+'</div>':''}
+          </div>`;
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+  return html;
+}
+</script>
+<script>
+// ── Characters Tab ────────────────────────────────────────
+function renderCharacters() {
+  const chars = S.session?.characters || [];
+  return `
+    <div class="char-form">
+      <div class="create-label">Add Character</div>
+      <input class="char-input" id="char-name" placeholder="Character name" autocomplete="off">
+      <input class="char-input" id="char-desc" placeholder="Brief description (optional)" autocomplete="off">
+      <div class="option-row">
+        ${['protagonist','antagonist','sidekick','orbital'].map(r=>
+          `<div class="option-chip" data-role="${r}">${r}</div>`
+        ).join('')}
+      </div>
+      <button class="btn-secondary" id="btn-add-char">+ Add Character</button>
+    </div>
+    ${chars.length ? '<div class="create-label">Characters ('+chars.length+')</div>' : ''}
+    <div class="char-list">${chars.map(ch=>{
+      const img = ch.active_image || (ch.reference_images&&ch.reference_images[0]);
+      return `<div class="char-item">
+        <div class="char-avatar">
+          ${img?'<img src="'+esc(mediaUrl(img))+'" alt="">':'<div class="char-avatar-empty">👤</div>'}
+        </div>
+        <div class="char-info">
+          <div><span class="char-name">${esc(ch.name)}</span>
+            ${ch.role?'<span class="char-role-tag">'+esc(ch.role)+'</span>':''}</div>
+          ${ch.description?'<div class="char-desc">'+esc(ch.description)+'</div>':''}
+          ${ch.enriched?'<div class="char-enriched">✓ AI enriched</div>':''}
+        </div>
+      </div>`;
+    }).join('')}</div>
+    ${!chars.length?'<div class="empty-state"><div class="empty-icon">👤</div><div class="empty-title">No characters yet</div><div class="empty-desc">Add characters to give your storyboard consistent cast members</div></div>':''}
+  `;
+}
+
+// ── Video Tab ─────────────────────────────────────────────
+function renderVideo() {
+  const st = S.videoStatus;
+  if(!st || !st.available) {
+    return `<div class="empty-state">
+      <div class="empty-icon">🎬</div>
+      <div class="empty-title">LTX not available</div>
+      <div class="empty-desc">${esc(st?.message||'Install LTX from the main app\'s Video tab to generate videos locally.')}</div>
+    </div>`;
+  }
+  const subtabs = [
+    {id:'generate',label:'✨ Generate'},
+    {id:'library',label:'📁 Library ('+S.videoLibrary.length+')'},
+  ];
+  let html = `<div class="video-subtabs">${subtabs.map(t=>
+    `<button class="video-subtab ${S.videoSubTab===t.id?'active':''}" data-videotab="${t.id}">${t.label}</button>`
+  ).join('')}</div>`;
+  if(S.videoSubTab==='generate') html += renderVideoGenerate();
+  else html += renderVideoLibrary();
+  return html;
+}
+
+function renderVideoGenerate() {
+  const dims = ['512x512','768x512','1024x576','1280x720'];
+  const fmtFrames = f => {
+    const secs = (f/24).toFixed(1);
+    return `${f}f (${secs}s)`;
+  };
+  let html = `
+    <div class="video-gen-section">
+      <div class="video-gen-label">Video Prompt</div>
+      <textarea class="prompt-input" id="video-prompt" placeholder="Describe what happens in the video — camera movement, subject, action, lighting, style...">${esc(S.videoPrompt)}</textarea>
+    </div>
+    <div class="video-gen-section">
+      <div class="video-gen-label">Negative Prompt <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--txt3)">(optional)</span></div>
+      <input class="music-tags-input" id="video-neg-prompt" placeholder="blurry, low quality, distorted, watermark" value="${esc(S.videoNegPrompt)}">
+    </div>
+    <div class="video-gen-section">
+      <div class="video-gen-label">Image Reference <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--txt3)">(optional — guides first frame)</span></div>`;
+
+  if(!S.imageLibrary.length) {
+    html += `<div class="info-banner info">No images in library yet. Generate images from the main app's Image tab first.</div>`;
+  } else {
+    html += `<div class="video-ref-grid">
+      <div class="video-ref-none ${S.videoSelectedImage===null?'selected':''}" data-ref-clear="1">✕ None</div>`;
+    for(const img of S.imageLibrary) {
+      const sel = S.videoSelectedImage===img.file_path;
+      html += `<div class="video-ref-item ${sel?'selected':''}" data-ref="${esc(img.file_path)}" title="${esc(img.prompt)}">
+        <img src="${esc(mediaUrl(img.file_path))}" alt="" loading="lazy">
+        <div class="video-ref-check">✓</div>
+      </div>`;
+    }
+    html += `</div>`;
+    if(S.videoSelectedImage) {
+      html += `<div style="font-size:10px;color:var(--grn);margin-top:4px">✓ Reference selected — video will start from this image</div>`;
+    }
+  }
+
+  html += `</div>
+    <div class="video-gen-section">
+      <div class="video-gen-label">Resolution</div>
+      <div class="video-dims-row">${dims.map(d=>
+        `<div class="video-dim-chip ${S.videoDims===d?'active':''}" data-dims="${d}">${d}</div>`
+      ).join('')}</div>
+    </div>
+    <div class="video-gen-section">
+      <div class="video-gen-label">Frames</div>
+      <div class="video-frames-row">
+        <input type="range" class="video-frames-slider" id="video-frames" min="25" max="257" step="8" value="${S.videoFrames}">
+        <span class="video-frames-value">${fmtFrames(S.videoFrames)}</span>
+      </div>
+    </div>`;
+
+  if(S.videoProgress) {
+    html += `<div class="video-progress">
+      <div class="video-progress-msg">${esc(S.videoProgress.message)}</div>
+      <div class="video-progress-bar"><div class="video-progress-fill" style="width:${S.videoProgress.percent||0}%"></div></div>
+    </div>`;
+  }
+
+  html += `<button class="btn-primary" id="btn-video-gen" ${S.videoGenerating?'disabled':''} style="background:linear-gradient(135deg,#2d7a4f,#48bb78)">
+    ${S.videoGenerating?'⏳ Generating...':'🎬 Generate Video'}
+  </button>`;
+
+  return html;
+}
+
+function renderVideoLibrary() {
+  if(!S.videoLibrary.length) {
+    return `<div class="empty-state">
+      <div class="empty-icon">🎬</div>
+      <div class="empty-title">No videos yet</div>
+      <div class="empty-desc">Generate your first video from the Generate tab.</div>
+    </div>`;
+  }
+  const fmtD = ms => { const s=Math.round(ms/1000); return s<60?s+'s':Math.floor(s/60)+'m '+(s%60)+'s'; };
+  return '<div class="video-asset-list">'+S.videoLibrary.map(v=>{
+    const src = v.file_path ? mediaUrl(v.file_path) : '';
+    const ref = v.image_path ? mediaUrl(v.image_path) : '';
+    return `<div class="video-asset">
+      <div class="video-asset-thumb" ${src?'data-lightbox-video="'+esc(src)+'"':''}>
+        ${src
+          ? `<video src="${esc(src)}" muted playsinline preload="metadata"></video>
+             <div class="video-play-btn"><div class="video-play-icon">▶</div></div>`
+          : '<div class="video-asset-thumb-empty">🎬</div>'}
+      </div>
+      <div class="video-asset-info">
+        <div class="video-asset-prompt">${esc(v.prompt)}</div>
+        <div class="video-asset-meta">
+          <span>${v.width}×${v.height}</span>
+          <span>${fmtD(v.duration_ms)}</span>
+          <span>${v.num_frames}f</span>
+          ${ref?'<span>🖼 ref</span>':''}
+          <span>🕐 ${relTime(v.created_at)}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('')+'</div>';
+}
+
+// ── Projects Tab ──────────────────────────────────────────
+function renderProjects() {
+  if(!S.projects.length) {
+    return `<div class="empty-state">
+      <div class="empty-icon">🎬</div><div class="empty-title">No projects yet</div>
+      <div class="empty-desc">Create a storyboard from the Create tab<br>or send <code>/storyboard</code> to the bot</div>
+    </div>`;
+  }
+  return '<div class="projects">'+S.projects.map(p=>{
+    const thumb=p.thumbnail?mediaUrl(p.thumbnail):'';
+    return `<div class="project-card" data-project="${esc(p.id)}">
+      <div class="project-thumb">
+        ${thumb?'<img src="'+esc(thumb)+'" alt="" loading="lazy">':'<div class="project-thumb-empty">🎬</div>'}
+      </div>
+      <div class="project-info">
+        <div class="project-prompt">${esc(p.prompt)}</div>
+        <div class="project-meta">
+          <span class="project-meta-item">🎞 ${p.scene_count} scenes</span>
+          <span class="project-meta-item">⏱ ${fmtDur(p.video_length_ms)}</span>
+          ${p.character_count?'<span class="project-meta-item">👤 '+p.character_count+'</span>':''}
+          <span class="project-meta-item">🕐 ${relTime(p.created_at)}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('')+'</div>';
+}
+
+// ── Detail View ───────────────────────────────────────────
+function renderDetail() {
+  const p=S.detail;
+  if(!p) return '<div class="empty-state"><div class="empty-title">Project not found</div></div>';
+  let html = `
+    <button class="detail-back" id="back-btn">← Back to projects</button>
+    <div class="detail-prompt">${esc(p.prompt)}</div>
+    <div class="detail-meta">${p.scenes.length} scenes · ${fmtDur(p.video_length_ms)} · ${relTime(p.created_at)}</div>`;
+  if(p.characters?.length) {
+    html += '<div class="section-title">Characters</div><div class="chars-row">';
+    for(const ch of p.characters) {
+      const img=ch.active_image||(ch.reference_images&&ch.reference_images[0]);
+      html += `<div class="char-card-sm">
+        <div class="char-avatar">${img?'<img src="'+esc(mediaUrl(img))+'" alt="">':'<div class="char-avatar-empty">👤</div>'}</div>
+        <div class="char-name">${esc(ch.name)}</div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+  html += '<div class="section-title">Scenes</div><div class="scenes">';
+  for(const sc of p.scenes) {
+    const isOpen=S.openScenes[sc.id];
+    html += `<div class="scene-card">
+      <div class="scene-header" data-scene="${esc(sc.id)}">
+        <div class="scene-num">${sc.scene_number}</div>
+        <div class="scene-title">${esc(sc.title)}</div>
+        <div class="scene-mood">${esc(sc.mood)}</div>
+        <div class="scene-chevron ${isOpen?'open':''}">▸</div>
+      </div>`;
+    if(isOpen) {
+      html += '<div class="scene-body">';
+      if(sc.description) html += '<div class="scene-desc">'+esc(sc.description)+'</div>';
+      if(sc.visual_prompt) {
+        html += '<div class="scene-prompt-label">🎬 Video Prompt</div>';
+        html += '<div class="scene-prompt-text">'+esc(sc.visual_prompt)+'</div>';
+      }
+      if(sc.shots?.length) {
+        html += '<div class="shots-grid">';
+        for(const sh of sc.shots) {
+          const src=sh.image_path?mediaUrl(sh.image_path):'';
+          const vid=sh.video_path?mediaUrl(sh.video_path):'';
+          const click=vid?'data-lightbox-video="'+esc(vid)+'"':(src?'data-lightbox="'+esc(src)+'"':'');
+          const vpShort = sh.visual_prompt?.length>60 ? sh.visual_prompt.slice(0,57)+'…' : (sh.visual_prompt||'');
+          const videoPrompt = sh.video_settings?.prompt || '';
+          const showVideoPrompt = videoPrompt && videoPrompt !== sh.visual_prompt;
+          html += `<div class="shot-card" ${click}>
+            ${src?'<img class="shot-img" src="'+esc(src)+'" alt="" loading="lazy">':'<div class="shot-img-empty">🎞</div>'}
+            <div class="shot-label">${esc(sh.shot_type)} · ${esc(sh.camera_movement)}</div>
+            ${vpShort?'<div class="shot-prompt-line">🖼 '+esc(vpShort)+'</div>':''}
+            ${showVideoPrompt?'<div class="shot-prompt-line shot-video-prompt">🎬 '+esc(videoPrompt.length>60?videoPrompt.slice(0,57)+'…':videoPrompt)+'</div>':''}
+            ${sh.dialogue?'<div class="shot-prompt-line shot-dialogue">💬 "'+esc(sh.dialogue)+'"</div>':''}
+          </div>`;
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+  // Generate button
+  if(p.scenes.length) {
+    html += '<button class="btn-primary" id="btn-generate" style="margin-top:16px">🎬 Generate Videos</button>';
+  }
+  return html;
+}
+
+// ── Staged Tab ────────────────────────────────────────────
+function renderStaged() {
+  if(!S.staged.length) {
+    return `<div class="empty-state">
+      <div class="empty-icon">📥</div><div class="empty-title">No staged videos</div>
+      <div class="empty-desc">Send video files to the bot to stage them<br>for use in your projects</div>
+    </div>`;
+  }
+  return '<div class="staged-list">'+S.staged.map(v=>{
+    const cls=v.classification==='Primary'?'primary':'broll';
+    const label=v.classification==='Primary'?'Primary':'B-Roll';
+    const size=v.size_bytes?(v.size_bytes/1048576).toFixed(1)+' MB':'';
+    return `<div class="staged-item">
+      <div class="staged-icon">🎥</div>
+      <div class="staged-info"><div class="staged-name">${esc(v.filename)}</div><div class="staged-detail">${size}</div></div>
+      <div class="staged-badge ${cls}">${label}</div>
+    </div>`;
+  }).join('')+'</div>';
+}
+</script>
+<script>
+// ── Music Tab ─────────────────────────────────────────────
+function renderMusic() {
+  const st = S.musicStatus;
+  if(!st || !st.installed) {
+    return `<div class="empty-state">
+      <div class="empty-icon">🎵</div>
+      <div class="empty-title">ACE-Step not installed</div>
+      <div class="empty-desc">Install ACE-Step 1.5 from the main app's Music panel to generate full songs locally. No API key, no cloud.</div>
+    </div>`;
+  }
+  const subtabs = [
+    {id:'generate',label:'✨ Generate'},
+    {id:'promptlab',label:'💬 Prompt Lab'},
+    {id:'library',label:'📁 Library ('+S.musicLibrary.length+')'},
+  ];
+  let html = `<div class="music-subtabs">${subtabs.map(t=>
+    `<button class="music-subtab ${S.musicSubTab===t.id?'active':''}" data-musictab="${t.id}">${t.label}</button>`
+  ).join('')}</div>`;
+
+  if(S.musicSubTab==='generate') html += renderMusicGenerate();
+  else if(S.musicSubTab==='promptlab') html += renderMusicPromptLab();
+  else html += renderMusicLibrary();
+  return html;
+}
+
+function renderMusicGenerate() {
+  const fmtD = s => s<60?s+'s':Math.floor(s/60)+'m '+(s%60)+'s';
+  let html = `
+    <div class="music-gen-section">
+      <div class="music-gen-label">Describe your music</div>
+      <textarea class="prompt-input" id="music-prompt" placeholder="e.g. 'Upbeat electronic dance track with heavy bass and synth pads' or 'Soft Bengali love song with acoustic guitar'">${esc(S.musicPrompt)}</textarea>
+    </div>
+    <div class="music-gen-section">
+      <div class="music-gen-label">Genre / Style Tags</div>
+      <input class="music-tags-input" id="music-tags" placeholder="lofi, piano, ambient, chill, 90s hip-hop" value="${esc(S.musicTags)}">
+    </div>
+    <div class="music-gen-section">
+      <div class="music-gen-label">Duration</div>
+      <div class="music-dur-row">
+        <input type="range" class="music-dur-slider" id="music-dur" min="10" max="300" step="5" value="${S.musicDuration}">
+        <span class="music-dur-value">${fmtD(S.musicDuration)}</span>
+      </div>
+    </div>
+    <div class="music-gen-section">
+      <div class="option-row">
+        <div class="option-chip ${S.musicInstrumental?'active':''}" data-music-inst="true">🎹 Instrumental</div>
+        <div class="option-chip ${!S.musicInstrumental?'active':''}" data-music-inst="false">🎤 With Vocals</div>
+      </div>
+    </div>`;
+  if(!S.musicInstrumental) {
+    html += `<div class="music-gen-section">
+      <div class="music-gen-label">Lyrics (optional — AI writes them if empty)</div>
+      <textarea class="music-lyrics-input" id="music-lyrics" placeholder="[Verse 1]\nYour lyrics here...\n\n[Chorus]\nChorus goes here...">${esc(S.musicLyrics)}</textarea>
+    </div>`;
+  }
+  if(S.musicProgress) {
+    html += `<div class="music-progress">
+      <div class="music-progress-msg">${esc(S.musicProgress.message)}</div>
+      <div class="music-progress-bar"><div class="music-progress-fill" style="width:${S.musicProgress.percent||0}%"></div></div>
+    </div>`;
+  }
+  html += `<button class="btn-primary" id="btn-music-gen" ${S.musicGenerating?'disabled':''}>
+    ${S.musicGenerating?'⏳ Generating...':'🎵 Generate Music'}
+  </button>`;
+  if(!S.musicStatus?.server_running) {
+    html += `<div class="info-banner info" style="margin-top:10px">ACE-Step server not running. Start it from the main app's Music panel first.</div>`;
+  }
+  return html;
+}
+
+function renderMusicPromptLab() {
+  // Check LLM availability — use the dedicated llmStatus which covers oMLX too
+  const llmRunning = S.llmStatus?.running || S.musicStatus?.llm_available;
+  if(!llmRunning) {
+    const canStart = S.llmStatus?.omlx_installed || S.musicStatus?.omlx_installed;
+    return `<div class="empty-state">
+      <div class="empty-icon">🤖</div>
+      <div class="empty-title">Local AI not running</div>
+      <div class="empty-desc">${canStart
+        ? 'Start your local AI to use the Prompt Lab — it will load automatically.'
+        : 'Install oMLX or MLX-LM from the main app\'s Chat tab first.'
+      }</div>
+      ${canStart ? `<button class="btn-primary" id="btn-start-llm" style="margin-top:16px;max-width:220px;margin-left:auto;margin-right:auto" ${S.llmStarting?'disabled':''}>
+        ${S.llmStarting?'<span class="typing-dots"><span></span><span></span><span></span></span> Starting...':'🚀 Start Local AI'}
+      </button>` : ''}
+    </div>`;
+  }
+  const hist = S.musicPlabHistory;
+  let msgs = '';
+  for(const m of hist) {
+    if(m.role==='user') {
+      msgs += `<div class="msg user"><div class="msg-bubble">${esc(m.content)}</div></div>`;
+    } else {
+      msgs += `<div class="msg assistant"><div class="msg-bubble">${formatPlabMsg(m.content)}</div></div>`;
+    }
+  }
+  if(S.musicPlabBusy) {
+    msgs += `<div class="msg assistant"><div class="msg-bubble"><div class="typing-dots"><span></span><span></span><span></span></div></div></div>`;
+  }
+  if(!hist.length && !S.musicPlabBusy) {
+    msgs = `<div class="empty-state" style="padding:20px">
+      <div class="empty-icon">💬</div>
+      <div class="empty-title">Music Prompt Lab</div>
+      <div class="empty-desc">Describe your musical idea and the AI will help you craft the perfect ACE-Step prompt. Say something like "I want a chill lofi beat" or "epic orchestral trailer music".</div>
+    </div>`;
+  }
+  return `<div class="plab-container">
+    <div class="plab-messages" id="plab-messages">${msgs}</div>
+    <div class="chat-input-row">
+      <input class="chat-input" id="plab-input" placeholder="Describe your musical idea..." autocomplete="off" ${S.musicPlabBusy?'disabled':''}>
+      <button class="chat-send" id="plab-send" ${S.musicPlabBusy?'disabled':''}>➤</button>
+    </div>
+  </div>`;
+}
+
+function formatPlabMsg(content) {
+  // Check for ```prompt blocks and render them specially with an Apply button
+  const promptMatch = content.match(/```prompt\n([\s\S]*?)```/);
+  const stripped = content.replace(/```prompt\n[\s\S]*?```/g, '').trim();
+  let html = esc(stripped).replace(/\n/g,'<br>');
+  if(promptMatch) {
+    html += `<div class="plab-prompt-block">${esc(promptMatch[1])}</div>`;
+    html += `<button class="plab-apply-btn" data-plab-apply="${esc(btoa(promptMatch[1]))}">✨ Apply to Generator</button>`;
+  }
+  return html;
+}
+
+function renderMusicLibrary() {
+  if(!S.musicLibrary.length) {
+    return `<div class="empty-state">
+      <div class="empty-icon">📁</div>
+      <div class="empty-title">No music yet</div>
+      <div class="empty-desc">Generate your first track from the Generate tab or use the Prompt Lab to craft the perfect prompt.</div>
+    </div>`;
+  }
+  const fmtD = s => { const sec=Math.round(s); return sec<60?sec+'s':Math.floor(sec/60)+'m '+(sec%60)+'s'; };
+  return '<div class="music-asset-list">'+S.musicLibrary.map(a=>{
+    const isPlaying = S.musicPlayingId===a.id;
+    return `<div class="music-asset">
+      <button class="music-asset-play" data-music-play="${esc(a.id)}" data-music-file="${esc(a.file_path)}">${isPlaying?'⏸':'▶'}</button>
+      <div class="music-asset-info">
+        <div class="music-asset-prompt">${esc(a.prompt)}</div>
+        <div class="music-asset-meta">${fmtD(a.duration_secs)} · ${a.tags?esc(a.tags.split(',').slice(0,3).join(', ')):''} · ${relTime(a.created_at)}</div>
+      </div>
+      <div class="music-asset-badge">${a.instrumental?'Inst':'Vocal'}</div>
+      ${isPlaying?`<div class="music-scrub" data-music-scrub="${esc(a.id)}"><div class="music-scrub-fill" style="width:${S.musicPlayPct*100}%"></div><div class="music-scrub-thumb" style="left:${S.musicPlayPct*100}%"></div></div>`:''} 
+    </div>`;
+  }).join('')+'</div>';
+}
+</script>
+<script>
+// ── Event binding ─────────────────────────────────────────
+function bindEvents() {
+  // Tabs
+  document.querySelectorAll('.tab').forEach(t=>{
+    t.addEventListener('click',async ()=>{
+      S.tab=t.dataset.tab; S.detail=null;
+      // Refresh data when switching to projects or staged tabs
+      if(t.dataset.tab==='projects') S.projects=await fetchJSON('/api/projects').catch(()=>S.projects);
+      if(t.dataset.tab==='staged') S.staged=await fetchJSON('/api/staged').catch(()=>S.staged);
+      if(t.dataset.tab==='video') {
+        S.videoStatus=await fetchJSON('/api/video/status').catch(()=>S.videoStatus);
+        S.videoLibrary=await fetchJSON('/api/video/library').catch(()=>S.videoLibrary);
+        S.imageLibrary=await fetchJSON('/api/images').catch(()=>S.imageLibrary);
+      }
+      if(t.dataset.tab==='music') {
+        S.musicStatus=await fetchJSON('/api/music/status').catch(()=>S.musicStatus);
+        S.musicLibrary=await fetchJSON('/api/music/library').catch(()=>S.musicLibrary);
+        S.llmStatus=await fetchJSON('/api/llm/status').catch(()=>S.llmStatus);
+      }
+      if(t.dataset.tab==='chat') {
+        S.session=await fetchJSON('/api/session').catch(()=>S.session);
+        S.llmStatus=await fetchJSON('/api/llm/status').catch(()=>S.llmStatus);
+      }
+      render();
+      if(tg) tg.HapticFeedback?.selectionChanged();
+    });
+  });
+
+  // Create tab
+  const promptEl=document.getElementById('create-prompt');
+  if(promptEl) promptEl.addEventListener('input',e=>S.createPrompt=e.target.value);
+
+  document.querySelectorAll('[data-style]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      S.selectedStyle=el.dataset.style; render();
+      if(tg) tg.HapticFeedback?.selectionChanged();
+    });
+  });
+  document.querySelectorAll('[data-length]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      S.selectedLength=parseInt(el.dataset.length); render();
+      if(tg) tg.HapticFeedback?.selectionChanged();
+    });
+  });
+  document.querySelectorAll('[data-workflow]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      S.selectedWorkflow=el.dataset.workflow; render();
+      if(tg) tg.HapticFeedback?.selectionChanged();
+    });
+  });
+
+  // Create button
+  const createBtn=document.getElementById('btn-create');
+  if(createBtn) createBtn.addEventListener('click', handleCreate);
+
+  // Continue session button
+  const contBtn=document.getElementById('btn-continue');
+  if(contBtn) contBtn.addEventListener('click',()=>{ S.tab='chat'; render(); });
+
+  // Chat input
+  const chatInput=document.getElementById('chat-input');
+  const chatSend=document.getElementById('chat-send');
+  if(chatInput) {
+    chatInput.addEventListener('keydown',e=>{
+      if(e.key==='Enter'&&!e.shiftKey) { e.preventDefault(); handleChatSend(); }
+    });
+  }
+  if(chatSend) chatSend.addEventListener('click', handleChatSend);
+
+  // Scroll chat to bottom
+  const chatMsgs=document.getElementById('chat-messages');
+  if(chatMsgs) chatMsgs.scrollTop=chatMsgs.scrollHeight;
+
+  // Character form
+  const addCharBtn=document.getElementById('btn-add-char');
+  if(addCharBtn) addCharBtn.addEventListener('click', handleAddCharacter);
+
+  // Character role chips
+  let selectedRole='';
+  document.querySelectorAll('[data-role]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      document.querySelectorAll('[data-role]').forEach(c=>c.classList.remove('active'));
+      el.classList.add('active');
+      selectedRole=el.dataset.role;
+      if(tg) tg.HapticFeedback?.selectionChanged();
+    });
+  });
+  window._selectedRole=()=>selectedRole;
+
+  // Project cards
+  document.querySelectorAll('.project-card').forEach(c=>{
+    c.addEventListener('click',()=>{
+      loadProjectDetail(c.dataset.project);
+      if(tg) tg.HapticFeedback?.impactOccurred('light');
+    });
+  });
+
+  // Back button
+  const backBtn=document.getElementById('back-btn');
+  if(backBtn) backBtn.addEventListener('click',()=>{ S.detail=null; render(); });
+
+  // Scene expand/collapse
+  document.querySelectorAll('.scene-header').forEach(h=>{
+    h.addEventListener('click',()=>{
+      S.openScenes[h.dataset.scene]=!S.openScenes[h.dataset.scene]; render();
+      if(tg) tg.HapticFeedback?.selectionChanged();
+    });
+  });
+
+  // Generate button
+  const genBtn=document.getElementById('btn-generate');
+  if(genBtn) genBtn.addEventListener('click', handleGenerate);
+
+  // Chat generate button
+  const chatGenBtn=document.getElementById('btn-chat-generate');
+  if(chatGenBtn) chatGenBtn.addEventListener('click', handleChatGenerate);
+
+  // New project button (in project bar)
+  const newProjBtn=document.getElementById('btn-new-project');
+  if(newProjBtn) newProjBtn.addEventListener('click', handleNewProject);
+
+  // Lightbox
+  document.querySelectorAll('[data-lightbox]').forEach(el=>{
+    el.addEventListener('click',e=>{ e.stopPropagation(); openLightbox(el.dataset.lightbox,false); });
+  });
+  document.querySelectorAll('[data-lightbox-video]').forEach(el=>{
+    el.addEventListener('click',e=>{ e.stopPropagation(); openLightbox(el.dataset.lightboxVideo,true); });
+  });
+
+  // Start LLM button (appears in chat and prompt lab when no AI is running)
+  const startLlmBtn = document.getElementById('btn-start-llm');
+  if(startLlmBtn) startLlmBtn.addEventListener('click', handleStartLlm);
+
+  // ── Video tab bindings ──────────────────────────────────
+  document.querySelectorAll('[data-videotab]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      S.videoSubTab=el.dataset.videotab;
+      if(S.videoSubTab==='library') fetchJSON('/api/video/library').then(vl=>S.videoLibrary=vl).catch(()=>{});
+      render();
+      if(tg) tg.HapticFeedback?.selectionChanged();
+    });
+  });
+
+  const videoPromptEl=document.getElementById('video-prompt');
+  if(videoPromptEl) videoPromptEl.addEventListener('input',e=>S.videoPrompt=e.target.value);
+  const videoNegEl=document.getElementById('video-neg-prompt');
+  if(videoNegEl) videoNegEl.addEventListener('input',e=>S.videoNegPrompt=e.target.value);
+  const videoFramesEl=document.getElementById('video-frames');
+  if(videoFramesEl) videoFramesEl.addEventListener('input',e=>{ S.videoFrames=parseInt(e.target.value); render(); });
+
+  document.querySelectorAll('[data-dims]').forEach(el=>{
+    el.addEventListener('click',()=>{ S.videoDims=el.dataset.dims; render(); if(tg) tg.HapticFeedback?.selectionChanged(); });
+  });
+
+  // Image reference selection
+  document.querySelectorAll('[data-ref]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      S.videoSelectedImage = S.videoSelectedImage===el.dataset.ref ? null : el.dataset.ref;
+      render();
+      if(tg) tg.HapticFeedback?.selectionChanged();
+    });
+  });
+  document.querySelectorAll('[data-ref-clear]').forEach(el=>{
+    el.addEventListener('click',()=>{ S.videoSelectedImage=null; render(); });
+  });
+
+  const videoGenBtn=document.getElementById('btn-video-gen');
+  if(videoGenBtn) videoGenBtn.addEventListener('click', handleVideoGenerate);
+
+  // ── Music tab bindings ──────────────────────────────────
+  document.querySelectorAll('[data-musictab]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      S.musicSubTab=el.dataset.musictab;
+      if(S.musicSubTab==='library') fetchJSON('/api/music/library').then(ml=>S.musicLibrary=ml).catch(()=>{});
+      render();
+      if(tg) tg.HapticFeedback?.selectionChanged();
+    });
+  });
+
+  const musicPromptEl=document.getElementById('music-prompt');
+  if(musicPromptEl) musicPromptEl.addEventListener('input',e=>S.musicPrompt=e.target.value);
+  const musicTagsEl=document.getElementById('music-tags');
+  if(musicTagsEl) musicTagsEl.addEventListener('input',e=>S.musicTags=e.target.value);
+  const musicLyricsEl=document.getElementById('music-lyrics');
+  if(musicLyricsEl) musicLyricsEl.addEventListener('input',e=>S.musicLyrics=e.target.value);
+  const musicDurEl=document.getElementById('music-dur');
+  if(musicDurEl) musicDurEl.addEventListener('input',e=>{ S.musicDuration=parseInt(e.target.value); render(); });
+
+  document.querySelectorAll('[data-music-inst]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      S.musicInstrumental=el.dataset.musicInst==='true'; render();
+      if(tg) tg.HapticFeedback?.selectionChanged();
+    });
+  });
+
+  const musicGenBtn=document.getElementById('btn-music-gen');
+  if(musicGenBtn) musicGenBtn.addEventListener('click', handleMusicGenerate);
+
+  // Prompt Lab input
+  const plabInput=document.getElementById('plab-input');
+  const plabSend=document.getElementById('plab-send');
+  if(plabInput) plabInput.addEventListener('keydown',e=>{
+    if(e.key==='Enter'&&!e.shiftKey) { e.preventDefault(); handlePlabSend(); }
+  });
+  if(plabSend) plabSend.addEventListener('click', handlePlabSend);
+  const plabMsgs=document.getElementById('plab-messages');
+  if(plabMsgs) plabMsgs.scrollTop=plabMsgs.scrollHeight;
+
+  // Apply prompt from Prompt Lab
+  document.querySelectorAll('[data-plab-apply]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      try {
+        const block = atob(el.dataset.plabApply);
+        applyPromptBlock(block);
+        showBanner('success','Prompt applied to generator.',3000);
+        if(tg) tg.HapticFeedback?.notificationOccurred('success');
+      } catch(e) {}
+    });
+  });
+
+  // Music library playback
+  document.querySelectorAll('[data-music-play]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      handleMusicPlay(el.dataset.musicPlay, el.dataset.musicFile);
+    });
+  });
+  // Music scrub bar seeking
+  document.querySelectorAll('.music-scrub').forEach(el=>{
+    el.addEventListener('click',(e)=>{
+      if(!S.musicAudioEl||!S.musicAudioEl.duration) return;
+      const rect=el.getBoundingClientRect();
+      const pct=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
+      S.musicAudioEl.currentTime=pct*S.musicAudioEl.duration;
+      S.musicPlayPct=pct;
+      const fill=el.querySelector('.music-scrub-fill');
+      const thumb=el.querySelector('.music-scrub-thumb');
+      if(fill) fill.style.width=pct*100+'%';
+      if(thumb) thumb.style.left=pct*100+'%';
+    });
+  });
+}
+
+// ── Action handlers ───────────────────────────────────────
+async function handleCreate() {
+  const prompt=S.createPrompt.trim();
+  if(!prompt) { showBanner('error','Please describe your video idea.',3000); return; }
+
+  S.chatBusy=true; render();
+
+  // Set style and workflow first
+  if(S.selectedStyle) await postJSON('/api/style',{style:S.selectedStyle}).catch(()=>{});
+  await postJSON('/api/workflow',{mode:S.selectedWorkflow}).catch(()=>{});
+
+  // Send the prompt
+  const res = await postJSON('/api/chat',{
+    message: prompt,
+    video_length_secs: S.selectedLength,
+  }).catch(e=>({error:e.message}));
+
+  S.chatBusy=false;
+
+  if(res.error) {
+    showBanner('error', res.error, 5000);
+    render();
+    return;
+  }
+
+  // Refresh session and projects
+  S.session = await fetchJSON('/api/session').catch(()=>S.session);
+  if(S.session) S.session.prompt = prompt;
+  S.projects = await fetchJSON('/api/projects').catch(()=>S.projects);
+  S.tab='chat';
+  if(tg) tg.HapticFeedback?.notificationOccurred('success');
+  render();
+}
+
+async function handleChatSend() {
+  const input=document.getElementById('chat-input');
+  if(!input) return;
+  const msg=input.value.trim();
+  if(!msg||S.chatBusy) return;
+
+  // Optimistically add user message
+  if(!S.session) S.session={active:true,history:[],scenes:[],characters:[],project_id:'',style:'',workflow:'fast-start',video_length_secs:60};
+  S.session.history.push({role:'user',content:msg});
+  S.chatBusy=true;
+  render();
+
+  const res = await postJSON('/api/chat',{message:msg}).catch(e=>({error:e.message}));
+  S.chatBusy=false;
+
+  if(res.error) {
+    // Remove optimistic message
+    S.session.history.pop();
+    showBanner('error', res.error, 5000);
+  } else {
+    // Add assistant response
+    S.session.history.push({role:'assistant',content:res.response});
+    if(res.scenes?.length) {
+      S.session.scenes = res.scenes;
+      // Refresh projects list since new scenes were saved
+      S.projects = await fetchJSON('/api/projects').catch(()=>S.projects);
+    }
+    // Keep prompt in sync for project bar
+    if(!S.session.prompt && S.session.history.length) {
+      const first = S.session.history.find(m=>m.role==='user');
+      if(first) S.session.prompt = first.content;
+    }
+    // Handle generate command intercepted by backend
+    if(res.generate_requested) {
+      const genRes = await postJSON('/api/generate',{}).catch(e=>({error:e.message}));
+      if(genRes.error) showBanner('error',genRes.error,5000);
+      else showBanner('success','🎬 Generation started! Monitor in the main app.',5000);
+      if(tg) tg.HapticFeedback?.notificationOccurred('success');
+    }
+  }
+  render();
+}
+
+async function handleAddCharacter() {
+  const nameEl=document.getElementById('char-name');
+  const descEl=document.getElementById('char-desc');
+  if(!nameEl) return;
+  const name=nameEl.value.trim();
+  if(!name) { showBanner('error','Character name is required.',3000); return; }
+
+  const res = await postJSON('/api/character',{
+    name,
+    description: descEl?.value.trim()||'',
+    role: window._selectedRole?.()||'',
+  }).catch(e=>({error:e.message}));
+
+  if(res.error) { showBanner('error',res.error,4000); return; }
+
+  // Refresh session
+  S.session = await fetchJSON('/api/session').catch(()=>S.session);
+  showBanner('success','Character "'+name+'" added.',3000);
+  if(tg) tg.HapticFeedback?.notificationOccurred('success');
+  render();
+}
+
+async function handleGenerate() {
+  const res = await postJSON('/api/generate',{}).catch(e=>({error:e.message}));
+  if(res.error) { showBanner('error',res.error,5000); return; }
+  showBanner('success', res.message, 5000);
+  if(tg) tg.HapticFeedback?.notificationOccurred('success');
+}
+
+async function handleChatGenerate() {
+  // Send "generate" as a chat message — the backend intercepts it
+  if(!S.session) S.session={active:true,history:[],scenes:[],characters:[],project_id:'',style:'',workflow:'fast-start',video_length_secs:60};
+  S.session.history.push({role:'user',content:'generate'});
+  S.chatBusy=true;
+  render();
+
+  const res = await postJSON('/api/chat',{message:'generate'}).catch(e=>({error:e.message}));
+  S.chatBusy=false;
+
+  if(res.error) {
+    S.session.history.pop();
+    showBanner('error', res.error, 5000);
+  } else {
+    S.session.history.push({role:'assistant',content:res.response});
+    if(res.scenes?.length) S.session.scenes = res.scenes;
+    if(res.generate_requested) {
+      // Also call the actual generate endpoint
+      const genRes = await postJSON('/api/generate',{}).catch(e=>({error:e.message}));
+      if(genRes.error) showBanner('error',genRes.error,5000);
+      else showBanner('success','🎬 Generation started! Monitor in the main app.',5000);
+      if(tg) tg.HapticFeedback?.notificationOccurred('success');
+    }
+  }
+  render();
+}
+
+async function handleNewProject() {
+  await postJSON('/api/reset',{}).catch(()=>{});
+  S.session = await fetchJSON('/api/session').catch(()=>null);
+  S.projects = await fetchJSON('/api/projects').catch(()=>S.projects);
+  S.createPrompt = '';
+  S.selectedStyle = '';
+  S.selectedWorkflow = 'fast-start';
+  S.selectedLength = 60;
+  S.tab = 'create';
+  showBanner('info','Starting fresh — ready for a new project.',3000);
+  if(tg) tg.HapticFeedback?.notificationOccurred('success');
+  render();
+}
+
+// ── LLM start handler ─────────────────────────────────────
+async function handleStartLlm() {
+  if(S.llmStarting) return;
+  S.llmStarting=true;
+  render();
+  showBanner('info','Starting local AI — this may take 30–60 seconds...',0);
+
+  const res = await postJSON('/api/llm/start',{}).catch(e=>({ok:false,error:e.message}));
+  S.llmStarting=false;
+
+  if(res.ok) {
+    S.llmStatus = await fetchJSON('/api/llm/status').catch(()=>S.llmStatus);
+    // Also refresh music status so prompt lab unlocks
+    S.musicStatus = await fetchJSON('/api/music/status').catch(()=>S.musicStatus);
+    S.banner=null;
+    showBanner('success', res.already_running ? 'AI already running.' : '🤖 Local AI started!', 3000);
+    if(tg) tg.HapticFeedback?.notificationOccurred('success');
+  } else {
+    S.banner=null;
+    showBanner('error', res.error||'Failed to start AI.', 5000);
+  }
+  render();
+}
+
+// ── Video action handlers ─────────────────────────────────
+async function handleVideoGenerate() {
+  const prompt=S.videoPrompt.trim();
+  if(!prompt) { showBanner('error','Describe what should happen in the video.',3000); return; }
+  if(S.videoGenerating) return;
+
+  const [w,h] = S.videoDims.split('x').map(Number);
+
+  S.videoGenerating=true;
+  S.videoProgress={message:'Submitting to LTX...',percent:5};
+  render();
+
+  // Simulate progress while waiting (LTX can take several minutes)
+  const pollId = setInterval(()=>{
+    if(!S.videoGenerating) { clearInterval(pollId); return; }
+    const pct = Math.min(88, (S.videoProgress?.percent||5)+1.5);
+    const elapsed = Math.round(pct*2);
+    S.videoProgress={message:`Generating frames (${elapsed}s elapsed)...`,percent:pct};
+    render();
+  }, 6000);
+
+  const body = {
+    prompt,
+    negative_prompt: S.videoNegPrompt.trim()||null,
+    width: w, height: h,
+    num_frames: S.videoFrames,
+    num_steps: 30,
+    guidance_scale: 3.5,
+    fps: 24,
+    seed: -1,
+    image_path: S.videoSelectedImage||null,
+  };
+
+  const res = await postJSON('/api/video/generate', body).catch(e=>({error:e.message}));
+
+  clearInterval(pollId);
+  S.videoGenerating=false;
+  S.videoProgress=null;
+
+  if(res.error) {
+    showBanner('error', res.error, 6000);
+  } else {
+    S.videoLibrary = await fetchJSON('/api/video/library').catch(()=>S.videoLibrary);
+    S.videoSubTab='library';
+    showBanner('success','🎬 Video generated!',4000);
+    if(tg) tg.HapticFeedback?.notificationOccurred('success');
+  }
+  render();
+}
+
+// ── Music action handlers ─────────────────────────────────
+async function handleMusicGenerate() {
+  const prompt=S.musicPrompt.trim();
+  if(!prompt) { showBanner('error','Describe the music you want.',3000); return; }
+  if(S.musicGenerating) return;
+
+  S.musicGenerating=true;
+  S.musicProgress={message:'Submitting to ACE-Step...',percent:5};
+  render();
+
+  // Poll progress periodically
+  const pollId = setInterval(()=>{
+    if(!S.musicGenerating) { clearInterval(pollId); return; }
+    const pct = Math.min(90, (S.musicProgress?.percent||5)+2);
+    const elapsed = Math.round(pct*1.5);
+    S.musicProgress={message:`Generating (${elapsed}s elapsed)...`,percent:pct};
+    render();
+  }, 5000);
+
+  const res = await postJSON('/api/music/generate',{
+    prompt,
+    duration_secs: S.musicDuration,
+    tags: S.musicTags.trim()||prompt,
+    lyrics: S.musicInstrumental?'[inst]':S.musicLyrics.trim(),
+    instrumental: S.musicInstrumental,
+  }).catch(e=>({error:e.message}));
+
+  clearInterval(pollId);
+  S.musicGenerating=false;
+  S.musicProgress=null;
+
+  if(res.error) {
+    showBanner('error',res.error,5000);
+  } else {
+    S.musicLibrary = await fetchJSON('/api/music/library').catch(()=>S.musicLibrary);
+    showBanner('success','Music generated successfully.',4000);
+    if(tg) tg.HapticFeedback?.notificationOccurred('success');
+  }
+  render();
+}
+
+async function handlePlabSend() {
+  const input=document.getElementById('plab-input');
+  if(!input) return;
+  const msg=input.value.trim();
+  if(!msg||S.musicPlabBusy) return;
+
+  S.musicPlabHistory.push({role:'user',content:msg});
+  S.musicPlabBusy=true;
+  render();
+
+  const res = await postJSON('/api/music/promptlab',{
+    message:msg,
+    history:S.musicPlabHistory.slice(0,-1), // exclude the message we just added
+  }).catch(e=>({error:e.message}));
+
+  S.musicPlabBusy=false;
+  if(res.error) {
+    S.musicPlabHistory.pop();
+    showBanner('error',res.error,5000);
+  } else {
+    S.musicPlabHistory.push({role:'assistant',content:res.response});
+  }
+  render();
+}
+
+function applyPromptBlock(block) {
+  const getField = (key) => {
+    const m = block.match(new RegExp('^'+key+':\\s*(.+)','mi'));
+    return m ? m[1].trim() : '';
+  };
+  const caption = getField('CAPTION');
+  const tags = getField('TAGS');
+  const bpm = getField('BPM');
+  const instrumental = getField('INSTRUMENTAL').toLowerCase()==='true';
+  const duration = getField('DURATION');
+  const lyricsMatch = block.match(/LYRICS:\n([\s\S]*?)(?=\n(?:BPM|KEY|TIME_SIGNATURE|INSTRUMENTAL|DURATION):|\s*$)/i);
+  const lyrics = lyricsMatch ? lyricsMatch[1].trim() : '';
+
+  if(caption) S.musicPrompt=caption;
+  if(tags) S.musicTags=tags;
+  S.musicInstrumental=instrumental;
+  if(lyrics && !instrumental) S.musicLyrics=lyrics;
+  if(duration && duration!=='auto') S.musicDuration=Math.min(300,Math.max(10,parseInt(duration)||60));
+  S.musicSubTab='generate';
+  render();
+}
+
+function handleMusicPlay(id, filePath) {
+  if(S.musicPlayingId===id) {
+    // Stop
+    if(S.musicRafId) { cancelAnimationFrame(S.musicRafId); S.musicRafId=null; }
+    if(S.musicAudioEl) { S.musicAudioEl.pause(); S.musicAudioEl=null; }
+    S.musicPlayingId=null;
+    S.musicPlayPct=0;
+    render();
+    return;
+  }
+  // Stop any current playback
+  if(S.musicRafId) { cancelAnimationFrame(S.musicRafId); S.musicRafId=null; }
+  if(S.musicAudioEl) { S.musicAudioEl.pause(); S.musicAudioEl=null; }
+  const audio = new Audio(mediaUrl(filePath));
+  audio.volume=0.7;
+  audio.onended=()=>{ if(S.musicRafId) cancelAnimationFrame(S.musicRafId); S.musicPlayingId=null; S.musicAudioEl=null; S.musicPlayPct=0; S.musicRafId=null; render(); };
+  audio.onerror=()=>{ if(S.musicRafId) cancelAnimationFrame(S.musicRafId); S.musicPlayingId=null; S.musicAudioEl=null; S.musicPlayPct=0; S.musicRafId=null; showBanner('error','Playback failed',3000); render(); };
+  const tick=()=>{
+    if(audio.duration) {
+      S.musicPlayPct=audio.currentTime/audio.duration;
+      // Update scrub bar directly without full re-render
+      const fill=document.querySelector('.music-scrub-fill');
+      const thumb=document.querySelector('.music-scrub-thumb');
+      if(fill) fill.style.width=S.musicPlayPct*100+'%';
+      if(thumb) thumb.style.left=S.musicPlayPct*100+'%';
+    }
+    S.musicRafId=requestAnimationFrame(tick);
+  };
+  audio.play().then(()=>{ S.musicRafId=requestAnimationFrame(tick); }).catch(()=>{});
+  S.musicAudioEl=audio;
+  S.musicPlayingId=id;
+  S.musicPlayPct=0;
+  render();
+  if(tg) tg.HapticFeedback?.impactOccurred('light');
+}
+
+// ── Telegram back button ──────────────────────────────────
+if(tg) {
+  tg.BackButton?.onClick(()=>{
+    if(S.detail) { S.detail=null; render(); tg.BackButton.hide(); }
+    else { tg.close(); }
+  });
+}
+const _origRender=render;
+render=function(){
+  _origRender();
+  if(tg) { if(S.detail) tg.BackButton?.show(); else tg.BackButton?.hide(); }
+};
+
+// ── Init ──────────────────────────────────────────────────
+(async function init() {
+  S.loading=true; render();
+  await loadAll();
+  // If there's an active session, default to chat tab
+  if(S.session?.active && S.session.history.length) S.tab='chat';
+  S.loading=false; render();
+})();
+</script>
+</body>
+</html>
