@@ -14,7 +14,7 @@ const DEFAULT_TIMEOUT = 300000; // 5 minutes
  * Each key is a subagent type name, value is an array of keywords.
  */
 const CATEGORY_KEYWORDS = {
-  'explore': ['explore', 'understand', 'analyze', 'overview', 'structure', 'architecture', 'how does', 'explain'],
+  'explore': ['explore', 'understand', 'analyze', 'overview', 'structure', 'how does', 'explain'],
   'context-gather': ['context', 'gather', 'find relevant', 'related files', 'dependencies', 'what files'],
   'code-search': ['search', 'find', 'grep', 'locate', 'lookup', 'ast', 'query', 'where is', 'usage'],
   'requirements': ['requirement', 'requirements', 'spec', 'specification', 'user story', 'acceptance'],

@@ -572,17 +572,34 @@ describe('7.1 Verify main.js wiring', () => {
     }
   });
 
-  it('main.js registers ast-search as tool for code-search and implementation', () => {
+  it('main.js registers expected tools for code-search and implementation', () => {
     const mainSource = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf-8');
 
-    // Find the code-search registration line and verify it has ast-search
+    // Verify the subagent types are registered
     assert.ok(
-      mainSource.includes("name: 'code-search'") && mainSource.includes("allowedTools: ['ast-search']"),
-      'code-search type should have ast-search in allowedTools'
+      mainSource.includes("name: 'code-search'"),
+      'main.js should register code-search subagent type'
     );
     assert.ok(
-      mainSource.includes("name: 'implementation'") && mainSource.includes("allowedTools: ['ast-search']"),
-      'implementation type should have ast-search in allowedTools'
+      mainSource.includes("name: 'implementation'"),
+      'main.js should register implementation subagent type'
+    );
+
+    // Verify code-search has search-related tools
+    // The code-search registration line should include search_files
+    const codeSearchMatch = mainSource.match(/name:\s*'code-search'[^}]*allowedTools:\s*\[([^\]]*)\]/);
+    assert.ok(codeSearchMatch, 'code-search type should have an allowedTools array');
+    assert.ok(
+      codeSearchMatch[1].includes('search_files'),
+      'code-search type should have search_files in allowedTools'
+    );
+
+    // Verify implementation has file-writing tools
+    const implMatch = mainSource.match(/name:\s*'implementation'[^}]*allowedTools:\s*\[([^\]]*)\]/);
+    assert.ok(implMatch, 'implementation type should have an allowedTools array');
+    assert.ok(
+      implMatch[1].includes('write_file'),
+      'implementation type should have write_file in allowedTools'
     );
   });
 
