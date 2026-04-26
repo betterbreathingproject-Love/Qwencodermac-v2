@@ -416,14 +416,55 @@ function createWindow() {
           jobController: remoteJobController,
           port: MINIAPP_PORT,
           onRunJob: (prompt) => {
-            // Trigger the real Qwen agent via the same path as the main UI
-            if (qwenBridge) {
-              const cwd = currentProject || process.cwd()
-              mainWindow?.webContents.send('qwen-event', { type: 'start', prompt })
-              qwenBridge.run({ prompt, cwd, permissionMode: 'auto-edit' }).catch((err) => {
-                mainWindow?.webContents.send('qwen-event', { type: 'error', error: err.message })
-              })
+            // Create a dedicated bridge for the mini app job
+            const { DirectBridge, CallbackSink } = require('./direct-bridge')
+            const cwd = currentProject || process.cwd()
+
+            // Update controller state
+            const jobId = `miniapp_${Date.now()}`
+            if (remoteJobController._state !== undefined) {
+              remoteJobController._state = 'running'
+              remoteJobController._jobId = jobId
             }
+
+            // Add log entry
+            miniAppServer._logs.push({ type: 'log', text: `🚀 Job started: ${prompt}`, logType: 'info', time: Date.now() })
+
+            // Create a sink that feeds logs to the mini app server
+            const sink = {
+              send: (channel, data) => {
+                if (channel === 'qwen-event' && miniAppServer) {
+                  if (data.type === 'assistant' || data.type === 'text') {
+                    miniAppServer._logs.push({ type: 'log', text: data.content || data.text || '', logType: 'info', time: Date.now() })
+                  } else if (data.type === 'tool_call' || data.type === 'tool-start') {
+                    miniAppServer._logs.push({ type: 'tool_use', tool: data.name || data.tool || 'tool', summary: data.input?.substring?.(0, 100) || '', time: Date.now() })
+                  } else if (data.type === 'tool_result' || data.type === 'tool-end') {
+                    miniAppServer._logs.push({ type: 'log', text: `✓ ${data.name || 'tool'} done`, logType: 'result', time: Date.now() })
+                  }
+                  if (miniAppServer._logs.length > 200) miniAppServer._logs.shift()
+                }
+                // Also forward to main window for visibility
+                mainWindow?.webContents.send(channel, data)
+              }
+            }
+
+            const bridge = new DirectBridge(sink, { lspManager })
+
+            bridge.run({ prompt, cwd, permissionMode: 'auto-edit' })
+              .then(() => {
+                if (remoteJobController._state !== undefined) {
+                  remoteJobController._state = 'completed'
+                }
+                miniAppServer._logs.push({ type: 'log', text: '✅ Job completed', logType: 'result', time: Date.now() })
+                bridge.close().catch(() => {})
+              })
+              .catch((err) => {
+                if (remoteJobController._state !== undefined) {
+                  remoteJobController._state = 'failed'
+                }
+                miniAppServer._logs.push({ type: 'log', text: `❌ ${err.message}`, logType: 'error', time: Date.now() })
+                bridge.close().catch(() => {})
+              })
           },
         })
         miniAppServer.start()
