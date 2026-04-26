@@ -522,3 +522,239 @@ describe('Orchestrator - getStatus', () => {
     assert.equal(orch.getStatus().state, 'completed');
   });
 });
+
+// --- 5.3 Safe-edit injection tests (Requirements 7.1, 7.2, 7.3) ---
+
+const { SAFE_EDIT_INSTRUCTIONS } = require('../orchestrator.js');
+
+/**
+ * Creates a mock agent pool that captures the task object passed to dispatch,
+ * with a configurable `selectType` return value.
+ */
+function createMockAgentPoolWithSelectType(agentTypeName) {
+  const calls = [];
+  return {
+    calls,
+    selectType(_node) {
+      return agentTypeName ? { name: agentTypeName } : null;
+    },
+    async dispatch(task, context) {
+      calls.push({ task, context });
+      return {
+        output: `Result for ${task.id}`,
+        duration: 10,
+        agentType: agentTypeName || 'general',
+      };
+    },
+  };
+}
+
+/**
+ * Creates a mock LSP manager with a configurable status.
+ */
+function createMockLspManager(status) {
+  return {
+    getStatus() {
+      return { status, servers: [] };
+    },
+  };
+}
+
+describe('Orchestrator - safe-edit injection', () => {
+  it('injects SAFE_EDIT_INSTRUCTIONS when agent type is implementation and LSP is ready', async () => {
+    // Use two tasks so the second goes through _dispatchNode (start node uses _executeNode)
+    const md = [
+      '- [ ] 1 Setup task',
+      '- [ ] 2 Implement feature',
+    ].join('\n');
+    const graph = parseTaskGraph(md);
+    const pool = createMockAgentPoolWithSelectType('implementation');
+    const lspManager = createMockLspManager('ready');
+
+    const orch = new Orchestrator({
+      taskGraph: graph,
+      agentPool: pool,
+      lspManager,
+    });
+
+    await orch.start();
+
+    assert.equal(pool.calls.length, 2);
+    // Second task goes through _dispatchNode which has the injection logic
+    assert.equal(pool.calls[1].task.systemPromptSuffix, SAFE_EDIT_INSTRUCTIONS);
+  });
+
+  it('does NOT inject instructions when LSP status is not ready', async () => {
+    const md = [
+      '- [ ] 1 Setup task',
+      '- [ ] 2 Implement feature',
+    ].join('\n');
+    const graph = parseTaskGraph(md);
+    const pool = createMockAgentPoolWithSelectType('implementation');
+    const lspManager = createMockLspManager('stopped');
+
+    const orch = new Orchestrator({
+      taskGraph: graph,
+      agentPool: pool,
+      lspManager,
+    });
+
+    await orch.start();
+
+    assert.equal(pool.calls.length, 2);
+    assert.equal(pool.calls[1].task.systemPromptSuffix, undefined);
+  });
+
+  it('does NOT inject instructions when LSP status is error', async () => {
+    const md = [
+      '- [ ] 1 Setup task',
+      '- [ ] 2 Implement feature',
+    ].join('\n');
+    const graph = parseTaskGraph(md);
+    const pool = createMockAgentPoolWithSelectType('implementation');
+    const lspManager = createMockLspManager('error');
+
+    const orch = new Orchestrator({
+      taskGraph: graph,
+      agentPool: pool,
+      lspManager,
+    });
+
+    await orch.start();
+
+    assert.equal(pool.calls.length, 2);
+    assert.equal(pool.calls[1].task.systemPromptSuffix, undefined);
+  });
+
+  it('does NOT inject instructions for explore agent type', async () => {
+    const md = [
+      '- [ ] 1 Setup task',
+      '- [ ] 2 Explore codebase',
+    ].join('\n');
+    const graph = parseTaskGraph(md);
+    const pool = createMockAgentPoolWithSelectType('explore');
+    const lspManager = createMockLspManager('ready');
+
+    const orch = new Orchestrator({
+      taskGraph: graph,
+      agentPool: pool,
+      lspManager,
+    });
+
+    await orch.start();
+
+    assert.equal(pool.calls.length, 2);
+    assert.equal(pool.calls[1].task.systemPromptSuffix, undefined);
+  });
+
+  it('does NOT inject instructions for context-gather agent type', async () => {
+    const md = [
+      '- [ ] 1 Setup task',
+      '- [ ] 2 Gather context',
+    ].join('\n');
+    const graph = parseTaskGraph(md);
+    const pool = createMockAgentPoolWithSelectType('context-gather');
+    const lspManager = createMockLspManager('ready');
+
+    const orch = new Orchestrator({
+      taskGraph: graph,
+      agentPool: pool,
+      lspManager,
+    });
+
+    await orch.start();
+
+    assert.equal(pool.calls.length, 2);
+    assert.equal(pool.calls[1].task.systemPromptSuffix, undefined);
+  });
+
+  it('does NOT inject instructions for general agent type', async () => {
+    const md = [
+      '- [ ] 1 Setup task',
+      '- [ ] 2 General task',
+    ].join('\n');
+    const graph = parseTaskGraph(md);
+    const pool = createMockAgentPoolWithSelectType('general');
+    const lspManager = createMockLspManager('ready');
+
+    const orch = new Orchestrator({
+      taskGraph: graph,
+      agentPool: pool,
+      lspManager,
+    });
+
+    await orch.start();
+
+    assert.equal(pool.calls.length, 2);
+    assert.equal(pool.calls[1].task.systemPromptSuffix, undefined);
+  });
+
+  it('works normally when lspManager is null', async () => {
+    const md = [
+      '- [ ] 1 Setup task',
+      '- [ ] 2 Task without LSP',
+    ].join('\n');
+    const graph = parseTaskGraph(md);
+    const pool = createMockAgentPoolWithSelectType('implementation');
+
+    const orch = new Orchestrator({
+      taskGraph: graph,
+      agentPool: pool,
+      lspManager: null,
+    });
+
+    await orch.start();
+
+    assert.equal(orch.getStatus().state, 'completed');
+    assert.equal(pool.calls.length, 2);
+    assert.equal(pool.calls[1].task.systemPromptSuffix, undefined);
+  });
+
+  it('works normally when lspManager is undefined (not provided)', async () => {
+    const md = [
+      '- [ ] 1 Setup task',
+      '- [ ] 2 Task without LSP',
+    ].join('\n');
+    const graph = parseTaskGraph(md);
+    const pool = createMockAgentPoolWithSelectType('implementation');
+
+    const orch = new Orchestrator({
+      taskGraph: graph,
+      agentPool: pool,
+    });
+
+    await orch.start();
+
+    assert.equal(orch.getStatus().state, 'completed');
+    assert.equal(pool.calls.length, 2);
+    assert.equal(pool.calls[1].task.systemPromptSuffix, undefined);
+  });
+
+  it('works normally when selectType returns null', async () => {
+    const md = [
+      '- [ ] 1 Setup task',
+      '- [ ] 2 Unknown agent task',
+    ].join('\n');
+    const graph = parseTaskGraph(md);
+    const pool = createMockAgentPoolWithSelectType(null);
+    const lspManager = createMockLspManager('ready');
+
+    const orch = new Orchestrator({
+      taskGraph: graph,
+      agentPool: pool,
+      lspManager,
+    });
+
+    await orch.start();
+
+    assert.equal(orch.getStatus().state, 'completed');
+    assert.equal(pool.calls.length, 2);
+    assert.equal(pool.calls[1].task.systemPromptSuffix, undefined);
+  });
+
+  it('SAFE_EDIT_INSTRUCTIONS constant contains expected workflow steps', () => {
+    assert.ok(SAFE_EDIT_INSTRUCTIONS.includes('lsp_get_change_impact'), 'should mention blast radius tool');
+    assert.ok(SAFE_EDIT_INSTRUCTIONS.includes('lsp_simulate_edit_atomic'), 'should mention speculative edit tool');
+    assert.ok(SAFE_EDIT_INSTRUCTIONS.includes('lsp_get_diagnostics'), 'should mention diagnostics tool');
+  });
+});

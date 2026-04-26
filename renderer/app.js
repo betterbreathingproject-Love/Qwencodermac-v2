@@ -8,6 +8,7 @@ let activeSessionType = 'vibe'
 let conversationHistory = [] // [{role, content, ts}]
 let projectSettings = null  // context settings for active project
 let compactorInstalled = false
+let currentLspStatus = 'stopped' // track LSP status globally
 let permMode = 'auto-edit' // 'auto-edit' or 'default'
 let currentTodos = [] // persisted todo list for active session
 
@@ -385,6 +386,10 @@ async function openFile(path, name) {
   document.getElementById('saveBtn').style.display = 'inline-block'
   updatePreviewToggle()
   switchMainTab('editor', document.querySelector('[data-tab="editor"]'))
+  // Fetch symbols when LSP is ready
+  if (currentLspStatus === 'ready') {
+    fetchAndRenderSymbols(path)
+  }
 }
 async function saveFile() {
   if(!currentFile) return
@@ -3041,6 +3046,8 @@ function setLspStatus({ status, servers = [] }) {
   const txt  = document.getElementById('lspText')
   if (!chip) return
 
+  currentLspStatus = status
+
   // Always show the chip — gray when stopped/unavailable
   chip.style.display = 'inline-flex'
 
@@ -3061,6 +3068,16 @@ function setLspStatus({ status, servers = [] }) {
     stopped:  'LSP not available — install agent-lsp binary',
   }
   chip.title = tooltips[status] || 'LSP unknown'
+
+  // Show/hide symbol panel based on LSP status
+  const symbolPanel = document.getElementById('symbolPanel')
+  if (symbolPanel) {
+    symbolPanel.style.display = status === 'ready' ? 'flex' : 'none'
+  }
+  // If LSP just became ready and we have a file open, fetch symbols
+  if (status === 'ready' && currentFile) {
+    fetchAndRenderSymbols(currentFile)
+  }
 }
 
 async function initLspStatus() {
@@ -3074,6 +3091,136 @@ async function initLspStatus() {
     // Re-fetch full status to get server list
     window.app.lspStatus().then(setLspStatus).catch(() => {})
   })
+
+  // Wire click handler for LSP status popover
+  const chip = document.getElementById('lspChip')
+  if (chip) chip.addEventListener('click', toggleLspPopover)
+}
+
+// ── LSP status popover ────────────────────────────────────────────────────────
+
+let _lspPopoverOpen = false
+
+async function toggleLspPopover() {
+  const chip = document.getElementById('lspChip')
+  if (!chip) return
+
+  // Close if already open
+  const existing = chip.querySelector('.lsp-popover')
+  if (existing) {
+    existing.remove()
+    _lspPopoverOpen = false
+    return
+  }
+
+  // Fetch current status
+  let data = { status: currentLspStatus, servers: [] }
+  try {
+    if (window.app.lspStatus) data = await window.app.lspStatus()
+  } catch { /* use defaults */ }
+
+  // Build popover content
+  const pop = document.createElement('div')
+  pop.className = 'lsp-popover'
+
+  const statusLabel = {
+    ready: '🟢 Ready', starting: '🟡 Starting', degraded: '🟡 Degraded',
+    error: '🔴 Error', stopped: '⚪ Stopped',
+  }
+  pop.innerHTML = `<div class="lsp-popover-header">LSP — ${statusLabel[data.status] || data.status}</div>`
+
+  if (data.servers && data.servers.length > 0) {
+    for (const srv of data.servers) {
+      const langs = (srv.languages || []).join(', ') || 'unknown'
+      pop.innerHTML += `<div class="lsp-popover-item"><div><div class="lsp-popover-name">${esc(srv.name)}</div><div class="lsp-popover-langs">${esc(langs)}</div></div></div>`
+    }
+  } else {
+    pop.innerHTML += '<div class="lsp-popover-empty">No language servers active</div>'
+  }
+
+  chip.appendChild(pop)
+  _lspPopoverOpen = true
+
+  // Close on outside click (delayed so the current click doesn't immediately close it)
+  setTimeout(() => {
+    const onOutside = (e) => {
+      if (!pop.contains(e.target)) {
+        pop.remove()
+        _lspPopoverOpen = false
+        document.removeEventListener('click', onOutside)
+      }
+    }
+    document.addEventListener('click', onOutside)
+  }, 0)
+}
+
+// ── Symbol panel ──────────────────────────────────────────────────────────────
+
+const SYMBOL_KIND_ICONS = {
+  function: 'ƒ', class: 'C', variable: 'v', method: 'm',
+  property: 'p', interface: 'I', enum: 'E', constant: 'K',
+}
+
+function symbolKindIcon(kind) {
+  const k = (kind || '').toLowerCase()
+  return SYMBOL_KIND_ICONS[k] || '•'
+}
+
+async function fetchAndRenderSymbols(filePath) {
+  const list = document.getElementById('symbolList')
+  if (!list) return
+  if (!window.app.lspSymbols) { list.innerHTML = ''; return }
+  try {
+    const result = await window.app.lspSymbols(filePath)
+    const symbols = result?.symbols || result || []
+    if (!Array.isArray(symbols) || symbols.length === 0) {
+      list.innerHTML = '<div class="symbol-empty">No symbols</div>'
+      return
+    }
+    list.innerHTML = renderSymbolTree(symbols)
+  } catch {
+    list.innerHTML = '<div class="symbol-empty">Failed to load symbols</div>'
+  }
+}
+
+function renderSymbolTree(symbols) {
+  if (!symbols || !symbols.length) return ''
+  return '<ul class="symbol-ul">' + symbols.map(s => {
+    const icon = symbolKindIcon(s.kind)
+    const line = s.line != null ? s.line : (s.range?.start?.line != null ? s.range.start.line : '')
+    const lineDisplay = line !== '' ? line + 1 : '' // 0-indexed to 1-indexed
+    const children = s.children?.length ? renderSymbolTree(s.children) : ''
+    return `<li class="symbol-item" data-line="${line}">
+      <div class="symbol-row" onclick="scrollEditorToLine(${line})">
+        <span class="symbol-kind symbol-kind-${icon}">${icon}</span>
+        <span class="symbol-name">${esc(s.name)}</span>
+        ${lineDisplay ? `<span class="symbol-line">:${lineDisplay}</span>` : ''}
+      </div>${children}</li>`
+  }).join('') + '</ul>'
+}
+
+function scrollEditorToLine(line) {
+  if (line == null || line === '') return
+  const editor = document.getElementById('editorArea')
+  if (!editor) return
+  // Switch to editor tab if not already there
+  const edTab = document.querySelector('[data-tab="editor"]')
+  if (edTab && !edTab.classList.contains('active')) {
+    switchMainTab('editor', edTab)
+  }
+  const text = editor.value
+  const lines = text.split('\n')
+  // Calculate character offset for the target line
+  let charOffset = 0
+  for (let i = 0; i < Math.min(line, lines.length); i++) {
+    charOffset += lines[i].length + 1
+  }
+  editor.focus()
+  editor.setSelectionRange(charOffset, charOffset)
+  // Scroll the textarea so the line is visible
+  const lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || 19.2
+  const targetScroll = Math.max(0, line * lineHeight - editor.clientHeight / 3)
+  editor.scrollTop = targetScroll
 }
 
 // ── Tools panel ───────────────────────────────────────────────────────────────

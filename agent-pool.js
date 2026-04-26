@@ -2,6 +2,7 @@
 
 const { EventEmitter } = require('node:events');
 const crypto = require('node:crypto');
+const { LSP_TOOL_SETS } = require('./direct-bridge');
 
 // --- Constants ---
 
@@ -29,12 +30,14 @@ class AgentPool extends EventEmitter {
    * @param {number} [options.maxConcurrency=3]
    * @param {number} [options.defaultTimeout=300000]
    * @param {function} [options.agentFactory] - Optional factory for creating agents (for DI/testing)
+   * @param {function} [options.getLspStatus] - Callback returning current LSP status string (e.g. 'ready', 'stopped')
    */
   constructor(options = {}) {
     super();
     this._maxConcurrency = options.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY;
     this._defaultTimeout = options.defaultTimeout ?? DEFAULT_TIMEOUT;
     this._agentFactory = options.agentFactory || null;
+    this._getLspStatus = options.getLspStatus || null;
 
     // Subagent type registry: Map<name, SubagentType>
     this._types = new Map();
@@ -69,50 +72,86 @@ class AgentPool extends EventEmitter {
     });
   }
 
+  /**
+   * Set or replace the LSP status getter callback.
+   * @param {function} fn - Returns the current LSP status string (e.g. 'ready', 'stopped')
+   */
+  setLspStatusGetter(fn) {
+    this._getLspStatus = typeof fn === 'function' ? fn : null;
+  }
+
+  /**
+   * Get the effective allowed tools for a type, merging LSP tools when LSP is ready.
+   * @param {object} typeConfig - The registered SubagentType config
+   * @returns {string[]} Merged tool list
+   */
+  _getEffectiveTools(typeConfig) {
+    if (!typeConfig) return [];
+    const base = typeConfig.allowedTools || [];
+    const lspStatus = typeof this._getLspStatus === 'function' ? this._getLspStatus() : null;
+    if (lspStatus !== 'ready') return base;
+    const lspTools = LSP_TOOL_SETS[typeConfig.name] || [];
+    if (lspTools.length === 0) return base;
+    return [...base, ...lspTools];
+  }
+
   // --- Type Selection ---
 
   /**
    * Select the best subagent type for a task based on category keywords in title/metadata.
+   * Returns a copy of the type config with LSP tools merged into allowedTools when LSP is ready.
    * @param {object} task - TaskNode
-   * @returns {object|null} SubagentType config or null
+   * @returns {object|null} SubagentType config (with effective allowedTools) or null
    */
   selectType(task) {
-    if (!task) return this._types.get('general') || null;
+    let matched = null;
 
-    // Check explicit metadata category first
-    const explicitCategory = task.metadata?.category || task.metadata?.agentType;
-    if (explicitCategory && this._types.has(explicitCategory)) {
-      return this._types.get(explicitCategory);
-    }
+    if (!task) {
+      matched = this._types.get('general') || null;
+    } else {
+      // Check explicit metadata category first
+      const explicitCategory = task.metadata?.category || task.metadata?.agentType;
+      if (explicitCategory && this._types.has(explicitCategory)) {
+        matched = this._types.get(explicitCategory);
+      } else {
+        // Match keywords in title
+        const titleLower = (task.title || '').toLowerCase();
+        let bestMatch = null;
+        let bestScore = 0;
 
-    // Match keywords in title
-    const titleLower = (task.title || '').toLowerCase();
-    let bestMatch = null;
-    let bestScore = 0;
+        for (const [typeName, typeConfig] of this._types) {
+          const keywords = CATEGORY_KEYWORDS[typeName];
+          if (!keywords) continue;
 
-    for (const [typeName, typeConfig] of this._types) {
-      const keywords = CATEGORY_KEYWORDS[typeName];
-      if (!keywords) continue;
+          let score = 0;
+          for (const kw of keywords) {
+            if (titleLower.includes(kw)) {
+              score++;
+            }
+          }
 
-      let score = 0;
-      for (const kw of keywords) {
-        if (titleLower.includes(kw)) {
-          score++;
+          if (score > bestScore) {
+            bestScore = score;
+            bestMatch = typeConfig;
+          }
         }
-      }
 
-      if (score > bestScore) {
-        bestScore = score;
-        bestMatch = typeConfig;
+        // Fall back to 'general' type if no keyword match
+        matched = bestMatch || this._types.get('general') || null;
       }
     }
 
-    // Fall back to 'general' type if no keyword match
-    if (!bestMatch) {
-      bestMatch = this._types.get('general') || null;
-    }
+    if (!matched) return null;
 
-    return bestMatch;
+    // Return a copy with effective tools (base + LSP when ready)
+    const effectiveTools = this._getEffectiveTools(matched);
+    return {
+      name: matched.name,
+      systemPrompt: matched.systemPrompt,
+      allowedTools: effectiveTools,
+      timeout: matched.timeout,
+      maxConcurrent: matched.maxConcurrent,
+    };
   }
 
   // --- Semaphore ---
@@ -494,4 +533,5 @@ module.exports = {
   CATEGORY_KEYWORDS,
   DEFAULT_MAX_CONCURRENCY,
   DEFAULT_TIMEOUT,
+  LSP_TOOL_SETS,
 };

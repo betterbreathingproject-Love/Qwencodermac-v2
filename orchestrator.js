@@ -11,12 +11,23 @@ const {
 // Valid states and transitions
 const STATES = ['idle', 'running', 'paused', 'completed', 'aborted'];
 
+// Safe-edit workflow instructions injected into implementation agent prompts
+// when LSP is ready (Requirements 7.1, 7.2, 7.3)
+const SAFE_EDIT_INSTRUCTIONS = `
+## LSP Safe-Edit Workflow
+Before modifying exported symbols:
+1. Check blast radius: call lsp_get_change_impact to see affected files
+2. Preview changes: call lsp_simulate_edit_atomic before writing
+3. Verify after writing: call lsp_get_diagnostics to check for errors
+Follow this workflow for every file modification.`;
+
 class Orchestrator extends EventEmitter {
   /**
    * @param {object} options
    * @param {object} options.taskGraph - TaskGraph object
    * @param {object} options.agentPool - AgentPool with dispatch(task, context) method
    * @param {string} options.tasksFilePath - Path to Tasks.md for persistence
+   * @param {object} [options.lspManager] - LspManager instance for LSP-powered safe-edit injection
    * @param {function} [options.onStatusChange] - Callback(nodeId, status)
    * @param {function} [options.onError] - Callback(nodeId, error)
    * @param {function} [options.onComplete] - Callback()
@@ -27,6 +38,7 @@ class Orchestrator extends EventEmitter {
     this._agentPool = options.agentPool;
     this._tasksFilePath = options.tasksFilePath || null;
     this._specContext = options.specContext || '';
+    this._lspManager = options.lspManager || null;
     this._onStatusChange = options.onStatusChange || null;
     this._onError = options.onError || null;
     this._onComplete = options.onComplete || null;
@@ -183,8 +195,16 @@ class Orchestrator extends EventEmitter {
 
     try {
       const startTime = Date.now();
+      const task = { ...node, status: 'in_progress', specContext: this._specContext };
+
+      // Inject safe-edit workflow instructions for implementation agents when LSP is ready
+      const selectedType = this._agentPool?.selectType?.(node);
+      if (selectedType?.name === 'implementation' && this._lspManager?.getStatus().status === 'ready') {
+        task.systemPromptSuffix = SAFE_EDIT_INSTRUCTIONS;
+      }
+
       const result = await this._agentPool.dispatch(
-        { ...node, status: 'in_progress', specContext: this._specContext },
+        task,
         this._context
       );
       const duration = Date.now() - startTime;
@@ -606,4 +626,4 @@ function validateRoutingDecision(decision, graph) {
     : { valid: false, errors };
 }
 
-module.exports = { Orchestrator, parseRoutingDecision, validateRoutingDecision };
+module.exports = { Orchestrator, parseRoutingDecision, validateRoutingDecision, SAFE_EDIT_INSTRUCTIONS };

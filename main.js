@@ -268,6 +268,7 @@ function createWindow() {
     mainWindow?.webContents.send('lsp-status-change', { oldStatus, newStatus })
   })
   qwenBridge.setLspManager(lspManager)
+  agentPool.setLspStatusGetter(() => lspManager?.getStatus()?.status)
   if (currentProject) {
     lspManager.start(currentProject).catch(() => {})
   }

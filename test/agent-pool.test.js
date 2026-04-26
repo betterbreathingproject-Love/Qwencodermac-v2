@@ -2,7 +2,7 @@
 
 const { describe, it, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { AgentPool, CATEGORY_KEYWORDS } = require('../agent-pool.js');
+const { AgentPool, CATEGORY_KEYWORDS, LSP_TOOL_SETS } = require('../agent-pool.js');
 
 // --- Helpers ---
 
@@ -293,5 +293,237 @@ describe('AgentPool - concurrency and query methods', () => {
     await Promise.all(promises);
 
     assert.ok(maxConcurrent <= 2, `Max concurrent was ${maxConcurrent}, expected <= 2`);
+  });
+});
+
+// --- 7.3 LSP tool merging in AgentPool ---
+
+describe('AgentPool - LSP tool merging', () => {
+  /** Helper: create a pool with all standard types and a given LSP status getter */
+  function createPoolWithLsp(getLspStatus) {
+    const pool = new AgentPool({ maxConcurrency: 3, defaultTimeout: 5000, getLspStatus });
+    // Register types that mirror the real roles with base (non-LSP) tools
+    pool.registerType({ name: 'explore', systemPrompt: 'Explore.', allowedTools: ['read_file', 'list_dir'], timeout: 10000 });
+    pool.registerType({ name: 'context-gather', systemPrompt: 'Gather context.', allowedTools: ['read_file', 'search_files'], timeout: 10000 });
+    pool.registerType({ name: 'code-search', systemPrompt: 'Search code.', allowedTools: ['ast-search', 'search_files'], timeout: 10000 });
+    pool.registerType({ name: 'implementation', systemPrompt: 'Implement.', allowedTools: ['write_file', 'edit_file', 'bash'], timeout: 60000 });
+    pool.registerType({ name: 'general', systemPrompt: 'General agent.', allowedTools: ['read_file', 'write_file', 'bash'], timeout: 30000 });
+    pool.registerType({ name: 'requirements', systemPrompt: 'Requirements.', allowedTools: ['read_file'], timeout: 30000 });
+    pool.registerType({ name: 'design', systemPrompt: 'Design.', allowedTools: ['read_file'], timeout: 30000 });
+    return pool;
+  }
+
+  // --- LSP ready: each role gets its correct LSP tools merged ---
+
+  describe('when LSP is ready', () => {
+    let pool;
+    beforeEach(() => {
+      pool = createPoolWithLsp(() => 'ready');
+    });
+
+    it('explore role includes correct LSP tools (Req 3.1)', () => {
+      const task = createTask('t1', 'Explore the project structure');
+      const selected = pool.selectType(task);
+      assert.equal(selected.name, 'explore');
+      for (const tool of LSP_TOOL_SETS['explore']) {
+        assert.ok(selected.allowedTools.includes(tool), `Missing LSP tool: ${tool}`);
+      }
+    });
+
+    it('context-gather role includes correct LSP tools (Req 3.2)', () => {
+      const task = createTask('t2', 'Gather context for related files', { category: 'context-gather' });
+      const selected = pool.selectType(task);
+      assert.equal(selected.name, 'context-gather');
+      for (const tool of LSP_TOOL_SETS['context-gather']) {
+        assert.ok(selected.allowedTools.includes(tool), `Missing LSP tool: ${tool}`);
+      }
+    });
+
+    it('code-search role includes correct LSP tools (Req 3.3)', () => {
+      const task = createTask('t3', 'Search for all usages of createPool');
+      const selected = pool.selectType(task);
+      assert.equal(selected.name, 'code-search');
+      for (const tool of LSP_TOOL_SETS['code-search']) {
+        assert.ok(selected.allowedTools.includes(tool), `Missing LSP tool: ${tool}`);
+      }
+    });
+
+    it('implementation role includes correct LSP tools (Req 3.4)', () => {
+      const task = createTask('t4', 'Implement the authentication module');
+      const selected = pool.selectType(task);
+      assert.equal(selected.name, 'implementation');
+      for (const tool of LSP_TOOL_SETS['implementation']) {
+        assert.ok(selected.allowedTools.includes(tool), `Missing LSP tool: ${tool}`);
+      }
+    });
+
+    it('general role includes same LSP tools as implementation (Req 3.5)', () => {
+      const task = createTask('t5', 'Do something unrecognized');
+      const selected = pool.selectType(task);
+      assert.equal(selected.name, 'general');
+      for (const tool of LSP_TOOL_SETS['general']) {
+        assert.ok(selected.allowedTools.includes(tool), `Missing LSP tool: ${tool}`);
+      }
+      // Verify general and implementation have the same LSP tool set
+      assert.deepEqual(LSP_TOOL_SETS['general'], LSP_TOOL_SETS['implementation']);
+    });
+  });
+
+  // --- LSP not ready: no LSP tools for any role ---
+
+  describe('when LSP is not ready', () => {
+    const nonReadyStatuses = ['stopped', 'starting', 'error', 'degraded'];
+
+    for (const status of nonReadyStatuses) {
+      it(`excludes LSP tools when LSP status is "${status}" (Req 3.6)`, () => {
+        const pool = createPoolWithLsp(() => status);
+        pool.registerType({ name: 'implementation', systemPrompt: 'Impl.', allowedTools: ['write_file', 'bash'], timeout: 60000 });
+        pool.registerType({ name: 'general', systemPrompt: 'General.', allowedTools: ['read_file'], timeout: 30000 });
+
+        const task = createTask('t1', 'Implement feature X');
+        const selected = pool.selectType(task);
+        assert.equal(selected.name, 'implementation');
+
+        // No lsp_ tools should be present
+        const lspTools = selected.allowedTools.filter(t => t.startsWith('lsp_'));
+        assert.equal(lspTools.length, 0, `Expected no LSP tools when status is "${status}", got: ${lspTools}`);
+      });
+    }
+
+    it('excludes LSP tools when getLspStatus is null', () => {
+      const pool = new AgentPool({ maxConcurrency: 1, defaultTimeout: 5000 });
+      pool.registerType({ name: 'implementation', systemPrompt: 'Impl.', allowedTools: ['write_file'], timeout: 60000 });
+      pool.registerType({ name: 'general', systemPrompt: 'General.', allowedTools: ['read_file'], timeout: 30000 });
+
+      const task = createTask('t1', 'Implement something');
+      const selected = pool.selectType(task);
+      const lspTools = selected.allowedTools.filter(t => t.startsWith('lsp_'));
+      assert.equal(lspTools.length, 0);
+    });
+  });
+
+  // --- Unknown roles get no LSP tools ---
+
+  describe('unknown roles get no LSP tools', () => {
+    it('role not in LSP_TOOL_SETS gets no LSP tools even when LSP is ready', () => {
+      const pool = createPoolWithLsp(() => 'ready');
+      // requirements and design are registered but have no LSP_TOOL_SETS entry
+      const task = createTask('t1', 'Gather requirements for login', { category: 'requirements' });
+      const selected = pool.selectType(task);
+      assert.equal(selected.name, 'requirements');
+
+      const lspTools = selected.allowedTools.filter(t => t.startsWith('lsp_'));
+      assert.equal(lspTools.length, 0, 'Requirements role should have no LSP tools');
+    });
+
+    it('design role gets no LSP tools even when LSP is ready', () => {
+      const pool = createPoolWithLsp(() => 'ready');
+      const task = createTask('t1', 'Design the database schema', { category: 'design' });
+      const selected = pool.selectType(task);
+      assert.equal(selected.name, 'design');
+
+      const lspTools = selected.allowedTools.filter(t => t.startsWith('lsp_'));
+      assert.equal(lspTools.length, 0, 'Design role should have no LSP tools');
+    });
+  });
+
+  // --- Base tools always present ---
+
+  describe('base allowed tools always present', () => {
+    it('base tools preserved when LSP is ready', () => {
+      const pool = createPoolWithLsp(() => 'ready');
+      const task = createTask('t1', 'Implement the auth module');
+      const selected = pool.selectType(task);
+      assert.equal(selected.name, 'implementation');
+
+      // Base tools for implementation: write_file, edit_file, bash
+      assert.ok(selected.allowedTools.includes('write_file'));
+      assert.ok(selected.allowedTools.includes('edit_file'));
+      assert.ok(selected.allowedTools.includes('bash'));
+    });
+
+    it('base tools preserved when LSP is not ready', () => {
+      const pool = createPoolWithLsp(() => 'stopped');
+      const task = createTask('t1', 'Implement the auth module');
+      const selected = pool.selectType(task);
+      assert.equal(selected.name, 'implementation');
+
+      assert.ok(selected.allowedTools.includes('write_file'));
+      assert.ok(selected.allowedTools.includes('edit_file'));
+      assert.ok(selected.allowedTools.includes('bash'));
+    });
+
+    it('explore base tools preserved regardless of LSP status', () => {
+      const poolReady = createPoolWithLsp(() => 'ready');
+      const poolStopped = createPoolWithLsp(() => 'stopped');
+
+      const task = createTask('t1', 'Explore the project architecture');
+      const readyResult = poolReady.selectType(task);
+      const stoppedResult = poolStopped.selectType(task);
+
+      // Both should have the base tools
+      assert.ok(readyResult.allowedTools.includes('read_file'));
+      assert.ok(readyResult.allowedTools.includes('list_dir'));
+      assert.ok(stoppedResult.allowedTools.includes('read_file'));
+      assert.ok(stoppedResult.allowedTools.includes('list_dir'));
+
+      // Ready should have more tools (base + LSP), stopped should have only base
+      assert.ok(readyResult.allowedTools.length > stoppedResult.allowedTools.length);
+    });
+  });
+
+  // --- setLspStatusGetter ---
+
+  describe('setLspStatusGetter', () => {
+    it('dynamically switches LSP tool inclusion when status getter changes', () => {
+      let status = 'stopped';
+      const pool = new AgentPool({ maxConcurrency: 1, defaultTimeout: 5000, getLspStatus: () => status });
+      pool.registerType({ name: 'implementation', systemPrompt: 'Impl.', allowedTools: ['write_file'], timeout: 60000 });
+      pool.registerType({ name: 'general', systemPrompt: 'General.', allowedTools: ['read_file'], timeout: 30000 });
+
+      const task = createTask('t1', 'Implement feature');
+
+      // Initially stopped — no LSP tools
+      let selected = pool.selectType(task);
+      let lspTools = selected.allowedTools.filter(t => t.startsWith('lsp_'));
+      assert.equal(lspTools.length, 0);
+
+      // Switch to ready — LSP tools appear
+      status = 'ready';
+      selected = pool.selectType(task);
+      lspTools = selected.allowedTools.filter(t => t.startsWith('lsp_'));
+      assert.ok(lspTools.length > 0, 'LSP tools should appear when status becomes ready');
+
+      // Switch back to error — LSP tools disappear
+      status = 'error';
+      selected = pool.selectType(task);
+      lspTools = selected.allowedTools.filter(t => t.startsWith('lsp_'));
+      assert.equal(lspTools.length, 0);
+    });
+
+    it('setLspStatusGetter replaces the getter', () => {
+      const pool = new AgentPool({ maxConcurrency: 1, defaultTimeout: 5000 });
+      pool.registerType({ name: 'explore', systemPrompt: 'Explore.', allowedTools: ['read_file'], timeout: 10000 });
+      pool.registerType({ name: 'general', systemPrompt: 'General.', allowedTools: ['read_file'], timeout: 30000 });
+
+      const task = createTask('t1', 'Explore the codebase');
+
+      // No getter — no LSP tools
+      let selected = pool.selectType(task);
+      let lspTools = selected.allowedTools.filter(t => t.startsWith('lsp_'));
+      assert.equal(lspTools.length, 0);
+
+      // Set getter to ready
+      pool.setLspStatusGetter(() => 'ready');
+      selected = pool.selectType(task);
+      lspTools = selected.allowedTools.filter(t => t.startsWith('lsp_'));
+      assert.ok(lspTools.length > 0);
+
+      // Set getter to non-function resets it
+      pool.setLspStatusGetter(null);
+      selected = pool.selectType(task);
+      lspTools = selected.allowedTools.filter(t => t.startsWith('lsp_'));
+      assert.equal(lspTools.length, 0);
+    });
   });
 });
