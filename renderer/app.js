@@ -935,13 +935,14 @@ async function sendAgentMode(prompt, opts = {}) {
 
   const respId = 'resp-'+Date.now()
   out.insertAdjacentHTML('beforeend', `<div class="msg-block" id="${respId}">
-    <div class="msg-system" id="${respId}-status">🤖 Agent starting in ${currentProject}...</div>
+    <div class="msg-system" id="${respId}-status" style="display:none"></div>
     <div id="${respId}-tools"></div>
     <details class="msg-thinking" id="${respId}-think" style="display:none">
       <summary>🧠 Thinking</summary>
       <div class="msg-thinking-body" id="${respId}-think-body"></div>
     </details>
     <div class="msg-text" id="${respId}-text"></div>
+    <div class="msg-activity" id="${respId}-activity">🤖 Agent starting in ${esc(currentProject)}... <span class="activity-dot">●</span></div>
   </div>`)
   scrollOutput()
 
@@ -956,6 +957,17 @@ async function sendAgentMode(prompt, opts = {}) {
   window.app.offQwenEvents()
   updateStatusBar('initializing', { progress: -1, activity: 'Starting agent...' })
   updateAgentStatsBar({ state: 'initializing', progress: -1, activity: 'Starting agent...' })
+
+  // Helper: update the bottom activity line in the chat (always visible)
+  function setActivity(html) {
+    const el = document.getElementById(respId + '-activity')
+    if (el) { el.innerHTML = html; el.classList.remove('hidden') }
+    scrollOutput()
+  }
+  function hideActivity() {
+    const el = document.getElementById(respId + '-activity')
+    if (el) el.classList.add('hidden')
+  }
 
   let _agentToolCount = 0
   let _promptProgress = -1
@@ -1015,7 +1027,7 @@ async function sendAgentMode(prompt, opts = {}) {
     if (agentFinished && ev.type !== 'session-end') return
     switch(ev.type) {
       case 'session-start':
-        document.getElementById(respId+'-status').innerHTML = '🤖 Agent running in ' + esc(ev.cwd||'.') + ' <span class="activity-dot">●</span>'
+        setActivity('🤖 Agent running in ' + esc(ev.cwd||'.') + ' <span class="activity-dot">●</span>')
         startPromptProgress()
         break
       case 'text-delta':
@@ -1035,7 +1047,7 @@ async function sendAgentMode(prompt, opts = {}) {
         }
         scheduleRender()
         { const tks = serverTps || _calcTks(tokenCount, startTime)
-          document.getElementById(respId+'-status').innerHTML = `✍️ Generating — ${outputTokens || tokenCount} tokens${tks ? ' · ' + tks + ' tk/s' : ''} <span class="activity-dot">●</span>`
+          setActivity(`✍️ Generating — ${outputTokens || tokenCount} tokens${tks ? ' · ' + tks + ' tk/s' : ''} <span class="activity-dot">●</span>`)
           updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: outputTokens || tokenCount, tks, toolCount: _agentToolCount, activity: 'Writing response...' })
         }
         break
@@ -1045,7 +1057,7 @@ async function sendAgentMode(prompt, opts = {}) {
         const thinkEl = document.getElementById(respId+'-think')
         thinkEl.style.display = ''
         document.getElementById(respId+'-think-body').textContent = lastThinking + '▌'
-        document.getElementById(respId+'-status').innerHTML = '🧠 Reasoning <span class="activity-dot">●</span>'
+        setActivity('🧠 Reasoning <span class="activity-dot">●</span>')
         updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount, activity: 'Reasoning...' })
         break
       case 'tool-delta': {
@@ -1069,10 +1081,9 @@ async function sendAgentMode(prompt, opts = {}) {
           : toolName === 'bash' ? 'Preparing command...'
           : `Preparing ${toolName}...`
 
-        // Show live token count + file name in the chat status line
-        { const tks = serverTps || _calcTks(tokenCount, startTime)
-          const sizeInfo = isWriteTool && args.length > 100 ? ` · ${(args.length / 1024).toFixed(1)}KB` : ''
-          document.getElementById(respId+'-status').innerHTML = `⚡ ${esc(activityLabel)}${sizeInfo} <span class="activity-dot">●</span>`
+        // Show live file name + size in the chat activity line
+        { const sizeInfo = isWriteTool && args.length > 100 ? ` · ${(args.length / 1024).toFixed(1)}KB` : ''
+          setActivity(`⚡ ${esc(activityLabel)}${sizeInfo} <span class="activity-dot">●</span>`)
         }
         updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: outputTokens || tokenCount, tks: serverTps || _calcTks(tokenCount, startTime), toolCount: _agentToolCount, activity: activityLabel })
 
@@ -1171,7 +1182,7 @@ async function sendAgentMode(prompt, opts = {}) {
         }
 
         document.getElementById(respId+'-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
-        document.getElementById(respId+'-status').innerHTML = `🔧 ${esc(activity)} <span class="activity-dot">●</span>`
+        setActivity(`🔧 ${esc(activity)} <span class="activity-dot">●</span>`)
         // Show specific activity based on tool type
         const toolActivity = {
           'read_file': `Reading ${ev.input?.path?.split('/').pop() || 'file'}...`,
@@ -1193,7 +1204,7 @@ async function sendAgentMode(prompt, opts = {}) {
       case 'tool-result': {
         // Skip rendering tool-result for update_todos — it's handled by the todo panel
         if (lastToolName === 'update_todos') {
-          document.getElementById(respId+'-status').innerHTML = '📋 Updated progress <span class="activity-dot">●</span>'
+          setActivity('📋 Updated progress <span class="activity-dot">●</span>')
           updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: 'Thinking about next step...' })
           break
         }
@@ -1221,6 +1232,7 @@ async function sendAgentMode(prompt, opts = {}) {
           if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
         }
         document.getElementById(respId+'-status').innerHTML = `🤖 ${lastToolName ? esc(lastToolName) + ' done — ' : ''}deciding next step <span class="activity-dot">●</span>`
+        setActivity(`🤖 ${lastToolName ? esc(lastToolName) + ' done — ' : ''}deciding next step <span class="activity-dot">●</span>`)
         // Restart prompt progress — the server is now processing the tool
         // result and deciding what to do next. This is a real wait period.
         startPromptProgress()
@@ -1253,7 +1265,6 @@ async function sendAgentMode(prompt, opts = {}) {
         // Show LSP activity in the status line and flash the LSP chip
         const lspChip = document.getElementById('lspChip')
         const lspDot = document.getElementById('lspDot')
-        const statusLine = document.getElementById(respId+'-status')
         const action = ev.action || ''
         const filePath = ev.path ? ev.path.split('/').pop() : ''
 
@@ -1270,28 +1281,22 @@ async function sendAgentMode(prompt, opts = {}) {
         }
 
         if (action === 'speculative-check') {
-          statusLine.textContent = `🔬 LSP: validating ${filePath} before write...`
+          setActivity(`🔬 LSP: validating ${filePath} before write... <span class="activity-dot">●</span>`)
         } else if (action === 'speculative-ok') {
-          statusLine.textContent = `✅ LSP: ${filePath} — no new errors`
-          // Show inline in chat so user can see the check happened
           const toolsEl = document.getElementById(respId+'-tools')
           if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--green)">✅ LSP validated ${filePath} — no new errors</div>`)
         } else if (action === 'speculative-warn') {
-          statusLine.textContent = `⚠️ LSP: ${filePath} — ${ev.count} issue${ev.count > 1 ? 's' : ''} detected`
           const toolsEl = document.getElementById(respId+'-tools')
           if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--yellow)">⚠️ LSP found ${ev.count} issue${ev.count > 1 ? 's' : ''} in ${filePath}</div>`)
         } else if (action === 'diagnostics-check') {
-          statusLine.textContent = `🔬 LSP: checking ${filePath} for errors...`
+          setActivity(`🔬 LSP: checking ${filePath} for errors... <span class="activity-dot">●</span>`)
         } else if (action === 'diagnostics-ok') {
-          statusLine.textContent = `✅ LSP: ${filePath} — clean`
           const toolsEl = document.getElementById(respId+'-tools')
           if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--green)">✅ LSP: ${filePath} — clean</div>`)
         } else if (action === 'diagnostics-errors') {
-          statusLine.textContent = `⚠️ LSP: ${filePath} — ${ev.count} error${ev.count > 1 ? 's' : ''} found`
           const toolsEl = document.getElementById(respId+'-tools')
           if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--red)">⚠️ LSP: ${filePath} — ${ev.count} error${ev.count > 1 ? 's' : ''} found</div>`)
         } else if (action === 'session-diagnostics') {
-          statusLine.textContent = `📋 LSP: ${ev.count} existing error${ev.count > 1 ? 's' : ''} detected — agent is aware`
           const toolsEl = document.getElementById(respId+'-tools')
           if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--accent2)">📋 LSP: ${ev.count} existing error${ev.count > 1 ? 's' : ''} in project — agent is aware</div>`)
         }
@@ -1299,15 +1304,14 @@ async function sendAgentMode(prompt, opts = {}) {
       }
       case 'system':
         if (ev.subtype === 'debug') {
-          // Show debug messages (retries, context trimming, etc.) with animated dot
-          document.getElementById(respId+'-status').innerHTML = `🔍 ${esc(ev.data)} <span class="activity-dot">●</span>`
+          setActivity(`🔍 ${esc(ev.data)} <span class="activity-dot">●</span>`)
           // Show retries and important debug info inline in chat
           if (ev.data && (ev.data.includes('retrying') || ev.data.includes('Trimmed') || ev.data.includes('Repetition'))) {
             const toolsEl = document.getElementById(respId+'-tools')
             if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--muted)">🔍 ${esc(ev.data)}</div>`)
           }
         } else {
-          document.getElementById(respId+'-status').innerHTML = ev.subtype === 'init' ? '🤖 Agent initialized <span class="activity-dot">●</span>' : `⚙️ ${esc(ev.subtype)} <span class="activity-dot">●</span>`
+          setActivity(ev.subtype === 'init' ? '🤖 Agent initialized <span class="activity-dot">●</span>' : `⚙️ ${esc(ev.subtype)} <span class="activity-dot">●</span>`)
         }
         updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: ev.subtype === 'debug' ? ev.data : ev.subtype })
         scrollOutput()
@@ -1320,7 +1324,9 @@ async function sendAgentMode(prompt, opts = {}) {
         updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens })
         break
       case 'result':
+        hideActivity()
         document.getElementById(respId+'-status').textContent = ev.is_error ? `❌ ${ev.subtype}: ${ev.result||'error'}` : '✅ Done'
+        document.getElementById(respId+'-status').style.display = ''
         if (!agentFinished && !window._pendingTasksExecute) {
           agentFinished = true
           stopPromptProgress()
