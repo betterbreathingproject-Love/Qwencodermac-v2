@@ -2373,6 +2373,15 @@ async function generateInlineSpecPhase(phase) {
   const phaseLabel = phase.charAt(0).toUpperCase() + phase.slice(1)
   updateAgentStatsBar({ state: 'initializing', activity: `Spec: preparing ${phaseLabel}...` })
 
+  // Create a live chat message block for streaming output
+  const specRespId = 'spec-resp-' + Date.now()
+  const out = document.getElementById('agentOutput')
+  out.insertAdjacentHTML('beforeend', `<div class="msg-block" id="${specRespId}">
+    <div class="msg-system" id="${specRespId}-status">📐 Generating ${phaseLabel} for "${esc(currentSpecName)}"...</div>
+    <div class="msg-text" id="${specRespId}-text"></div>
+  </div>`)
+  scrollOutput()
+
   try {
     const artifacts = await window.app.specArtifacts(currentSpecDir)
     let ctx = ''
@@ -2390,7 +2399,7 @@ async function generateInlineSpecPhase(phase) {
       prompt = SPEC_PROMPTS.tasks(currentSpecName, artifacts.requirements || '', artifacts.design || '')
     }
 
-    // Use streaming chat for real-time stats bar updates
+    // Use streaming chat for real-time stats bar + chat output
     const content = await new Promise((resolve, reject) => {
       let accumulated = ''
       let tokenCount = 0
@@ -2398,6 +2407,28 @@ async function generateInlineSpecPhase(phase) {
       let outputTokens = 0
       let serverTps = null
       let startTime = null
+
+      // Debounced markdown rendering to avoid O(n²) re-render on every delta
+      let _mdRenderTimer = null
+      let _mdDirty = false
+      function scheduleRender() {
+        _mdDirty = true
+        if (_mdRenderTimer) return
+        _mdRenderTimer = requestAnimationFrame(() => {
+          _mdRenderTimer = null
+          if (_mdDirty) {
+            _mdDirty = false
+            // Strip thinking tags from display
+            let displayText = accumulated.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+            const openThink = accumulated.lastIndexOf('<think>')
+            const closeThink = accumulated.lastIndexOf('</think>')
+            if (openThink > closeThink) displayText = accumulated.slice(0, openThink).trim()
+            const textEl = document.getElementById(specRespId + '-text')
+            if (textEl) textEl.innerHTML = renderMd(displayText, true) + '<span class="cursor">▌</span>'
+            scrollOutput()
+          }
+        })
+      }
 
       // Simulated prompt-eval progress while waiting for first token
       let promptProgress = 0
@@ -2424,6 +2455,7 @@ async function generateInlineSpecPhase(phase) {
           outputTokens = tokenCount
           const tks = serverTps || _calcTks(tokenCount, startTime)
           updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks, activity: `Spec ${phaseLabel}: generating...` })
+          scheduleRender()
         }
       })
 
@@ -2454,7 +2486,12 @@ async function generateInlineSpecPhase(phase) {
       })
     })
 
+    // Finalize the chat block with rendered markdown (no cursor)
+    const statusEl = document.getElementById(specRespId + '-status')
+    const textEl = document.getElementById(specRespId + '-text')
+
     if (!content) {
+      if (statusEl) statusEl.textContent = `❌ Spec ${phaseLabel} generation failed: empty response`
       appendMsg('system', `❌ Spec generation failed: empty response`)
       updateAgentStatsBar({ state: 'done', activity: 'Spec generation failed' })
     } else {
@@ -2464,9 +2501,13 @@ async function generateInlineSpecPhase(phase) {
       if (!/^#/m.test(cleaned.split('\n')[0]) && /^#/m.test(cleaned)) {
         cleaned = cleaned.slice(cleaned.search(/^#/m)).trim()
       }
+
+      // Update chat block with final rendered content
+      if (statusEl) statusEl.textContent = `✅ ${phaseLabel} generated for "${currentSpecName}"`
+      if (textEl) textEl.innerHTML = renderMd(cleaned)
+
       await window.app.specSaveArtifact(currentSpecDir, phase, cleaned)
       await window.app.specAdvance(currentSpecDir)
-      appendMsg('system', `✅ ${phaseLabel} generated for "${currentSpecName}"`)
       updateAgentStatsBar({ state: 'done', activity: `Spec ${phaseLabel}: complete` })
       viewInlineSpecArtifact(phase)
 
@@ -2483,6 +2524,8 @@ async function generateInlineSpecPhase(phase) {
       }
     }
   } catch (e) {
+    const statusEl = document.getElementById(specRespId + '-status')
+    if (statusEl) statusEl.textContent = `❌ Error: ${e.message}`
     appendMsg('system', `❌ Error: ${e.message}`)
     updateAgentStatsBar({ state: 'done', activity: 'Spec generation failed' })
   }
@@ -2699,6 +2742,15 @@ async function generateSpecPhase(phase) {
   const phaseLabel = phase.charAt(0).toUpperCase() + phase.slice(1)
   updateAgentStatsBar({ state: 'initializing', activity: `Spec: preparing ${phaseLabel}...` })
 
+  // Create a live chat message block for streaming output
+  const specRespId = 'spec-side-resp-' + Date.now()
+  const out = document.getElementById('agentOutput')
+  out.insertAdjacentHTML('beforeend', `<div class="msg-block" id="${specRespId}">
+    <div class="msg-system" id="${specRespId}-status">📐 Generating ${phaseLabel} for "${esc(currentSpecName)}"...</div>
+    <div class="msg-text" id="${specRespId}-text"></div>
+  </div>`)
+  scrollOutput()
+
   try {
     const artifacts = await window.app.specArtifacts(currentSpecDir)
     let ctx = ''
@@ -2716,7 +2768,7 @@ async function generateSpecPhase(phase) {
       prompt = SPEC_PROMPTS.tasks(currentSpecName, artifacts.requirements || '', artifacts.design || '')
     }
 
-    // Use streaming chat for real-time stats bar updates
+    // Use streaming chat for real-time stats bar + chat output
     const content = await new Promise((resolve, reject) => {
       let accumulated = ''
       let tokenCount = 0
@@ -2724,6 +2776,27 @@ async function generateSpecPhase(phase) {
       let outputTokens = 0
       let serverTps = null
       let startTime = null
+
+      // Debounced markdown rendering
+      let _mdRenderTimer = null
+      let _mdDirty = false
+      function scheduleRender() {
+        _mdDirty = true
+        if (_mdRenderTimer) return
+        _mdRenderTimer = requestAnimationFrame(() => {
+          _mdRenderTimer = null
+          if (_mdDirty) {
+            _mdDirty = false
+            let displayText = accumulated.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+            const openThink = accumulated.lastIndexOf('<think>')
+            const closeThink = accumulated.lastIndexOf('</think>')
+            if (openThink > closeThink) displayText = accumulated.slice(0, openThink).trim()
+            const textEl = document.getElementById(specRespId + '-text')
+            if (textEl) textEl.innerHTML = renderMd(displayText, true) + '<span class="cursor">▌</span>'
+            scrollOutput()
+          }
+        })
+      }
 
       // Simulated prompt-eval progress while waiting for first token
       let promptProgress = 0
@@ -2750,6 +2823,7 @@ async function generateSpecPhase(phase) {
           outputTokens = tokenCount
           const tks = serverTps || _calcTks(tokenCount, startTime)
           updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks, activity: `Spec ${phaseLabel}: generating...` })
+          scheduleRender()
         }
       })
 
@@ -2780,8 +2854,12 @@ async function generateSpecPhase(phase) {
       })
     })
 
+    // Finalize the chat block
+    const statusEl = document.getElementById(specRespId + '-status')
+    const textEl = document.getElementById(specRespId + '-text')
+
     if (!content) {
-      appendMsg('system', `❌ Spec generation failed: empty response`)
+      if (statusEl) statusEl.textContent = `❌ Spec ${phaseLabel} generation failed: empty response`
       updateAgentStatsBar({ state: 'done', activity: 'Spec generation failed' })
     } else {
       // Strip thinking tags if present
@@ -2790,15 +2868,20 @@ async function generateSpecPhase(phase) {
       if (!/^#/m.test(cleaned.split('\n')[0]) && /^#/m.test(cleaned)) {
         cleaned = cleaned.slice(cleaned.search(/^#/m)).trim()
       }
+
+      // Update chat block with final rendered content
+      if (statusEl) statusEl.textContent = `✅ ${phaseLabel} generated for "${currentSpecName}"`
+      if (textEl) textEl.innerHTML = renderMd(cleaned)
+
       await window.app.specSaveArtifact(currentSpecDir, phase, cleaned)
       // Advance phase
       await window.app.specAdvance(currentSpecDir)
-      appendMsg('system', `✅ ${phaseLabel} generated for "${currentSpecName}"`)
       updateAgentStatsBar({ state: 'done', activity: `Spec ${phaseLabel}: complete` })
       viewSpecArtifact(phase)
     }
   } catch (e) {
-    appendMsg('system', `❌ Error: ${e.message}`)
+    const statusEl = document.getElementById(specRespId + '-status')
+    if (statusEl) statusEl.textContent = `❌ Error: ${e.message}`
     updateAgentStatsBar({ state: 'done', activity: 'Spec generation failed' })
   }
 
