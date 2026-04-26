@@ -1400,7 +1400,19 @@ class DirectBridge {
           // Also retry on HTTP 500/502/503 — local MLX server can return these
           // when overloaded (e.g. after processing a large tool output)
           const isServerError = /Server returned HTTP (500|502|503)/.test(msg)
-          if ((isTransient || isServerError) && attempt < 5) {
+          // HTTP 413 — prompt too large. Trim messages and retry.
+          const isPromptTooLarge = /Server returned HTTP 413|Prompt too large/.test(msg)
+          if (isPromptTooLarge && attempt < 5) {
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Prompt too large (HTTP 413), trimming context and retrying...` })
+            const trimmed = trimMessages(messages, 24000)
+            messages.length = 0
+            messages.push(...trimmed)
+            await new Promise(r => setTimeout(r, 1000))
+            continue
+          }
+          // SSE mid-stream errors are transient (server OOM during generation)
+          const isSseError = /SSE error from server/.test(msg)
+          if ((isTransient || isServerError || isSseError) && attempt < 5) {
             const reason = isServerError ? msg.match(/HTTP \d+/)?.[0] || 'server error' : code
             const delay = attempt === 0 ? 5 : Math.min((attempt + 1) * 3, 15)
             this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Server not ready (${reason}), retrying in ${delay}s... (${attempt + 1}/5)` })
@@ -1999,9 +2011,18 @@ class DirectBridge {
       let buf = ''
       let _lastToolDeltaTime = 0
 
+      // Client-side prompt size guard: estimate tokens and trim if over 30K
+      const estimatedTokens = estimateMessagesTokens(messages)
+      if (estimatedTokens > 30000) {
+        this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Prompt too large (~${estimatedTokens} tokens), trimming to 30K before sending` })
+        const trimmed = trimMessages(messages, 30000)
+        body.messages = trimmed
+      }
+
       try {
         const { res, req } = await streamSSE(`${SERVER_URL}/v1/chat/completions`, body)
         this._activeReq = req
+        this._sseErrorPending = false
 
         // Check for HTTP errors — server may return JSON error instead of SSE stream
         if (res.statusCode && res.statusCode >= 400) {
@@ -2025,6 +2046,26 @@ class DirectBridge {
 
           for (const line of lines) {
             if (line.startsWith('data: [DONE]')) continue
+
+            // Handle SSE event: error lines from the server (mid-stream crash)
+            if (line.startsWith('event: error')) {
+              // The next data: line contains the error payload — set a flag
+              this._sseErrorPending = true
+              continue
+            }
+
+            if (this._sseErrorPending && line.startsWith('data: ')) {
+              this._sseErrorPending = false
+              let errMsg = 'Server stream error'
+              try {
+                const errPayload = JSON.parse(line.slice(6))
+                errMsg = errPayload.error || errMsg
+              } catch {}
+              this._activeReq = null
+              req.destroy()
+              return reject(new Error(`SSE error from server: ${errMsg}`))
+            }
+
             if (!line.startsWith('data: ')) continue
 
             let parsed

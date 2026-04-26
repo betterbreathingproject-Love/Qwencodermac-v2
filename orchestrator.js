@@ -266,7 +266,7 @@ class Orchestrator extends EventEmitter {
 
   _handleFailure(nodeId, error) {
     const errMsg = error.message || String(error);
-    const isTransient = /timed out|ECONNRESET|ECONNREFUSED|EPIPE|Server not available|server crash/i.test(errMsg);
+    const isTransient = /timed out|ECONNRESET|ECONNREFUSED|EPIPE|Server not available|server crash|HTTP (500|502|503)|Server returned HTTP|SSE error|server_error/i.test(errMsg);
 
     // Auto-retry transient errors (server crash, timeout) up to 2 times
     const retryCount = this._retryCount || new Map();

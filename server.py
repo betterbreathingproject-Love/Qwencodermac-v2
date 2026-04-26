@@ -481,6 +481,40 @@ async def chat_completions(req: ChatRequest):
     except Exception:
         pass
 
+    # Preventive guard: check Metal memory before inference
+    try:
+        import mlx.core as mx
+        mem_active = mx.metal.get_active_memory() / (1024**3)
+        # Use 80% of system memory as threshold (Apple Silicon shares RAM with GPU)
+        import subprocess
+        total_mem_bytes = int(subprocess.check_output(["sysctl", "-n", "hw.memsize"]).strip())
+        total_mem_gb = total_mem_bytes / (1024**3)
+        threshold_gb = total_mem_gb * 0.80
+        if mem_active > threshold_gb:
+            print(f"[server] ⚠️ Metal memory too high: {mem_active:.2f} GB / {total_mem_gb:.1f} GB (threshold: {threshold_gb:.1f} GB)", file=sys.stderr)
+            mx.metal.clear_cache()
+            import gc
+            gc.collect()
+            # Re-check after clearing
+            mem_after = mx.metal.get_active_memory() / (1024**3)
+            if mem_after > threshold_gb:
+                raise HTTPException(503, f"Server busy — Metal memory too high ({mem_after:.1f}/{total_mem_gb:.1f} GB). Retry after a moment.")
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # If memory check fails, proceed anyway
+
+    # Preventive guard: reject dangerously large prompts
+    total_chars = sum(len(str(msg.content or '')) for msg in req.messages)
+    estimated_tokens = total_chars // 4  # rough estimate: ~4 chars per token
+    if estimated_tokens > 30000:
+        print(f"[server] ⚠️ Prompt too large: ~{estimated_tokens} estimated tokens ({total_chars} chars)", file=sys.stderr)
+        raise HTTPException(413, json.dumps({
+            "error": "Prompt too large",
+            "estimated_tokens": estimated_tokens,
+            "limit": 30000,
+        }))
+
     # debug logging
     for msg in req.messages:
         if isinstance(msg.content, list):
@@ -708,7 +742,7 @@ async def chat_completions(req: ChatRequest):
                         }
                         yield f"data: {json.dumps(stats_chunk)}\n\n"
                     elif kind == "error":
-                        yield f"event: error\ndata: {json.dumps({'error': data})}\n\n"
+                        yield f"event: error\ndata: {json.dumps({'error': data, 'type': 'server_error'})}\n\n"
                         break
                     elif kind == "done":
                         full_text = "".join(full_text_parts)
@@ -754,6 +788,13 @@ async def chat_completions(req: ChatRequest):
 
             _cleanup_images(images)
 
+        # Aggressive post-request cache clearing to prevent memory accumulation
+        try:
+            import mlx.core as mx
+            mx.metal.clear_cache()
+        except Exception:
+            pass
+
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     # ── non-streaming ─────────────────────────────────────────────────────────
@@ -790,6 +831,13 @@ async def chat_completions(req: ChatRequest):
         _cleanup_images(images)
         raise HTTPException(500, f"Inference error: {str(e)}")
     _cleanup_images(images)
+
+    # Post-request cache clearing for non-streaming path
+    try:
+        import mlx.core as mx
+        mx.metal.clear_cache()
+    except Exception:
+        pass
 
     response_text = result.text if hasattr(result, "text") else str(result)
 
