@@ -54,11 +54,12 @@ class LspManager extends EventEmitter {
     this._process = null;
     this._restartCount = 0;
     this._healthTimer = null;
-    this._requestId = 0;
+    this._requestId = 1; // start at 1, 0 is reserved for MCP init
     this._pendingRequests = new Map();
     this._stopping = false;
     this._restartTimer = null;
     this._restarting = false;
+    this._initHandler = null;
   }
 
   /**
@@ -172,19 +173,19 @@ class LspManager extends EventEmitter {
     }
 
     // --- Build spawn arguments ---
-    const args = ['--stdio'];
+    // agent-lsp auto-detects language servers when run with no args.
+    // Pass the project directory via env so it indexes the right workspace.
+    const spawnEnv = { ...process.env }
     if (projectDir) {
-      args.push('--project', projectDir);
-    }
-    for (const server of detectedServers) {
-      args.push('--server', server);
+      spawnEnv.AGENT_LSP_PROJECT = projectDir
     }
 
     // --- Spawn the process ---
     try {
-      const proc = spawn(binaryPath, args, {
+      const proc = spawn(binaryPath, [], {
         stdio: ['pipe', 'pipe', 'pipe'],
-        cwd: projectDir,
+        cwd: projectDir || process.cwd(),
+        env: spawnEnv,
       });
 
       this._process = proc;
@@ -201,7 +202,14 @@ class LspManager extends EventEmitter {
           if (!line) continue;
           try {
             const msg = JSON.parse(line);
-            if (msg.id != null && this._pendingRequests.has(msg.id)) {
+            // Skip server-sent notifications (no id)
+            if (msg.id == null) continue;
+            // Route id=0 to the init handler during startup
+            if (msg.id === 0 && this._initHandler) {
+              this._initHandler(msg);
+              continue;
+            }
+            if (this._pendingRequests.has(msg.id)) {
               const pending = this._pendingRequests.get(msg.id);
               this._pendingRequests.delete(msg.id);
               if (msg.error) {
@@ -256,7 +264,41 @@ class LspManager extends EventEmitter {
         }
       });
 
-      // Transition to ready (or degraded if no language servers)  
+      // --- MCP initialization handshake ---
+      // agent-lsp requires initialize → notifications/initialized before tools/call
+      await new Promise((resolve, reject) => {
+        const initTimeout = setTimeout(() => reject(new Error('MCP init timed out')), 10000);
+
+        // Wait for the initialize response
+        const onceReady = (msg) => {
+          if (msg.id === 0 && msg.result) {
+            clearTimeout(initTimeout);
+            // Send initialized notification
+            const notif = JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
+            proc.stdin.write(notif + '\n');
+            resolve();
+          } else if (msg.id === 0 && msg.error) {
+            clearTimeout(initTimeout);
+            reject(new Error(msg.error.message || 'MCP init failed'));
+          }
+        };
+        this._initHandler = onceReady;
+
+        // Send initialize
+        const initMsg = JSON.stringify({
+          jsonrpc: '2.0', id: 0,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2024-11-05',
+            capabilities: {},
+            clientInfo: { name: 'qwencoder-mac-studio', version: '1.0' },
+          },
+        });
+        proc.stdin.write(initMsg + '\n');
+      });
+      this._initHandler = null;
+
+      // Transition to ready (or degraded if no language servers detected)
       if (detectedServers.length === 0) {
         this._setStatus('degraded');
       } else {
@@ -341,9 +383,9 @@ class LspManager extends EventEmitter {
     this._stopHealthCheck();
     this._healthTimer = setInterval(async () => {
       try {
-        await this.call('ping');
+        await this.call('lsp_get_diagnostics', { path: this._projectDir || '.' });
       } catch (err) {
-        console.warn('[LspManager] Health check ping failed:', err.message);
+        console.warn('[LspManager] Health check failed:', err.message);
       }
     }, this._healthCheckInterval);
     // Allow the process to exit even if the timer is still running
