@@ -18,8 +18,52 @@ const { createPlaywrightInstance, BROWSER_TOOL_DEFS } = require('./playwright-to
 const { WEB_TOOL_DEFS, executeWebTool } = require('./web-tools')
 const { getApiKeys } = require('./projects')
 
-// Re-export the sink classes from qwen-bridge so main.js can use them
-const { WindowSink, CallbackSink, WorkerSink } = require('./qwen-bridge')
+// ── EventSink implementations ─────────────────────────────────────────────────
+
+/**
+ * WindowSink — wraps BrowserWindow.webContents.send (existing behavior).
+ * Used for the main foreground agent that sends events to the renderer.
+ */
+class WindowSink {
+  constructor(win) {
+    this.win = win
+  }
+
+  send(channel, data) {
+    if (this.win && !this.win.isDestroyed()) {
+      this.win.webContents.send(channel, data)
+    }
+  }
+}
+
+/**
+ * CallbackSink — routes events through an EventEmitter with a taskId prefix.
+ * Used by Agent Pool foreground subagents to multiplex events from multiple agents.
+ */
+class CallbackSink {
+  constructor(emitter, taskId) {
+    this.emitter = emitter
+    this.taskId = taskId
+  }
+
+  send(channel, data) {
+    this.emitter.emit('agent-event', { taskId: this.taskId, channel, data })
+  }
+}
+
+/**
+ * WorkerSink — sends events via worker_thread MessagePort.
+ * Used for background tasks running in worker_threads.
+ */
+class WorkerSink {
+  constructor(port) {
+    this.port = port
+  }
+
+  send(channel, data) {
+    this.port.postMessage({ channel, data })
+  }
+}
 
 const SERVER_PORT = 8090
 const SERVER_URL = `http://127.0.0.1:${SERVER_PORT}`
