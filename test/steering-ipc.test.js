@@ -144,11 +144,11 @@ describe('steering-generate IPC handler', () => {
     assert.ok(analyzeIdx < completeIdx, 'analyzing should come before complete');
   });
 
-  it('writes steering docs to .kiro/steering/ directory', async () => {
+  it('writes steering docs to .maccoder/steering/ directory', async () => {
     await mockIpc.invoke('steering-generate', { projectDir });
 
-    const steeringDir = path.join(projectDir, '.kiro', 'steering');
-    assert.ok(fs.existsSync(steeringDir), '.kiro/steering/ should exist');
+    const steeringDir = path.join(projectDir, '.maccoder', 'steering');
+    assert.ok(fs.existsSync(steeringDir), '.maccoder/steering/ should exist');
 
     const overviewPath = path.join(steeringDir, 'project-overview.md');
     assert.ok(fs.existsSync(overviewPath), 'project-overview.md should exist');
@@ -179,16 +179,16 @@ describe('steering-status IPC handler', () => {
 
   afterEach(() => cleanUp(projectDir));
 
-  it('returns { exists: false, docCount: 0 } when no .kiro/steering/ exists', async () => {
+  it('returns { exists: false, docCount: 0 } when no .maccoder/steering/ exists', async () => {
     const result = await mockIpc.invoke('steering-status', { projectDir });
 
     assert.equal(result.exists, false);
     assert.equal(result.docCount, 0);
   });
 
-  it('returns { exists: true, docCount: N } when .kiro/steering/ has .md files', async () => {
+  it('returns { exists: true, docCount: N } when .maccoder/steering/ has .md files', async () => {
     // Create steering dir with some docs
-    const steeringDir = path.join(projectDir, '.kiro', 'steering');
+    const steeringDir = path.join(projectDir, '.maccoder', 'steering');
     fs.mkdirSync(steeringDir, { recursive: true });
     fs.writeFileSync(path.join(steeringDir, 'project-overview.md'), '---\nname: project-overview\n---\n# Overview', 'utf8');
     fs.writeFileSync(path.join(steeringDir, 'tooling.md'), '---\nname: tooling\n---\n# Tooling', 'utf8');
@@ -201,7 +201,7 @@ describe('steering-status IPC handler', () => {
 
   it('uses getCurrentProject when projectDir is not provided', async () => {
     // Create steering dir in the current project
-    const steeringDir = path.join(projectDir, '.kiro', 'steering');
+    const steeringDir = path.join(projectDir, '.maccoder', 'steering');
     fs.mkdirSync(steeringDir, { recursive: true });
     fs.writeFileSync(path.join(steeringDir, 'overview.md'), '# Overview', 'utf8');
 
@@ -224,7 +224,7 @@ describe('steering-prompt on project open', () => {
 
   afterEach(() => cleanUp(projectDir));
 
-  it('emits steering-prompt when project has no .kiro/steering/ directory', () => {
+  it('emits steering-prompt when project has no .maccoder/steering/ directory', () => {
     const { checkSteeringPrompt } = require('../main/ipc-projects.js');
     checkSteeringPrompt(projectDir, () => mockWindow);
 
@@ -234,8 +234,8 @@ describe('steering-prompt on project open', () => {
     assert.ok(promptEvents[0].data.message);
   });
 
-  it('does not emit steering-prompt when .kiro/steering/ exists', () => {
-    const steeringDir = path.join(projectDir, '.kiro', 'steering');
+  it('does not emit steering-prompt when .maccoder/steering/ exists', () => {
+    const steeringDir = path.join(projectDir, '.maccoder', 'steering');
     fs.mkdirSync(steeringDir, { recursive: true });
 
     const { checkSteeringPrompt } = require('../main/ipc-projects.js');

@@ -44,9 +44,9 @@ function writePackageJson(projectDir, pkg) {
   fs.writeFileSync(path.join(projectDir, 'package.json'), JSON.stringify(pkg, null, 2), 'utf8');
 }
 
-/** Read a generated steering doc from .kiro/steering/ */
+/** Read a generated steering doc from .maccoder/steering/ */
 function readSteeringFile(projectDir, filename) {
-  return fs.readFileSync(path.join(projectDir, '.kiro', 'steering', filename), 'utf8');
+  return fs.readFileSync(path.join(projectDir, '.maccoder', 'steering', filename), 'utf8');
 }
 
 // --- Tests ---
@@ -69,7 +69,7 @@ describe('generateSteeringDocs — project with package.json', () => {
 
   afterEach(() => cleanUp(projectDir));
 
-  it('creates project-overview.md in .kiro/steering/', async () => {
+  it('creates project-overview.md in .maccoder/steering/', async () => {
     const result = await generateSteeringDocs(projectDir, mockPool);
 
     assert.ok(result.docsGenerated.includes('project-overview.md'));

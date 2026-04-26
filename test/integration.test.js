@@ -110,7 +110,7 @@ describe('7.1 Module wiring verification', () => {
     try {
       const result = initSpec('test-feature', tmpDir);
       assert.equal(result.featureName, 'test-feature');
-      assert.ok(result.specDir.includes('.kiro'));
+      assert.ok(result.specDir.includes('.maccoder'));
       assert.equal(result.currentPhase, 'requirements');
       assert.ok(fs.existsSync(result.specDir));
     } finally {
@@ -477,7 +477,7 @@ describe('7.2.4 Spec workflow end-to-end: init, advance phases, verify artifacts
     assert.ok(fs.existsSync(spec.specDir));
 
     // Config file should exist
-    const configPath = path.join(spec.specDir, '.config.kiro');
+    const configPath = path.join(spec.specDir, '.config.maccoder');
     assert.ok(fs.existsSync(configPath));
     const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
     assert.equal(config.currentPhase, 'requirements');

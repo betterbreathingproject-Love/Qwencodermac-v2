@@ -199,7 +199,7 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
   ipcMain.handle('spec-config', async (_, specDir) => {
     if (!isNonEmptyString(specDir)) return { error: 'specDir is required' }
     const path = require('path')
-    const configPath = path.join(specDir, '.config.kiro')
+    const configPath = path.join(specDir, '.config.maccoder')
     try {
       const raw = await fsp.readFile(configPath, 'utf-8')
       return JSON.parse(raw)
@@ -211,7 +211,7 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
     if (!project) return []
     const path = require('path')
     const fs = require('fs')
-    const specsDir = path.join(project, '.kiro', 'specs')
+    const specsDir = path.join(project, '.maccoder', 'specs')
     if (!fs.existsSync(specsDir)) return []
     try {
       const entries = await fsp.readdir(specsDir, { withFileTypes: true })
@@ -219,7 +219,7 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
       for (const entry of entries) {
         if (!entry.isDirectory()) continue
         const specDir = path.join(specsDir, entry.name)
-        const configPath = path.join(specDir, '.config.kiro')
+        const configPath = path.join(specDir, '.config.maccoder')
         try {
           const raw = await fsp.readFile(configPath, 'utf-8')
           const config = JSON.parse(raw)
@@ -249,7 +249,7 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
     if (!isNonEmptyString(dir)) return { error: 'projectDir is required' }
     const path = require('path')
     const fs = require('fs')
-    const steeringDir = path.join(dir, '.kiro', 'steering')
+    const steeringDir = path.join(dir, '.maccoder', 'steering')
     try {
       if (!fs.existsSync(steeringDir)) return { exists: false, docCount: 0 }
       const entries = await fsp.readdir(steeringDir)

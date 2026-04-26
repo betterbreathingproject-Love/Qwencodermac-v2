@@ -10,7 +10,7 @@ function isNonEmptyString(v) { return typeof v === 'string' && v.length > 0 }
 // ── steering prompt helper ────────────────────────────────────────────────────
 function checkSteeringPrompt(projectDir, getMainWindow) {
   if (!projectDir) return
-  const steeringDir = path.join(projectDir, '.kiro', 'steering')
+  const steeringDir = path.join(projectDir, '.maccoder', 'steering')
   if (!fs.existsSync(steeringDir)) {
     const win = getMainWindow()
     if (win) {

@@ -2260,7 +2260,7 @@ async function createInlineSpec() {
   const result = await window.app.specInit(name)
   if (result.error) { appendMsg('system', '❌ ' + result.error); return }
   currentSpecDir = result.specDir
-  currentSpecName = name
+  currentSpecName = result.featureName
   if (description) {
     await window.app.specSaveArtifact(currentSpecDir, 'requirements', `# ${name}\n\n## Description\n${description}\n`)
   }
@@ -2408,7 +2408,7 @@ async function generateInlineSpecPhase(phase) {
 
       // If tasks were generated, write Tasks.md and load into task graph
       if (phase === 'tasks' && currentProject) {
-        const tasksPath = currentProject + '/.kiro/specs/' + currentSpecName + '/tasks.md'
+        const tasksPath = currentProject + '/.maccoder/specs/' + currentSpecName + '/tasks.md'
         try {
           await loadTaskGraph(tasksPath)
           showPanel('tasks', document.querySelector('[data-panel="tasks"]'))
@@ -2434,7 +2434,7 @@ async function startInlineSpecImplementation() {
   if (!artifacts.tasks) { appendMsg('system', '⚠️ Generate tasks first.'); return }
 
   // Load task graph into the sidebar panel first
-  const tasksPath = currentProject + '/.kiro/specs/' + currentSpecName + '/tasks.md'
+  const tasksPath = currentProject + '/.maccoder/specs/' + currentSpecName + '/tasks.md'
   try {
     await loadTaskGraph(tasksPath)
     renderSpecTaskProgress()
@@ -2476,7 +2476,7 @@ async function createNewSpec() {
   const result = await window.app.specInit(name)
   if (result.error) { appendMsg('system', '❌ ' + result.error); return }
   currentSpecDir = result.specDir
-  currentSpecName = name
+  currentSpecName = result.featureName
   // Save description as metadata
   if (description) {
     await window.app.specSaveArtifact(currentSpecDir, 'requirements', `# ${name}\n\n## Description\n${description}\n`)
@@ -2688,7 +2688,7 @@ async function startSpecImplementation() {
   switchMainTab('agent', document.querySelector('[data-tab="agent"]'))
 
   // Load task graph into sidebar
-  const tasksPath = currentProject + '/.kiro/specs/' + currentSpecName + '/tasks.md'
+  const tasksPath = currentProject + '/.maccoder/specs/' + currentSpecName + '/tasks.md'
   try {
     await loadTaskGraph(tasksPath)
     renderSpecTaskProgress()
@@ -2742,7 +2742,7 @@ async function handleSpecCommand(args) {
     const result = await window.app.specInit(args)
     if (result.error) { appendMsg('system', '❌ ' + result.error); return }
     currentSpecDir = result.specDir
-    currentSpecName = args
+    currentSpecName = result.featureName
     showInlineSpecWorkflow()
     appendMsg('system', `📐 Spec "${esc(args)}" initialized.`)
   } else {

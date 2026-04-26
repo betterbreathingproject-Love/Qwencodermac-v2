@@ -335,7 +335,7 @@ function getToolDefs(lspManager, agentRole) {
  */
 function buildFileTree(dir, maxDepth = 3) {
   const lines = []
-  const SKIP = new Set(['.git', 'node_modules', '__pycache__', '.next', 'dist', 'build', '.cache', '.vscode', '.kiro', 'coverage', '.DS_Store'])
+  const SKIP = new Set(['.git', 'node_modules', '__pycache__', '.next', 'dist', 'build', '.cache', '.vscode', '.maccoder', 'coverage', '.DS_Store'])
 
   function walk(current, prefix, depth) {
     if (depth > maxDepth) return
@@ -1589,7 +1589,7 @@ You have access to these tools:
 - web_fetch: Fetch a web page and extract its readable text. Use after web_search to read full page content, or to scrape any URL directly.
 
 **Planning — Task Graph:**
-When the user asks you to plan, outline tasks, or build something complex, write a task graph file using write_file. The file should be at .kiro/tasks.md (or .kiro/todo.md). The orchestrator will then execute each task automatically using a subagent.
+When the user asks you to plan, outline tasks, or build something complex, write a task graph file using write_file. The file should be at .maccoder/tasks.md (or .maccoder/todo.md). The orchestrator will then execute each task automatically using a subagent.
 
 Task graph format:
 - [ ] 1 Task description          (not started)

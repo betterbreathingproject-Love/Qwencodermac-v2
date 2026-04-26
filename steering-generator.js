@@ -411,8 +411,8 @@ async function generateSteeringDocs(projectDir, agentPool) {
     result.errors.push(`Agent dispatch failed: ${err.message || String(err)}`);
   }
 
-  // 3. Ensure .kiro/steering/ directory exists
-  const steeringDir = path.join(projectDir, '.kiro', 'steering');
+  // 3. Ensure .maccoder/steering/ directory exists
+  const steeringDir = path.join(projectDir, '.maccoder', 'steering');
   try {
     fs.mkdirSync(steeringDir, { recursive: true });
   } catch (err) {

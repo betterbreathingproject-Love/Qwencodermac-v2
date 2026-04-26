@@ -237,7 +237,7 @@ describe('IPC steering-generate integration', () => {
     assert.ok(result.docsGenerated.includes('project-overview.md'));
 
     // project-overview.md exists on disk
-    const overviewPath = path.join(projectDir, '.kiro', 'steering', 'project-overview.md');
+    const overviewPath = path.join(projectDir, '.maccoder', 'steering', 'project-overview.md');
     assert.ok(fs.existsSync(overviewPath), 'project-overview.md should exist on disk');
 
     const overviewContent = fs.readFileSync(overviewPath, 'utf8');

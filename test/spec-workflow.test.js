@@ -27,11 +27,11 @@ afterEach(() => {
 // --- 5.2.1 Test initSpec creates directory and config file ---
 
 describe('initSpec', () => {
-  it('creates spec directory and .config.kiro file', () => {
+  it('creates spec directory and .config.maccoder file', () => {
     const result = initSpec('my-feature', tmpDir);
 
     assert.ok(fs.existsSync(result.specDir));
-    const configPath = path.join(result.specDir, '.config.kiro');
+    const configPath = path.join(result.specDir, '.config.maccoder');
     assert.ok(fs.existsSync(configPath));
 
     const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));

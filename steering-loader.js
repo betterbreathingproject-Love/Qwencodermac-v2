@@ -91,7 +91,7 @@ function printSteeringDoc(frontMatter, body) {
 }
 
 /**
- * Loads all steering docs from the .kiro/steering/ directory of a project.
+ * Loads all steering docs from the .maccoder/steering/ directory of a project.
  *
  * Reads every `.md` file, parses its front matter, and returns an array of
  * SteeringDoc objects. Files with malformed front matter (empty name) are
@@ -105,7 +105,7 @@ function loadSteeringDocs(projectDir) {
   const fs = require('node:fs');
   const path = require('node:path');
 
-  const steeringDir = path.join(projectDir, '.kiro', 'steering');
+  const steeringDir = path.join(projectDir, '.maccoder', 'steering');
   let files;
   try {
     files = fs.readdirSync(steeringDir);

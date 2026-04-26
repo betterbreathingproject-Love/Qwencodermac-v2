@@ -25,7 +25,7 @@ function createSpecConfig(opts = {}) {
 
 /**
  * Initialize a new spec workflow.
- * Creates .kiro/specs/{featureName}/ directory with a .config.kiro file.
+ * Creates .maccoder/specs/{featureName}/ directory with a .config.maccoder file.
  *
  * @param {string} featureName - Name of the feature (used as directory name)
  * @param {string} projectDir - Root project directory
@@ -40,12 +40,12 @@ function initSpec(featureName, projectDir) {
   }
 
   const safeName = featureName.replace(/\s+/g, '-').toLowerCase();
-  const specDir = path.join(projectDir, '.kiro', 'specs', safeName);
+  const specDir = path.join(projectDir, '.maccoder', 'specs', safeName);
 
   fs.mkdirSync(specDir, { recursive: true });
 
   const config = createSpecConfig();
-  const configPath = path.join(specDir, '.config.kiro');
+  const configPath = path.join(specDir, '.config.maccoder');
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
 
   return {
@@ -64,7 +64,7 @@ function initSpec(featureName, projectDir) {
  * @returns {string} Current phase
  */
 function getSpecPhase(specDir) {
-  const configPath = path.join(specDir, '.config.kiro');
+  const configPath = path.join(specDir, '.config.maccoder');
   if (!fs.existsSync(configPath)) {
     throw new Error(`Config file not found: ${configPath}`);
   }
@@ -82,7 +82,7 @@ function getSpecPhase(specDir) {
  * @returns {string} The new current phase
  */
 function advancePhase(specDir) {
-  const configPath = path.join(specDir, '.config.kiro');
+  const configPath = path.join(specDir, '.config.maccoder');
   if (!fs.existsSync(configPath)) {
     throw new Error(`Config file not found: ${configPath}`);
   }
