@@ -1344,12 +1344,21 @@ class DirectBridge {
   /**
    * The core agentic loop: call model → if tool_calls, execute & loop → else done.
    */
-  async _agentLoop(messages, cwd, model, maxTurns = 25) {
+  async _agentLoop(messages, cwd, model, maxTurns = 50) {
     let consecutiveErrors = 0
     let lastTextResponses = []  // Track recent text-only responses for repetition detection
     let consecutivePlanningNudges = 0  // Track how many times we've nudged for planning-only responses
     for (let turn = 0; turn < maxTurns; turn++) {
       if (this._aborted) return
+
+      // Warn the model when running low on turns so it can wrap up gracefully
+      // instead of being cut off mid-task
+      if (turn === maxTurns - 3) {
+        messages.push({
+          role: 'system',
+          content: 'NOTICE: You have only 3 tool turns remaining. Wrap up your current task — finish any in-progress file writes, run a final verification if needed, then provide a summary of what you accomplished and what remains.',
+        })
+      }
 
       // Retry on transient connection errors (ECONNRESET, ECONNREFUSED)
       let completion = null
@@ -1387,7 +1396,7 @@ class DirectBridge {
         }
       }
 
-      for (let attempt = 0; attempt < 6; attempt++) {
+      for (let attempt = 0; attempt < 8; attempt++) {
         if (this._aborted) return
         try {
           completion = await this._streamCompletion(messages, cwd, model)
@@ -1402,7 +1411,7 @@ class DirectBridge {
           const isServerError = /Server returned HTTP (500|502|503)/.test(msg)
           // HTTP 413 — prompt too large. Trim messages and retry.
           const isPromptTooLarge = /Server returned HTTP 413|Prompt too large/.test(msg)
-          if (isPromptTooLarge && attempt < 5) {
+          if (isPromptTooLarge && attempt < 7) {
             this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Prompt too large (HTTP 413), trimming context and retrying...` })
             const trimmed = trimMessages(messages, 24000)
             messages.length = 0
@@ -1412,10 +1421,11 @@ class DirectBridge {
           }
           // SSE mid-stream errors are transient (server OOM during generation)
           const isSseError = /SSE error from server/.test(msg)
-          if ((isTransient || isServerError || isSseError) && attempt < 5) {
+          if ((isTransient || isServerError || isSseError) && attempt < 7) {
             const reason = isServerError ? msg.match(/HTTP \d+/)?.[0] || 'server error' : code
-            const delay = attempt === 0 ? 5 : Math.min((attempt + 1) * 3, 15)
-            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Server not ready (${reason}), retrying in ${delay}s... (${attempt + 1}/5)` })
+            // Exponential backoff: 5s, 6s, 9s, 12s, 15s, 15s, 15s, 15s
+            const delay = Math.min(5 + attempt * 3, 15)
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Server not ready (${reason}), retrying in ${delay}s... (${attempt + 1}/7)` })
             // Sleep in 1s increments so we can check _aborted
             for (let w = 0; w < delay && !this._aborted; w++) {
               await new Promise(r => setTimeout(r, 1000))
@@ -1956,7 +1966,7 @@ class DirectBridge {
       type: 'result',
       subtype: 'success',
       is_error: false,
-      result: '(max tool turns reached)',
+      result: `(reached ${maxTurns} tool turns — send a follow-up message to continue where I left off)`,
     })
   }
 

@@ -627,6 +627,8 @@ async def chat_completions(req: ChatRequest):
     # Clear MLX cache before every request to free memory and prevent OOM crashes
     try:
         import mlx.core as mx
+        import gc
+        gc.collect()
         mx.metal.clear_cache()
     except Exception:
         pass

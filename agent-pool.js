@@ -7,7 +7,7 @@ const { LSP_TOOL_SETS } = require('./direct-bridge');
 // --- Constants ---
 
 const DEFAULT_MAX_CONCURRENCY = 3;
-const DEFAULT_TIMEOUT = 300000; // 5 minutes
+const DEFAULT_TIMEOUT = 600000; // 10 minutes
 
 /**
  * Category keywords used to match task titles/metadata to subagent types.
