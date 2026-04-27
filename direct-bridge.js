@@ -1542,8 +1542,9 @@ class DirectBridge {
 
         // If the model described what it plans to do but didn't actually do it,
         // nudge it to take action. Look for planning language without tool calls.
+        // Skip turn 0 — the model should acknowledge the user first before using tools.
         const planningPatterns = /\b(let me|i('ll| will)|let's|i need to|i should|first.*then|i'm going to)\b/i
-        if (text && text.length > 50 && planningPatterns.test(text) && turn < maxTurns - 1) {
+        if (text && text.length > 50 && planningPatterns.test(text) && turn > 0 && turn < maxTurns - 1) {
           consecutivePlanningNudges++
 
           // Repetition detection: check if the model is producing similar text
@@ -2279,10 +2280,12 @@ Example:
 - [ ] 5 Write tests and verify
 \`\`\`
 
-When the user asks you to make changes to code:
-1. First read the relevant files to understand the current state
-2. Make changes using write_file or edit_file (one focused change at a time)
-3. If needed, run tests or verify with bash
+**Phased workflow — ALWAYS follow this order:**
+1. RESPOND FIRST: Immediately acknowledge the user's message. Answer any questions, confirm your understanding of the task, and briefly outline what you plan to do. This gives the user instant feedback.
+2. GATHER CONTEXT: Read relevant files, search for patterns, list directories — understand the current state before making changes.
+3. DO THE WORK: Make changes using write_file or edit_file (one focused change at a time). Run tests or verify with bash if needed.
+
+Never skip phase 1. The user should always see a text response from you before you start reading files or making changes.
 
 When the user asks you to browse, research, or interact with websites, use the browser tools directly. Call browser_navigate first, then use other browser tools to interact with the page.
 
