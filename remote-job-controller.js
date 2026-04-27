@@ -12,18 +12,21 @@ class RemoteJobController extends EventEmitter {
    * @param {number|string} opts.chatId - Paired Telegram chat ID
    * @param {object} opts.recordingManager - RecordingManager instance
    */
-  constructor({ telegramBot, chatId, recordingManager, miniAppUrl }) {
+  constructor({ telegramBot, chatId, recordingManager, miniAppUrl, sharedBridge, mainWindow }) {
     super()
     this._bot = telegramBot
     this._chatId = chatId
     this._recordingManager = recordingManager
     this._miniAppUrl = miniAppUrl || null
+    this._sharedBridge = sharedBridge || null
+    this._mainWindow = mainWindow || null
     this._state = 'idle'  // 'idle' | 'running' | 'completed' | 'failed'
     this._jobId = null
     this._bridge = null
     this._inputRequester = null
     this._lastStatusUpdate = 0
     this._statusInterval = null
+    this._telegramEventHandler = null
   }
 
   /**
@@ -64,9 +67,72 @@ class RemoteJobController extends EventEmitter {
     // Send confirmation (Req 5.3)
     await this._bot.sendMessage(this._chatId, `Job started: ${this._jobId}\nPrompt: ${prompt}`)
 
+    // Use shared bridge if available — shows in main app chat AND mirrors to Telegram
+    if (this._sharedBridge && this._mainWindow) {
+      return this._runWithSharedBridge(prompt)
+    }
+
+    // Fallback: create own bridge (no main window available)
+    return this._runWithOwnBridge(prompt)
+  }
+
+  /**
+   * Run using the shared bridge — output appears in the main app chat
+   * and is mirrored to Telegram.
+   * @private
+   */
+  async _runWithSharedBridge(prompt) {
+    // Mirror qwen-event from the main window to Telegram
+    // Note: final results are mirrored by the persistent listener in main.js,
+    // so here we only forward intermediate status like tool activity.
+    this._telegramEventHandler = (_, data) => {
+      if (!this._bot || this._state !== 'running') return
+      // Mirror error results to Telegram (persistent listener only mirrors success)
+      if (data.type === 'result' && data.is_error) {
+        const text = data.result || data.error || 'Agent error'
+        this._bot.sendMessage(this._chatId, `⚠️ ${text}`).catch(() => {})
+      }
+    }
+    this._mainWindow?.webContents.on('qwen-event', this._telegramEventHandler)
+
+    // Set up periodic status updates (Req 5.4 — ≥30s apart)
+    this._statusInterval = setInterval(() => {
+      if (this._state === 'running' && Date.now() - this._lastStatusUpdate >= 30000) {
+        this._lastStatusUpdate = Date.now()
+        this._bot.sendMessage(this._chatId, `Job ${this._jobId} still running...`).catch(() => {})
+      }
+    }, 30000)
+
+    this._bridge = this._sharedBridge
+
+    try {
+      await this._sharedBridge.run({
+        prompt,
+        cwd: process.cwd(),
+        permissionMode: 'auto',
+        model: 'default',
+      })
+
+      this._cleanupTelegramHandler()
+      this._clearStatusInterval()
+      this._state = 'completed'
+
+      await this._sendRecordingOrNotify()
+    } catch (err) {
+      this._cleanupTelegramHandler()
+      this._clearStatusInterval()
+      this._state = 'failed'
+      await this._bot.sendMessage(this._chatId, `Job ${this._jobId} failed: ${err.message}`)
+    }
+  }
+
+  /**
+   * Fallback: run with a dedicated bridge (no main window).
+   * @private
+   */
+  async _runWithOwnBridge(prompt) {
     try {
       const { DirectBridge, InputRequester, CallbackSink } = require('./direct-bridge')
-      const { createPlaywrightInstance } = require('./playwright-tool')
 
       this._inputRequester = new InputRequester(this._bot, this._chatId)
 
@@ -149,6 +215,7 @@ class RemoteJobController extends EventEmitter {
         if (this._bridge) {
           await this._bridge.interrupt()
         }
+        this._cleanupTelegramHandler()
         this._clearStatusInterval()
         this._state = 'idle'
         await this._bot.sendMessage(this._chatId, `Job ${this._jobId} stopped.`)
@@ -225,6 +292,17 @@ class RemoteJobController extends EventEmitter {
         `Job ${this._jobId} completed. Recording too large to send (${sizeMB} MB > 50 MB limit).`
       )
       if (res.error) this.emit('telegram-unavailable', { reason: res.error, recordingPath })
+    }
+  }
+
+  /**
+   * Remove the Telegram event handler from the main window.
+   * @private
+   */
+  _cleanupTelegramHandler() {
+    if (this._telegramEventHandler && this._mainWindow) {
+      this._mainWindow.webContents.off('qwen-event', this._telegramEventHandler)
+      this._telegramEventHandler = null
     }
   }
 

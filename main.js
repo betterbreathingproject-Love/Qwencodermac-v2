@@ -337,6 +337,8 @@ function createWindow() {
         chatId: telegramBot.getPairedChatId(),
         recordingManager,
         miniAppUrl: miniAppPublicUrl,
+        sharedBridge: qwenBridge,
+        mainWindow,
       })
       remoteJobController.on('telegram-unavailable', ({ reason, recordingPath }) => {
         mainWindow?.webContents.send('telegram-unavailable', { reason, recordingPath })
@@ -354,6 +356,8 @@ function createWindow() {
       chatId,
       recordingManager,
       miniAppUrl: miniAppPublicUrl,
+      sharedBridge: qwenBridge,
+      mainWindow,
     })
     remoteJobController.on('telegram-unavailable', ({ reason, recordingPath }) => {
       mainWindow?.webContents.send('telegram-unavailable', { reason, recordingPath })
@@ -393,6 +397,23 @@ function createWindow() {
     if (!telegramBot) return { error: 'Bot not initialized' }
     await telegramBot.stop()
     return { ok: true }
+  })
+
+  // ── Mirror agent results to Telegram when connected ──
+  // This ensures that any agent run (from main chat, mini app, or telegram)
+  // sends final results to the paired Telegram chat if the bot is connected.
+  mainWindow.webContents.on('qwen-event', (_, data) => {
+    if (!telegramBot || !telegramBot.getStatus().connected) return
+    const chatId = telegramBot.getPairedChatId()
+    if (!chatId) return
+
+    // Only mirror final results — not every intermediate event
+    if (data.type === 'result' && !data.is_error) {
+      const text = data.result || data.content || ''
+      if (text && text !== '__TASK_COMPLETE__') {
+        telegramBot.sendMessage(chatId, text).catch(() => {})
+      }
+    }
   })
 
   // ── Mini App IPC handlers ──
