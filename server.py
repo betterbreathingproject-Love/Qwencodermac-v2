@@ -19,6 +19,7 @@ _config = None
 _model_id = None
 _model_path = None
 _chat_template = None
+_model_is_vision = True  # False when loaded via mlx_lm (text-only fallback)
 _models_root = Path.home() / ".lmstudio" / "models"
 
 # ── inference queue ───────────────────────────────────────────────────────────
@@ -49,6 +50,21 @@ def find_models():
                 cfg = json.load(f)
             model_type = cfg.get("model_type", "unknown")
             has_vision = "vision_config" in cfg or "image_token_id" in cfg
+
+            # Check if vision weights actually exist in safetensors
+            # (distilled text-only models may inherit vision config fields
+            # from the base architecture without shipping the weights)
+            if has_vision:
+                idx_path = cfg_path.parent / "model.safetensors.index.json"
+                if idx_path.exists():
+                    try:
+                        with open(idx_path) as f:
+                            idx = json.load(f)
+                        weight_keys = idx.get("weight_map", {}).keys()
+                        has_vision = any("vision" in k for k in weight_keys)
+                    except Exception:
+                        pass
+
             models.append({
                 "id": str(rel),
                 "path": str(cfg_path.parent),
@@ -62,7 +78,7 @@ def find_models():
 
 def _unload_model():
     """Release the current model and free Metal memory before loading a new one."""
-    global _model, _processor, _config, _model_id, _model_path, _chat_template
+    global _model, _processor, _config, _model_id, _model_path, _chat_template, _model_is_vision
     if _model is not None:
         print(f"[server] Unloading current model: {_model_id}")
         _model = None
@@ -71,6 +87,7 @@ def _unload_model():
         _model_id = None
         _model_path = None
         _chat_template = None
+        _model_is_vision = True
         import gc
         gc.collect()
         try:
@@ -82,12 +99,30 @@ def _unload_model():
 
 
 def load_model(model_path: str):
-    global _model, _processor, _config, _model_id, _model_path, _chat_template
-    from mlx_vlm import load
-    from mlx_vlm.utils import load_config
+    global _model, _processor, _config, _model_id, _model_path, _chat_template, _model_is_vision
     print(f"[server] Loading {model_path} ...")
-    _model, _processor = load(model_path)
-    _config = load_config(model_path)
+
+    # Try mlx_vlm first (vision-capable), fall back to mlx_lm (text-only)
+    # if the model is missing vision tower weights (e.g. distilled text-only
+    # models that inherit vision config fields from the base architecture).
+    try:
+        from mlx_vlm import load
+        from mlx_vlm.utils import load_config
+        _model, _processor = load(model_path)
+        _config = load_config(model_path)
+        _model_is_vision = True
+        print(f"[server] Loaded as vision model (mlx_vlm)")
+    except ValueError as e:
+        if "Missing" in str(e) and "vision_tower" in str(e):
+            print(f"[server] Vision weights missing — falling back to text-only (mlx_lm)")
+            from mlx_lm import load as lm_load
+            _model, _processor = lm_load(model_path)
+            _config = None
+            _model_is_vision = False
+            print(f"[server] Loaded as text-only model (mlx_lm)")
+        else:
+            raise
+
     _model_path = model_path
 
     raw_id = str(Path(model_path).relative_to(_models_root))
@@ -464,14 +499,16 @@ def _build_prompt_with_tools(req: ChatRequest):
 
 def _build_prompt_and_kwargs(req: ChatRequest):
     """Build prompt — uses Jinja template when tools present, mlx_vlm otherwise."""
-    _, images = extract_text_and_images(req.messages)
+    images = []
+    if _model_is_vision:
+        _, images = extract_text_and_images(req.messages)
 
     has_tools = bool(req.tools) and bool(_chat_template)
 
     if has_tools:
         prompt = _build_prompt_with_tools(req)
         print(f"[server] Built prompt with tools ({len(req.tools)} tools), len={len(prompt)}", file=sys.stderr)
-    else:
+    elif _model_is_vision:
         from mlx_vlm.prompt_utils import apply_chat_template
         text, _ = extract_text_and_images(req.messages)
         system = get_system_prompt(req.messages)
@@ -480,6 +517,19 @@ def _build_prompt_and_kwargs(req: ChatRequest):
             num_images=len(images),
             system_prompt=system,
         )
+    else:
+        # Text-only model (mlx_lm) — build prompt via chat template or manual concat
+        if _chat_template:
+            prompt = _build_prompt_with_tools(req)
+        else:
+            # Simple fallback: concatenate messages
+            parts = []
+            for msg in req.messages:
+                content = msg.content if isinstance(msg.content, str) else str(msg.content or "")
+                parts.append(f"<|im_start|>{msg.role}\n{content}<|im_end|>")
+            parts.append("<|im_start|>assistant\n")
+            prompt = "\n".join(parts)
+        print(f"[server] Built text-only prompt, len={len(prompt)}", file=sys.stderr)
 
     kwargs = dict(max_tokens=min(req.max_tokens or 1024, 16384), verbose=False)
     if req.temperature is not None:
@@ -505,10 +555,12 @@ def list_models():
                 "object": "model",
                 "owned_by": "mlx",
                 "model_type": m["model_type"],
-                "vision": True,
-                "capabilities": ["tool_use", "image_input"],
+                "vision": m["vision"],
+                "capabilities": (["tool_use", "image_input"] if m["vision"]
+                                 else ["tool_use"]),
                 "architecture": {
-                    "input_modalities": ["text", "image"],
+                    "input_modalities": (["text", "image"] if m["vision"]
+                                         else ["text"]),
                     "output_modalities": ["text"],
                 },
             }
@@ -612,7 +664,10 @@ async def chat_completions(req: ChatRequest):
 
     # ── streaming ─────────────────────────────────────────────────────────────
     if req.stream:
-        from mlx_vlm import stream_generate
+        if _model_is_vision:
+            from mlx_vlm import stream_generate
+        else:
+            from mlx_lm import stream_generate
 
         prompt, kwargs, images = _build_prompt_and_kwargs(req)
         cid = f"chatcmpl-{uuid.uuid4().hex[:12]}"
@@ -959,7 +1014,10 @@ async def chat_completions(req: ChatRequest):
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     # ── non-streaming ─────────────────────────────────────────────────────────
-    from mlx_vlm import generate
+    if _model_is_vision:
+        from mlx_vlm import generate
+    else:
+        from mlx_lm import generate
 
     prompt, kwargs, images = _build_prompt_and_kwargs(req)
 
