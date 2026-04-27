@@ -1543,9 +1543,14 @@ class DirectBridge {
 
         // If the model described what it plans to do but didn't actually do it,
         // nudge it to take action. Look for planning language without tool calls.
-        // Skip turn 0 — the model should acknowledge the user first before using tools.
+        // On turn 0, allow a brief acknowledgment but still nudge if it contains
+        // clear planning language indicating more work is needed.
         const planningPatterns = /\b(let me|i('ll| will)|let's|i need to|i should|first.*then|i'm going to)\b/i
-        if (text && text.length > 50 && planningPatterns.test(text) && turn > 0 && turn < maxTurns - 1) {
+        if (text && text.length > 50 && planningPatterns.test(text) && turn < maxTurns - 1) {
+          // On turn 0, only nudge if the text is clearly planning (not just a brief answer)
+          if (turn === 0 && text.length < 200 && !text.includes('Let me')) {
+            // Short acknowledgment on turn 0 — let it through as final response
+          } else {
           consecutivePlanningNudges++
 
           // Repetition detection: check if the model is producing similar text
@@ -1607,6 +1612,7 @@ class DirectBridge {
             content: 'You described what you plan to do but did not take action. Use your tools NOW. Call read_file, edit_file, write_file, or bash to actually do the work. Do not just describe — act.',
           })
           continue
+          }
         }
 
         // Normal completion — send final assistant message
