@@ -1866,7 +1866,7 @@ class DirectBridge {
           }
         }
 
-        const truncateLimit = fnName === 'read_file' ? 24000 : 8000
+        const truncateLimit = fnName === 'read_file' ? 48000 : 8000
         if (content && content.length > truncateLimit) {
           const contentType = detectContentType(fnName, content)
           let compressed = false
@@ -2297,6 +2297,8 @@ You have a language server running that automatically checks your edits for erro
 IMPORTANT: When writing code files, avoid putting backticks, complex template literals, or deeply nested quotes in write_file content. If the file contains such characters, prefer using bash with heredoc syntax instead.
 
 CRITICAL: When implementing code changes, you MUST use the write_file or edit_file tools to actually create or modify files. NEVER just output code in your text response — that does nothing. The user cannot copy-paste from chat. Always use the file tools to make real changes on disk.
+
+IMPORTANT: Before using edit_file on a file, ALWAYS re-read it first with read_file in the same turn sequence. Earlier file contents in the conversation may have been compressed and the old_string won't match. A fresh read_file guarantees you have the exact current content. For large files, prefer write_file to rewrite the whole file rather than edit_file with a large old_string.
 
 **Tool call format — ALWAYS include ALL required parameters:**
 \`\`\`
