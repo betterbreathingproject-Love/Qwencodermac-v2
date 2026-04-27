@@ -17,7 +17,8 @@ class RemoteJobController extends EventEmitter {
     this._bot = telegramBot
     this._chatId = chatId
     this._recordingManager = recordingManager
-    this._miniAppUrl = miniAppUrl || null
+    this._miniAppUrlGetter = typeof miniAppUrl === 'function' ? miniAppUrl : null
+    this._miniAppUrl = typeof miniAppUrl === 'function' ? miniAppUrl() : (miniAppUrl || null)
     this._sharedBridge = sharedBridge || null
     this._mainWindow = mainWindow || null
     this._state = 'idle'  // 'idle' | 'running' | 'completed' | 'failed'
@@ -245,12 +246,13 @@ class RemoteJobController extends EventEmitter {
       }
       case 'app': {
         // Req: Send a Web App button so the user can open the Mini App
-        if (this._miniAppUrl) {
+        const url = this._miniAppUrlGetter ? this._miniAppUrlGetter() : this._miniAppUrl
+        if (url) {
           await this._bot.sendWebAppButton(
             this._chatId,
             '🖥 Open the QwenCoder Agent dashboard:',
             '⚡ Open Mini App',
-            this._miniAppUrl
+            url
           )
         } else {
           await this._bot.sendMessage(this._chatId, 'Mini App is not available. Start the mini app server first.')

@@ -336,7 +336,7 @@ function createWindow() {
         telegramBot,
         chatId: telegramBot.getPairedChatId(),
         recordingManager,
-        miniAppUrl: miniAppPublicUrl,
+        miniAppUrl: () => miniAppPublicUrl,
         sharedBridge: qwenBridge,
         mainWindow,
       })
@@ -355,7 +355,7 @@ function createWindow() {
       telegramBot,
       chatId,
       recordingManager,
-      miniAppUrl: miniAppPublicUrl,
+      miniAppUrl: () => miniAppPublicUrl,
       sharedBridge: qwenBridge,
       mainWindow,
     })
@@ -427,7 +427,7 @@ function createWindow() {
             telegramBot,
             chatId,
             recordingManager,
-            miniAppUrl: miniAppPublicUrl,
+            miniAppUrl: () => miniAppPublicUrl,
           })
         } else {
           // Create a minimal controller for the mini app to work standalone
@@ -623,10 +623,22 @@ function createWindow() {
         })
 
         miniAppTunnel = tunnelProcess
-        miniAppTunnel.on('exit', () => { miniAppTunnel = null; miniAppPublicUrl = null })
+        miniAppTunnel.on('exit', () => {
+          miniAppTunnel = null
+          miniAppPublicUrl = null
+          if (remoteJobController) remoteJobController._miniAppUrl = null
+          // Reset the bot's menu button since the URL is now dead
+          if (telegramBot?._token && telegramBot.getPairedChatId()) {
+            const { telegramRequest } = require('./telegram-bot')
+            telegramRequest('setChatMenuButton', telegramBot._token, {
+              chat_id: telegramBot.getPairedChatId(),
+              menu_button: JSON.stringify({ type: 'default' }),
+            }).catch(() => {})
+          }
+        })
 
         // Update the controller's mini app URL
-        if (remoteJobController._miniAppUrl !== undefined) {
+        if (remoteJobController) {
           remoteJobController._miniAppUrl = miniAppPublicUrl
         }
 

@@ -1484,6 +1484,17 @@ class DirectBridge {
             const trimmed = trimMessages(messages, effectiveMaxInputTokens)
             messages.length = 0
             messages.push(...trimmed)
+            // If still over budget after trimMessages (large content in recent messages),
+            // progressively truncate the largest tool/assistant content in the last messages
+            if (estimateMessagesTokens(messages) > effectiveMaxInputTokens) {
+              const maxContentChars = Math.floor(effectiveMaxInputTokens * 3.5 / messages.length)
+              for (let mi = 0; mi < messages.length; mi++) {
+                const m = messages[mi]
+                if (m.content && m.content.length > maxContentChars && m.role !== 'system') {
+                  m.content = m.content.slice(0, maxContentChars) + '\n\n... [trimmed: content too large for context window. Use more specific queries or read smaller sections.]'
+                }
+              }
+            }
             await new Promise(r => setTimeout(r, 1000))
             continue
           }
@@ -1996,7 +2007,7 @@ class DirectBridge {
           }
         }
 
-        const truncateLimit = fnName === 'read_file' ? 48000 : 8000
+        const truncateLimit = fnName === 'read_file' ? 32000 : 8000
         if (content && content.length > truncateLimit) {
           const contentType = detectContentType(fnName, content)
           let compressed = false
@@ -2228,6 +2239,15 @@ class DirectBridge {
       if (estimatedTokens > 30000) {
         this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Prompt too large (~${estimatedTokens} tokens), trimming to 30K before sending` })
         const trimmed = trimMessages(messages, 30000)
+        // If trimMessages didn't reduce enough (large content in recent messages), truncate them
+        if (estimateMessagesTokens(trimmed) > 30000) {
+          const maxContentChars = Math.floor(30000 * 3.5 / trimmed.length)
+          for (const m of trimmed) {
+            if (m.content && m.content.length > maxContentChars && m.role !== 'system') {
+              m.content = m.content.slice(0, maxContentChars) + '\n\n... [trimmed: content too large for context window. Use more specific queries or read smaller sections.]'
+            }
+          }
+        }
         body.messages = trimmed
       }
 
