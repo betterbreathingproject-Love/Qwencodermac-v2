@@ -1248,6 +1248,11 @@ async def chat_completions(req: ChatRequest):
         if tool_calls:
             finish_reason = "tool_calls"
             content = strip_thinking(strip_tool_calls(response_text)) or None
+        else:
+            content = strip_thinking(response_text) or response_text
+    else:
+        # Always strip thinking blocks — Qwen3 models generate <think> even without tools
+        content = strip_thinking(response_text) or response_text
 
     message = {"role": "assistant", "content": content}
     if tool_calls:

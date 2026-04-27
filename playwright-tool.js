@@ -128,7 +128,7 @@ function createPlaywrightInstance(options = {}) {
     ]
     try {
       const http = require('http')
-      const body = JSON.stringify({ messages: [{ role: 'user', content }], max_tokens: 1024, stream: false })
+      const body = JSON.stringify({ messages: [{ role: 'user', content }], max_tokens: 4096, stream: false })
       const result = await new Promise((resolve, reject) => {
         const req = http.request({
           hostname: '127.0.0.1', port: 8090,
@@ -145,7 +145,8 @@ function createPlaywrightInstance(options = {}) {
         req.write(body)
         req.end()
       })
-      const desc = result.choices?.[0]?.message?.content || result.error?.message || result.detail || `Could not analyze screenshot. Server response: ${JSON.stringify(result).slice(0, 200)}`
+      const rawContent = result.choices?.[0]?.message?.content || ''
+      const desc = rawContent || result.error?.message || result.detail || '[Vision model returned empty response — the page may be loading or blank. Try waiting and retaking the screenshot.]'
       return `[Screenshot captured, ${buf.length} bytes]\n\n![screenshot](${displayB64})\n\nVision analysis:\n${desc}`
     } catch (err) {
       return `[Screenshot captured, ${buf.length} bytes, but vision analysis failed: ${err.message}]\n\n![screenshot](${displayB64})`
