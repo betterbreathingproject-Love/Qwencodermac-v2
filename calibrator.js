@@ -1,5 +1,7 @@
 'use strict'
 
+const { CONTEXT_WINDOW, MAX_INPUT_TOKENS, COMPACTION_THRESHOLD, CALIBRATOR_FLOOR } = require('./config')
+
 /**
  * Compute a Calibration_Profile from benchmark metrics.
  * @param {object} metrics - { generation_tps, prompt_tps, peak_memory_gb, available_memory_gb, context_window }
@@ -30,10 +32,10 @@ function computeProfile(metrics) {
 
   const rawTimeout = (context_window / generation_tps) * 1000 + 30000
   const timeoutPerTurn = Math.max(60000, Math.round(rawTimeout))
-  // Use actual context budget (84K) regardless of model-reported context_window
-  const effectiveContext = Math.max(context_window, 84000)
+  // Use configured context budget regardless of model-reported context_window
+  const effectiveContext = Math.max(context_window, CONTEXT_WINDOW)
   const rawMaxInput = Math.round(effectiveContext * 0.85 * memoryScale)
-  const maxInputTokens = Math.min(200000, Math.max(32000, rawMaxInput))
+  const maxInputTokens = Math.min(200000, Math.max(CALIBRATOR_FLOOR, rawMaxInput))
   const compactionThreshold = Math.round(maxInputTokens * 0.85)
   const maxTurns = 500
   const poolTimeout = Math.max(120000, timeoutPerTurn * 3)
@@ -55,8 +57,8 @@ function defaultProfile() {
   return {
     maxTurns: 50,
     timeoutPerTurn: 120000,
-    maxInputTokens: 72000,
-    compactionThreshold: 64000,
+    maxInputTokens: MAX_INPUT_TOKENS,
+    compactionThreshold: COMPACTION_THRESHOLD,
     poolTimeout: 600000,
     metrics: null,
   }

@@ -19,6 +19,7 @@ const { createPlaywrightInstance, BROWSER_TOOL_DEFS } = require('./playwright-to
 const { WEB_TOOL_DEFS, executeWebTool } = require('./web-tools')
 const { getApiKeys } = require('./projects')
 const compactor = require('./compactor')
+const config = require('./config')
 
 // ── Python path resolution (reuse pattern from main/ipc-server.js) ────────────
 function _findPythonPath() {
@@ -1396,8 +1397,8 @@ class DirectBridge {
     // Read calibrated settings if available, fall back to parameter/hardcoded defaults
     const profile = this._getCalibrationProfile?.()
     const effectiveMaxTurns = profile?.maxTurns ?? maxTurns
-    const effectiveMaxInputTokens = profile?.maxInputTokens ?? 72000
-    const effectiveCompactionThreshold = profile?.compactionThreshold ?? 64000
+    const effectiveMaxInputTokens = profile?.maxInputTokens ?? config.MAX_INPUT_TOKENS
+    const effectiveCompactionThreshold = profile?.compactionThreshold ?? config.COMPACTION_THRESHOLD
 
     let consecutiveErrors = 0
     let lastTextResponses = []  // Track recent text-only responses for repetition detection
@@ -2007,7 +2008,7 @@ class DirectBridge {
           }
         }
 
-        const truncateLimit = fnName === 'read_file' ? 96000 : 16000
+        const truncateLimit = fnName === 'read_file' ? config.READ_FILE_TRUNCATE : config.TOOL_OUTPUT_TRUNCATE
         if (content && content.length > truncateLimit) {
           const contentType = detectContentType(fnName, content)
           let compressed = false
@@ -2218,7 +2219,7 @@ class DirectBridge {
         messages,
         tools: getToolDefs(this._lspManager, this._agentRole, this._allowedTools),
         stream: true,
-        max_tokens: 32768,
+        max_tokens: config.MAX_OUTPUT_TOKENS,
       }
       // Merge sampling parameters (temperature, top_p, repetition_penalty)
       if (this._samplingParams) {
@@ -2234,14 +2235,14 @@ class DirectBridge {
       let buf = ''
       let _lastToolDeltaTime = 0
 
-      // Client-side prompt size guard: estimate tokens and trim if over 75K
+      // Client-side prompt size guard: estimate tokens and trim if over budget
       const estimatedTokens = estimateMessagesTokens(messages)
-      if (estimatedTokens > 75000) {
-        this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Prompt too large (~${estimatedTokens} tokens), trimming to 75K before sending` })
-        const trimmed = trimMessages(messages, 75000)
+      if (estimatedTokens > config.PRE_SEND_LIMIT) {
+        this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Prompt too large (~${estimatedTokens} tokens), trimming to ${config.PRE_SEND_LIMIT} before sending` })
+        const trimmed = trimMessages(messages, config.PRE_SEND_LIMIT)
         // If trimMessages didn't reduce enough (large content in recent messages), truncate them
-        if (estimateMessagesTokens(trimmed) > 75000) {
-          const maxContentChars = Math.floor(75000 * 3.5 / trimmed.length)
+        if (estimateMessagesTokens(trimmed) > config.PRE_SEND_LIMIT) {
+          const maxContentChars = Math.floor(config.PRE_SEND_LIMIT * 3.5 / trimmed.length)
           for (const m of trimmed) {
             if (m.content && m.content.length > maxContentChars && m.role !== 'system') {
               m.content = m.content.slice(0, maxContentChars) + '\n\n... [trimmed: content too large for context window. Use more specific queries or read smaller sections.]'

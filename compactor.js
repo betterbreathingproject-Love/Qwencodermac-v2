@@ -16,15 +16,14 @@ const builtin = require('./compactor-builtin')
 const COMPACTOR_SCRIPT = path.join(__dirname, 'compactor-bridge.py')
 
 // ── Node-side Rewind Store ─────────────────────────────────────────────────
-const MAX_REWIND_ENTRIES = 1000
-const REWIND_TTL_MS = 120 * 60 * 1000 // 2 hours
+const { REWIND_MAX_ENTRIES, REWIND_TTL_MS } = require('./config')
 
 const _rewindStore = new Map() // key → { original, compressed, storedAt, tokens }
 
 function rewindStore(original, compressed, originalTokens = 0) {
   const key = 'rw_' + crypto.randomBytes(12).toString('hex')
   // Evict oldest if at capacity
-  if (_rewindStore.size >= MAX_REWIND_ENTRIES) {
+  if (_rewindStore.size >= REWIND_MAX_ENTRIES) {
     const oldest = _rewindStore.keys().next().value
     _rewindStore.delete(oldest)
   }
