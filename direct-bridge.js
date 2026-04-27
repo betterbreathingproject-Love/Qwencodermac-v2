@@ -1862,7 +1862,7 @@ class DirectBridge {
               const origTokens = compResult.stats.original_tokens ?? 0
               let notice = `\n\n[compressed: ${pct}% reduction, original ${origTokens} tokens`
               if (compResult.stats.rewind_key) {
-                notice += `, rewind key: ${compResult.stats.rewind_key}`
+                notice += `, rewind key: ${compResult.stats.rewind_key} — call rewind_context with this key to retrieve the full original`
               }
               notice += ']'
               content += notice
@@ -2292,6 +2292,9 @@ list_dir: requires "path"
 
 **Progress tracking:**
 When working on multi-step tasks, use update_todos to show your plan and track progress. Call it at the start with your plan (all items "pending"), then update item statuses to "in_progress" and "done" as you work through each step. This keeps the user informed.
+
+**Compressed content & rewind:**
+Large tool results may be automatically compressed to save context. When this happens you will see a notice like: [compressed: 42% reduction, original 1200 tokens, rewind key: rw_abc123]. If you need the full uncompressed content, call the rewind_context tool with the rewind key. This retrieves the original text. Only rewind when you actually need the full detail — the compressed version is usually sufficient.
 ${autoEdit ? '\nYou are in auto-edit mode. Proceed with changes without asking for confirmation.' : ''}`
   }
 
