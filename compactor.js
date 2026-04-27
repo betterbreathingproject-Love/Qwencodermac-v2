@@ -16,8 +16,8 @@ const builtin = require('./compactor-builtin')
 const COMPACTOR_SCRIPT = path.join(__dirname, 'compactor-bridge.py')
 
 // ── Node-side Rewind Store ─────────────────────────────────────────────────
-const MAX_REWIND_ENTRIES = 200
-const REWIND_TTL_MS = 30 * 60 * 1000 // 30 minutes
+const MAX_REWIND_ENTRIES = 1000
+const REWIND_TTL_MS = 120 * 60 * 1000 // 2 hours
 
 const _rewindStore = new Map() // key → { original, compressed, storedAt, tokens }
 

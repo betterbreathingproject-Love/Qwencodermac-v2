@@ -1396,8 +1396,8 @@ class DirectBridge {
     // Read calibrated settings if available, fall back to parameter/hardcoded defaults
     const profile = this._getCalibrationProfile?.()
     const effectiveMaxTurns = profile?.maxTurns ?? maxTurns
-    const effectiveMaxInputTokens = profile?.maxInputTokens ?? 24000
-    const effectiveCompactionThreshold = profile?.compactionThreshold ?? 20000
+    const effectiveMaxInputTokens = profile?.maxInputTokens ?? 56000
+    const effectiveCompactionThreshold = profile?.compactionThreshold ?? 48000
 
     let consecutiveErrors = 0
     let lastTextResponses = []  // Track recent text-only responses for repetition detection
@@ -2007,7 +2007,7 @@ class DirectBridge {
           }
         }
 
-        const truncateLimit = fnName === 'read_file' ? 32000 : 8000
+        const truncateLimit = fnName === 'read_file' ? 96000 : 16000
         if (content && content.length > truncateLimit) {
           const contentType = detectContentType(fnName, content)
           let compressed = false
@@ -2218,7 +2218,7 @@ class DirectBridge {
         messages,
         tools: getToolDefs(this._lspManager, this._agentRole, this._allowedTools),
         stream: true,
-        max_tokens: 16384,
+        max_tokens: 32768,
       }
       // Merge sampling parameters (temperature, top_p, repetition_penalty)
       if (this._samplingParams) {
@@ -2234,14 +2234,14 @@ class DirectBridge {
       let buf = ''
       let _lastToolDeltaTime = 0
 
-      // Client-side prompt size guard: estimate tokens and trim if over 30K
+      // Client-side prompt size guard: estimate tokens and trim if over 58K
       const estimatedTokens = estimateMessagesTokens(messages)
-      if (estimatedTokens > 30000) {
-        this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Prompt too large (~${estimatedTokens} tokens), trimming to 30K before sending` })
-        const trimmed = trimMessages(messages, 30000)
+      if (estimatedTokens > 58000) {
+        this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Prompt too large (~${estimatedTokens} tokens), trimming to 58K before sending` })
+        const trimmed = trimMessages(messages, 58000)
         // If trimMessages didn't reduce enough (large content in recent messages), truncate them
-        if (estimateMessagesTokens(trimmed) > 30000) {
-          const maxContentChars = Math.floor(30000 * 3.5 / trimmed.length)
+        if (estimateMessagesTokens(trimmed) > 58000) {
+          const maxContentChars = Math.floor(58000 * 3.5 / trimmed.length)
           for (const m of trimmed) {
             if (m.content && m.content.length > maxContentChars && m.role !== 'system') {
               m.content = m.content.slice(0, maxContentChars) + '\n\n... [trimmed: content too large for context window. Use more specific queries or read smaller sections.]'
