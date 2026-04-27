@@ -14,6 +14,27 @@ let agentRole = 'general' // current agent role for vibe mode
 let currentTodos = [] // persisted todo list for active session
 let _lastCompactionStats = null
 
+// ── toast notifications ───────────────────────────────────────────────────────
+function showToast(message, type = 'info', duration = 5000) {
+  let container = document.getElementById('toast-container')
+  if (!container) {
+    container = document.createElement('div')
+    container.id = 'toast-container'
+    container.style.cssText = 'position:fixed;top:16px;right:16px;z-index:99999;display:flex;flex-direction:column;gap:8px;pointer-events:none;'
+    document.body.appendChild(container)
+  }
+  const toast = document.createElement('div')
+  const bg = type === 'error' ? 'var(--red, #e74c3c)' : 'var(--green, #2ecc71)'
+  toast.style.cssText = `background:${bg};color:#fff;padding:12px 20px;border-radius:8px;font-size:13px;max-width:400px;pointer-events:auto;opacity:0;transition:opacity 0.3s;box-shadow:0 4px 12px rgba(0,0,0,0.3);`
+  toast.textContent = message
+  container.appendChild(toast)
+  requestAnimationFrame(() => { toast.style.opacity = '1' })
+  setTimeout(() => {
+    toast.style.opacity = '0'
+    setTimeout(() => toast.remove(), 300)
+  }, duration)
+}
+
 // ── init ──────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', async () => {
   window.app.onServerStatus(s => { setServerStatus(s.running); if(s.running) refreshStatus() })
@@ -55,6 +76,14 @@ window.addEventListener('DOMContentLoaded', async () => {
   initLspStatus()
   initCalibrationStatus()
   refreshSteeringDocs()
+
+  // Listen for telegram-unavailable events from the main process
+  window.app.onTelegramUnavailable?.(({ reason, recordingPath }) => {
+    const msg = recordingPath
+      ? `Could not send video to Telegram: ${reason}`
+      : `Telegram send failed: ${reason}`
+    showToast(msg, 'error', 8000)
+  })
 })
 
 // ── panels ────────────────────────────────────────────────────────────────────

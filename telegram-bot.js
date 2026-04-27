@@ -255,7 +255,39 @@ class TelegramBot extends EventEmitter {
    * @param {string} text - Message text
    * @returns {Promise<{ok: true}|{error: string}>}
    */
+  /**
+   * Ensure the bot is connected. If disconnected but a saved token exists,
+   * attempt to auto-reconnect. Returns true if connected, false otherwise.
+   * @private
+   * @returns {Promise<boolean>}
+   */
+  async _ensureConnected() {
+    if (this._token && this._polling) return true
+
+    // Try to auto-reconnect from saved config
+    const saved = this.loadConfig()
+    if (saved && saved.token) {
+      try {
+        await this.start(saved.token)
+        if (saved.pairedChatId) this._pairedChatId = saved.pairedChatId
+        return true
+      } catch {
+        return false
+      }
+    }
+    return false
+  }
+
+  /**
+   * Send a text message to a Telegram chat.
+   * @param {number|string} chatId - Target chat ID
+   * @param {string} text - Message text
+   * @returns {Promise<{ok: true}|{error: string}>}
+   */
   async sendMessage(chatId, text) {
+    if (!(await this._ensureConnected())) {
+      return { error: 'Telegram bot is not connected and no saved token is available.' }
+    }
     try {
       const res = await telegramRequest('sendMessage', this._token, { chat_id: chatId, text })
       if (res.ok) return { ok: true }
@@ -273,6 +305,9 @@ class TelegramBot extends EventEmitter {
    * @returns {Promise<{ok: true}|{error: string}>}
    */
   async sendVideo(chatId, filePath, caption) {
+    if (!(await this._ensureConnected())) {
+      return { error: 'Telegram bot is not connected and no saved token is available.' }
+    }
     try {
       const res = await telegramUpload('sendVideo', this._token, chatId, 'video', filePath, caption)
       if (res.ok) return { ok: true }
@@ -290,6 +325,9 @@ class TelegramBot extends EventEmitter {
    * @returns {Promise<{ok: true}|{error: string}>}
    */
   async sendPhoto(chatId, filePath, caption) {
+    if (!(await this._ensureConnected())) {
+      return { error: 'Telegram bot is not connected and no saved token is available.' }
+    }
     try {
       const res = await telegramUpload('sendPhoto', this._token, chatId, 'photo', filePath, caption)
       if (res.ok) return { ok: true }
@@ -311,6 +349,9 @@ class TelegramBot extends EventEmitter {
    * @param {string} webAppUrl - Mini App URL
    */
   async sendWebAppButton(chatId, text, buttonText, webAppUrl) {
+    if (!(await this._ensureConnected())) {
+      return { error: 'Telegram bot is not connected and no saved token is available.' }
+    }
     return telegramRequest('sendMessage', this._token, {
       chat_id: chatId,
       text,

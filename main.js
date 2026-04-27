@@ -338,6 +338,9 @@ function createWindow() {
         recordingManager,
         miniAppUrl: miniAppPublicUrl,
       })
+      remoteJobController.on('telegram-unavailable', ({ reason, recordingPath }) => {
+        mainWindow?.webContents.send('telegram-unavailable', { reason, recordingPath })
+      })
     }
     if (remoteJobController) {
       remoteJobController.handleCommand(command, args)
@@ -351,6 +354,9 @@ function createWindow() {
       chatId,
       recordingManager,
       miniAppUrl: miniAppPublicUrl,
+    })
+    remoteJobController.on('telegram-unavailable', ({ reason, recordingPath }) => {
+      mainWindow?.webContents.send('telegram-unavailable', { reason, recordingPath })
     })
   })
 

@@ -202,25 +202,29 @@ class RemoteJobController extends EventEmitter {
   async _sendRecordingOrNotify() {
     const recordingPath = this._bridge?._browserInstance?.getRecordingPath?.()
     if (!recordingPath) {
-      await this._bot.sendMessage(this._chatId, `Job ${this._jobId} completed.`)
+      const res = await this._bot.sendMessage(this._chatId, `Job ${this._jobId} completed.`)
+      if (res.error) this.emit('telegram-unavailable', { reason: res.error, recordingPath: null })
       return
     }
 
     const validation = this._recordingManager.validateRecording(recordingPath)
     if (!validation.ok) {
-      await this._bot.sendMessage(this._chatId, `Job ${this._jobId} completed. Recording unavailable.`)
+      const res = await this._bot.sendMessage(this._chatId, `Job ${this._jobId} completed. Recording unavailable.`)
+      if (res.error) this.emit('telegram-unavailable', { reason: res.error, recordingPath: null })
       return
     }
 
     const sizeCheck = this._recordingManager.checkSizeLimit(recordingPath)
     if (sizeCheck.withinLimit) {
-      await this._bot.sendVideo(this._chatId, recordingPath, `Job ${this._jobId} completed`)
+      const res = await this._bot.sendVideo(this._chatId, recordingPath, `Job ${this._jobId} completed`)
+      if (res.error) this.emit('telegram-unavailable', { reason: res.error, recordingPath })
     } else {
       const sizeMB = (sizeCheck.sizeBytes / 1024 / 1024).toFixed(1)
-      await this._bot.sendMessage(
+      const res = await this._bot.sendMessage(
         this._chatId,
         `Job ${this._jobId} completed. Recording too large to send (${sizeMB} MB > 50 MB limit).`
       )
+      if (res.error) this.emit('telegram-unavailable', { reason: res.error, recordingPath })
     }
   }
 

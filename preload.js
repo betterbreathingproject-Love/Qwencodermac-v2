@@ -142,6 +142,8 @@ contextBridge.exposeInMainWorld('app', {
   telegramStart:     (token) => ipcRenderer.invoke('telegram-start', token),
   telegramStop:      ()     => ipcRenderer.invoke('telegram-stop'),
   telegramGetToken:  ()     => ipcRenderer.invoke('telegram-get-token'),
+  onTelegramUnavailable: (cb) => ipcRenderer.on('telegram-unavailable', (_, d) => cb(d)),
+  offTelegramUnavailable: () => ipcRenderer.removeAllListeners('telegram-unavailable'),
 
   // Mini App
   miniappStart:      ()     => ipcRenderer.invoke('miniapp-start'),
