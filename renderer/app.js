@@ -975,6 +975,7 @@ async function sendAgentMode(prompt, opts = {}) {
   let inputTokens = 0, outputTokens = 0
   let serverTps = null // real tk/s from server, used when available
   let allTextSegments = [] // accumulates text across all turns (text→tool→text→...)
+  _lastCompactionStats = null // reset so stale stats don't persist across runs
   window._rawCount = 0
   window._rawToolCalls = null
   window.app.offQwenEvents()
@@ -1342,7 +1343,12 @@ async function sendAgentMode(prompt, opts = {}) {
         scrollOutput()
         break
       case 'compaction-stats':
-        _lastCompactionStats = ev.data
+        // Only update the badge for conversation-level compaction, not per-tool-result compressions
+        if (!ev.data.source || ev.data.source !== 'tool-result') {
+          _lastCompactionStats = ev.data
+        } else if (!_lastCompactionStats) {
+          _lastCompactionStats = ev.data
+        }
         updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: 'Compressed context' })
         break
       case 'usage':
