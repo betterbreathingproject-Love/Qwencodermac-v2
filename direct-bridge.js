@@ -1067,7 +1067,7 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         const p = v.resolved
         if (!fs.existsSync(p)) return { error: `File not found: ${args.path}` }
         const content = fs.readFileSync(p, 'utf-8')
-        if (!content.includes(args.old_string)) return { error: `old_string not found in ${args.path}. Make sure it matches exactly.` }
+        if (!content.includes(args.old_string)) return { error: `old_string not found in ${args.path}. Make sure it matches exactly. Tip: re-read the file with read_file first to get the current content, then use the exact text from that read.` }
         const count = content.split(args.old_string).length - 1
         if (count > 1) return { error: `old_string found ${count} times in ${args.path}. Make it more specific so it matches exactly once.` }
         fs.writeFileSync(p, content.replace(args.old_string, args.new_string), 'utf-8')
@@ -1487,7 +1487,7 @@ class DirectBridge {
           type: 'result',
           subtype: 'error',
           is_error: true,
-          result: 'Server returned an empty response. The prompt may be too large — try starting a new session or shortening your message.',
+          result: '⚠️ Server returned an empty response. This usually means the prompt is too large for the model. You can:\n• Start a new session to clear conversation history\n• Shorten your message\n• Try a model with a larger context window',
         })
         return
       }
@@ -1567,6 +1567,12 @@ class DirectBridge {
           if (isRepeating || consecutivePlanningNudges >= 3) {
             // Model is stuck in a repetition loop — take aggressive corrective action
             this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Repetition detected (${consecutivePlanningNudges} planning-only turns). Breaking loop.` })
+
+            // Inform the user
+            this.send('qwen-event', {
+              type: 'system', subtype: 'warning',
+              data: '⚠️ The agent is stuck in a loop — it keeps describing what it plans to do without acting. Resetting context and forcing tool use. If this persists, try:\n• Sending a more specific instruction (e.g. "edit file X, change Y to Z")\n• Starting a new session\n• Breaking the task into smaller steps',
+            })
 
             // Strip all previous planning messages and nudges to reset context
             const cleanedMessages = messages.filter(m =>
@@ -1941,11 +1947,25 @@ class DirectBridge {
       consecutivePlanningNudges = 0
       lastTextResponses = []
 
-      // If too many consecutive errors, nudge the model
+      // If too many consecutive errors, nudge the model and inform the user
       if (consecutiveErrors >= 3) {
         // Build a summary of recent errors to help the model understand what's going wrong
         const recentToolMsgs = messages.slice(-6).filter(m => m.role === 'tool' && m.content && m.content.includes('must be'))
         const errorSummary = recentToolMsgs.map(m => m.content.split('.')[0]).join('; ')
+
+        // Show user-facing suggestion in chat
+        if (consecutiveErrors >= 5) {
+          this.send('qwen-event', {
+            type: 'system', subtype: 'warning',
+            data: `⚠️ The agent has hit ${consecutiveErrors} consecutive errors and may be stuck. You can:\n• Send a follow-up message with more specific instructions\n• Start a new session to reset context\n• Try rephrasing your request more simply`,
+          })
+        } else {
+          this.send('qwen-event', {
+            type: 'system', subtype: 'warning',
+            data: `⚠️ The agent is having trouble with tool calls (${consecutiveErrors} errors in a row). Attempting to self-correct...`,
+          })
+        }
+
         messages.push({
           role: 'system',
           content: `WARNING: ${consecutiveErrors} consecutive tool errors. Recent errors: ${errorSummary || 'missing required parameters'}.\n\nREMINDER — correct tool call formats:\n- read_file({"path": "file.js"})\n- write_file({"path": "file.js", "content": "..."})\n- edit_file({"path": "file.js", "old_string": "...", "new_string": "..."})\n- search_files({"pattern": "searchTerm", "path": "."})\n- bash({"command": "ls -la"})\n- list_dir({"path": "."})\n\nAll parameters shown above are REQUIRED. Do NOT omit any.`,
