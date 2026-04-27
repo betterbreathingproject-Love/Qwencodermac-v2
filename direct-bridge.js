@@ -1375,6 +1375,10 @@ class DirectBridge {
       // hitting the hard maxInputTokens ceiling.
       if (estimateMessagesTokens(messages) > effectiveCompactionThreshold) {
         const before = messages.length
+        // Preserve the user's original request so compaction can't erase the task
+        const originalUserMsg = messages.find(m => m.role === 'user')
+        const originalRequest = originalUserMsg?.content?.slice(0, 500) || ''
+
         try {
           const result = await compactor.compressMessages(pythonPath, messages, { dedup: true, keepRecent: 4 })
           if (result && result.messages) {
@@ -1385,6 +1389,15 @@ class DirectBridge {
               this.send('qwen-event', { type: 'compaction-stats', data: result.stats })
             }
             this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Compressed context: ${before} → ${messages.length} messages (~${estimateMessagesTokens(messages)} tokens, engine: ${result.stats?.engine || 'unknown'})` })
+
+            // Re-inject the original request as a reminder after compaction
+            // so the model doesn't lose track of what it was asked to do
+            if (originalRequest) {
+              messages.push({
+                role: 'system',
+                content: `REMINDER — the user's original request (continue working on this):\n"${originalRequest}"`,
+              })
+            }
           }
         } catch (compactErr) {
           // Compactor failed entirely — fall back to trimMessages
