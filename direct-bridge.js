@@ -1355,6 +1355,7 @@ class DirectBridge {
     let consecutiveErrors = 0
     let lastTextResponses = []  // Track recent text-only responses for repetition detection
     let consecutivePlanningNudges = 0  // Track how many times we've nudged for planning-only responses
+    let _lastTodos = null  // Track the latest todo list for completion checking
     for (let turn = 0; turn < effectiveMaxTurns; turn++) {
       if (this._aborted) return
 
@@ -1628,6 +1629,21 @@ class DirectBridge {
           }
         }
 
+        // Check if there are incomplete todos — don't stop if work remains
+        if (_lastTodos && _lastTodos.length > 0) {
+          const incomplete = _lastTodos.filter(t => t.status !== 'done' && t.status !== 'completed')
+          if (incomplete.length > 0) {
+            const remaining = incomplete.map(t => t.text || t.label || t.title || 'unnamed').join(', ')
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `${incomplete.length} todo items still incomplete — nudging to continue` })
+            messages.push({ role: 'assistant', content: text })
+            messages.push({
+              role: 'system',
+              content: `You have ${incomplete.length} incomplete todo items remaining: ${remaining}. Do NOT stop — continue working through your todo list. Call update_todos to mark items done as you complete them.`,
+            })
+            continue
+          }
+        }
+
         // Normal completion — send final assistant message
         // But first check: if the model just browsed/read files and the user asked
         // for more (like recording, writing, building), don't stop yet — nudge it.
@@ -1791,6 +1807,11 @@ class DirectBridge {
 
         // Emit tool-use event
         this.send('qwen-event', { type: 'tool-use', id: tc.id, name: fnName, input: fnArgs })
+
+        // Track todo state for completion checking
+        if (fnName === 'update_todos' && Array.isArray(fnArgs.todos)) {
+          _lastTodos = fnArgs.todos
+        }
 
         // Speculative edit hook: simulate write_file before executing it
         let speculativeMsg = ''
@@ -2368,7 +2389,7 @@ list_dir: requires "path"
 \`\`\`
 
 **Progress tracking:**
-When working on multi-step tasks, use update_todos to show your plan and track progress. Call it at the start with your plan (all items "pending"), then update item statuses to "in_progress" and "done" as you work through each step. This keeps the user informed.
+When working on ANY task that involves more than one step, you MUST call update_todos at the start to create a checklist of what you plan to do. Then update item statuses to "in_progress" and "done" as you work through each step. Do NOT finish until all items are marked "done". This is critical — the system uses your todo list to verify task completion.
 
 **Compressed content & rewind:**
 Large tool results may be automatically compressed to save context. When this happens you will see a notice like: [compressed: 42% reduction, original 1200 tokens, rewind key: rw_abc123]. If you need the full uncompressed content, call the rewind_context tool with the rewind key. This retrieves the original text. Only rewind when you actually need the full detail — the compressed version is usually sufficient.
