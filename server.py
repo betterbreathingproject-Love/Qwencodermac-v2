@@ -787,14 +787,45 @@ async def chat_completions(req: ChatRequest):
         pass  # If memory check fails, proceed anyway
 
     # Preventive guard: reject dangerously large prompts
+    # Use the model's actual context window (with 10% safety margin) instead of hardcoded 30k
+    ctx_window = 32768  # default
+    if _config and isinstance(_config, dict):
+        ctx_window = _config.get("max_position_embeddings", 32768)
+    elif _model_path:
+        try:
+            cfg_path = Path(_model_path) / "config.json"
+            if cfg_path.exists():
+                with open(cfg_path) as f:
+                    disk_cfg = json.load(f)
+                ctx_window = disk_cfg.get("max_position_embeddings", 32768)
+        except Exception:
+            pass
+    prompt_limit = int(ctx_window * 0.9)  # 90% of context window
+
     total_chars = sum(len(str(msg.content or '')) for msg in req.messages)
-    estimated_tokens = total_chars // 4  # rough estimate: ~4 chars per token
-    if estimated_tokens > 30000:
-        print(f"[server] ⚠️ Prompt too large: ~{estimated_tokens} estimated tokens ({total_chars} chars)", file=sys.stderr)
+    # For vision messages with images, base64 data inflates char count massively
+    # but MLX VLM processes images as ~1000-2000 tokens regardless of base64 size.
+    # Subtract base64 image data from the char count and add a flat token estimate.
+    image_chars = 0
+    image_count = 0
+    for msg in req.messages:
+        if isinstance(msg.content, list):
+            for part in msg.content:
+                if isinstance(part, dict) and part.get('type') == 'image_url':
+                    url = part.get('image_url', {}).get('url', '')
+                    if url.startswith('data:'):
+                        image_chars += len(url)
+                        image_count += 1
+    # Each image is ~1500 tokens in MLX VLM, not len(base64)/4
+    adjusted_chars = total_chars - image_chars
+    estimated_tokens = max(0, adjusted_chars // 4) + (image_count * 1500)
+
+    if estimated_tokens > prompt_limit:
+        print(f"[server] ⚠️ Prompt too large: ~{estimated_tokens} estimated tokens ({total_chars} chars, limit={prompt_limit})", file=sys.stderr)
         raise HTTPException(413, json.dumps({
             "error": "Prompt too large",
             "estimated_tokens": estimated_tokens,
-            "limit": 30000,
+            "limit": prompt_limit,
         }))
 
     # debug logging

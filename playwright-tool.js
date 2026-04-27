@@ -109,8 +109,8 @@ function createPlaywrightInstance(options = {}) {
     if (sharp) {
       try {
         const resized = await sharp(buf)
-          .resize({ width: 1280, height: 960, fit: 'inside', withoutEnlargement: true })
-          .jpeg({ quality: 80 })
+          .resize({ width: 800, height: 600, fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 70 })
           .toBuffer()
         visionB64 = `data:image/jpeg;base64,${resized.toString('base64')}`
         visionMime = 'image/jpeg'
