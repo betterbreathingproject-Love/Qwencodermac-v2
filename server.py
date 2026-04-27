@@ -100,10 +100,13 @@ def load_model(model_path: str):
 
     # load Jinja chat template for tool calling support
     _chat_template = None
-    jinja_path = Path(model_path) / "chat_template.jinja"
+    # Check for enhanced template first (preferred), then standard name
+    jinja_path = Path(model_path) / "qwen3.5-enhanced.jinja"
+    if not jinja_path.exists():
+        jinja_path = Path(model_path) / "chat_template.jinja"
     if jinja_path.exists():
         _chat_template = jinja_path.read_text()
-        print(f"[server] Loaded chat_template.jinja (tool calling enabled)")
+        print(f"[server] Loaded {jinja_path.name} (tool calling enabled)")
         # Log the tool call format the template instructs
         if '<tool_call>' in _chat_template:
             if '<function=' in _chat_template:
