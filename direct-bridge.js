@@ -2005,6 +2005,16 @@ class DirectBridge {
       consecutivePlanningNudges = 0
       lastTextResponses = []
 
+      // Enforce todo list: if the model has used tools (turn >= 1) but never
+      // created a todo list, force it to create one before continuing.
+      // This ensures multi-step tasks are tracked and the agent won't stop early.
+      if (turn === 1 && !_lastTodos) {
+        messages.push({
+          role: 'system',
+          content: 'IMPORTANT: You started working but have not created a todo list. Call update_todos NOW with your plan before making any more changes. List all the steps needed to complete the user\'s request, each with status "pending". This is required — the system uses your todo list to track completion.',
+        })
+      }
+
       // If too many consecutive errors, nudge the model and inform the user
       if (consecutiveErrors >= 3) {
         // Build a summary of recent errors to help the model understand what's going wrong
@@ -2361,9 +2371,10 @@ Example:
 
 **Phased workflow — ALWAYS follow this order:**
 1. RESPOND FIRST: Immediately acknowledge the user's message. Answer any questions, confirm your understanding of the task, and briefly outline what you plan to do. This gives the user instant feedback.
-2. GATHER CONTEXT: Read relevant files, search for patterns, list directories — understand the current state before making changes.
-3. DO THE WORK: Make changes using write_file or edit_file (one focused change at a time). Run tests or verify with bash if needed.
-4. REPORT: When you're done, provide a detailed summary of everything you did — files created/modified, key changes made, tests run and their results, and anything the user should know or verify. Be specific with file paths and what changed.
+2. CREATE TODO LIST: Call update_todos with your plan — list every step needed, all set to "pending". This is MANDATORY for any task with more than one step.
+3. GATHER CONTEXT: Read relevant files, search for patterns, list directories — understand the current state before making changes.
+4. DO THE WORK: Make changes using write_file or edit_file (one focused change at a time). Run tests or verify with bash if needed. Update todo items to "done" as you complete each step.
+5. REPORT: When ALL todo items are "done", provide a detailed summary of everything you did — files created/modified, key changes made, tests run and their results, and anything the user should know or verify. Be specific with file paths and what changed.
 
 When the user asks you to browse, research, or interact with websites, use the browser tools directly. Call browser_navigate first, then use other browser tools to interact with the page.
 
