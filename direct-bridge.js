@@ -1629,6 +1629,24 @@ class DirectBridge {
         }
 
         // Normal completion — send final assistant message
+        // But first check: if the model just browsed/read files and the user asked
+        // for more (like recording, writing, building), don't stop yet — nudge it.
+        const hasToolHistory = messages.some(m => m.role === 'tool')
+        const userMsg = messages.find(m => m.role === 'user')
+        const userText = (userMsg?.content || '').toLowerCase()
+        const actionKeywords = /\b(record|film|video|screenshot|build|create|write|implement|fix|update|deploy|send|make)\b/
+        const looksIncomplete = hasToolHistory && actionKeywords.test(userText) && text && text.length > 100 && turn < 5
+
+        if (looksIncomplete) {
+          this.send('qwen-event', { type: 'system', subtype: 'debug', data: 'Text-only response but user request appears incomplete — nudging to continue' })
+          messages.push({ role: 'assistant', content: text })
+          messages.push({
+            role: 'system',
+            content: 'You provided a text response but the user\'s request is not yet complete. Continue working — use your tools to finish the task. Do not stop until the user\'s full request has been fulfilled.',
+          })
+          continue
+        }
+
         this.send('qwen-event', {
           type: 'result',
           subtype: 'success',
