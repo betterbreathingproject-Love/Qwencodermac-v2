@@ -1703,9 +1703,12 @@ class DirectBridge {
 
         // Nudge the model to use tools or call task_complete
         messages.push({ role: 'assistant', content: text })
+        const todoStatus = _lastTodos
+          ? `\nYour todo list: ${_lastTodos.filter(t => t.status === 'done' || t.status === 'completed').length}/${_lastTodos.length} complete.`
+          : '\nYou have NOT created a todo list yet — call update_todos first.'
         messages.push({
           role: 'system',
-          content: 'You output text without using any tools. If you are DONE with the task, call the task_complete tool with a summary of what you accomplished. If you are NOT done, use your tools NOW to continue working. Do NOT just output text — either use a tool or call task_complete.',
+          content: `REJECTED: Text-only responses are not allowed. You must use a tool.${todoStatus}\n\nOptions:\n- If NOT done: call a tool (read_file, write_file, edit_file, bash, browser_navigate, etc.)\n- If you haven't made a todo list: call update_todos\n- If ALL work is complete: call task_complete({"summary": "what you did"})`,
         })
         continue
       }
@@ -2066,6 +2069,19 @@ class DirectBridge {
         })
       }
 
+      // Inject status summary every few turns so the model stays aware of progress
+      if (_lastTodos && turn > 0 && turn % 3 === 0) {
+        const done = _lastTodos.filter(t => t.status === 'done' || t.status === 'completed').length
+        const total = _lastTodos.length
+        const pending = _lastTodos.filter(t => t.status === 'pending').map(t => t.text || t.label || t.title || '?')
+        if (pending.length > 0) {
+          messages.push({
+            role: 'system',
+            content: `STATUS: ${done}/${total} todo items complete. Remaining: ${pending.join(', ')}. Keep working. When all done, call task_complete.`,
+          })
+        }
+      }
+
       // If too many consecutive errors, nudge the model and inform the user
       if (consecutiveErrors >= 3) {
         // Build a summary of recent errors to help the model understand what's going wrong
@@ -2422,12 +2438,19 @@ Example:
 - [ ] 5 Write tests and verify
 \`\`\`
 
-**Phased workflow — ALWAYS follow this order:**
-1. RESPOND FIRST: Immediately acknowledge the user's message. Answer any questions, confirm your understanding of the task, and briefly outline what you plan to do. This gives the user instant feedback.
-2. CREATE TODO LIST: Call update_todos with your plan — list every step needed, all set to "pending". This is MANDATORY for any task with more than one step.
-3. GATHER CONTEXT: Read relevant files, search for patterns, list directories — understand the current state before making changes.
-4. DO THE WORK: Make changes using write_file or edit_file (one focused change at a time). Run tests or verify with bash if needed. Update todo items to "done" as you complete each step.
-5. COMPLETE: When ALL work is done, call the task_complete tool with a detailed summary. Do NOT just output text — you MUST call task_complete to end the session. This is how the system knows you're finished.
+**CRITICAL RULES — READ CAREFULLY:**
+1. You CANNOT end a session by outputting text. Text-only responses will be REJECTED and you will be asked to use tools.
+2. The ONLY way to finish is by calling the task_complete tool. If you don't call it, the session continues.
+3. You MUST call update_todos at the start of every task to create a checklist.
+4. You MUST call update_todos to mark items "done" as you complete each step.
+5. You MUST call task_complete when all work is finished.
+
+**Workflow:**
+1. Acknowledge the user's request briefly
+2. Call update_todos with your plan (all items "pending")
+3. Work through each item using tools (read_file, write_file, edit_file, bash, browser tools)
+4. Call update_todos to mark each item "done" as you finish it
+5. When ALL items are done, call task_complete with a summary
 
 When the user asks you to browse, research, or interact with websites, use the browser tools directly. Call browser_navigate first, then use other browser tools to interact with the page.
 
