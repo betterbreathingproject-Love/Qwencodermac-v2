@@ -1188,6 +1188,7 @@ class DirectBridge {
     this._agentRole = opts.agentRole || 'general'
     this._allowedTools = opts.allowedTools || null
     this._telegramForwarder = opts.telegramForwarder || null
+    this._getCalibrationProfile = opts.getCalibrationProfile || null
   }
 
   setLspManager(lspManager) {
@@ -1345,29 +1346,33 @@ class DirectBridge {
    * The core agentic loop: call model → if tool_calls, execute & loop → else done.
    */
   async _agentLoop(messages, cwd, model, maxTurns = 50) {
+    // Read calibrated settings if available, fall back to parameter/hardcoded defaults
+    const profile = this._getCalibrationProfile?.()
+    const effectiveMaxTurns = profile?.maxTurns ?? maxTurns
+    const effectiveMaxInputTokens = profile?.maxInputTokens ?? 24000
+    const effectiveCompactionThreshold = profile?.compactionThreshold ?? 20000
+
     let consecutiveErrors = 0
     let lastTextResponses = []  // Track recent text-only responses for repetition detection
     let consecutivePlanningNudges = 0  // Track how many times we've nudged for planning-only responses
-    for (let turn = 0; turn < maxTurns; turn++) {
+    for (let turn = 0; turn < effectiveMaxTurns; turn++) {
       if (this._aborted) return
 
       // Warn the model when running low on turns so it can wrap up gracefully
       // instead of being cut off mid-task
-      if (turn === maxTurns - 3) {
+      if (turn === effectiveMaxTurns - 5) {
         messages.push({
           role: 'system',
-          content: 'NOTICE: You have only 3 tool turns remaining. Wrap up your current task — finish any in-progress file writes, run a final verification if needed, then provide a summary of what you accomplished and what remains.',
+          content: 'NOTICE: You have only 5 tool turns remaining. Wrap up your current task — finish any in-progress file writes, run a final verification if needed, then provide a summary of what you accomplished and what remains.',
         })
       }
 
       // Retry on transient connection errors (ECONNRESET, ECONNREFUSED)
       let completion = null
 
-      // Compress context if it's getting too large — keep input under ~24K tokens
-      // to leave room for the model's output (Qwen 3 supports 32K+ native context,
-      // Qwen 3.6 supports 1M, but local inference slows dramatically with huge prompts)
-      const MAX_INPUT_TOKENS = 24000
-      if (estimateMessagesTokens(messages) > MAX_INPUT_TOKENS) {
+      // Compress context if it's getting too large — keep input under the
+      // calibrated token limit to leave room for the model's output
+      if (estimateMessagesTokens(messages) > effectiveMaxInputTokens) {
         const before = messages.length
         try {
           const result = await compactor.compressMessages(pythonPath, messages, { dedup: true, keepRecent: 4 })
@@ -1383,13 +1388,13 @@ class DirectBridge {
         } catch (compactErr) {
           // Compactor failed entirely — fall back to trimMessages
           this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Compactor error: ${compactErr.message}, falling back to trimMessages` })
-          const trimmed = trimMessages(messages, MAX_INPUT_TOKENS)
+          const trimmed = trimMessages(messages, effectiveMaxInputTokens)
           messages.length = 0
           messages.push(...trimmed)
         }
-        // Secondary fallback: if compactor result still exceeds MAX_INPUT_TOKENS, trim
-        if (estimateMessagesTokens(messages) > MAX_INPUT_TOKENS) {
-          const trimmed = trimMessages(messages, MAX_INPUT_TOKENS)
+        // Secondary fallback: if compactor result still exceeds the token limit, trim
+        if (estimateMessagesTokens(messages) > effectiveMaxInputTokens) {
+          const trimmed = trimMessages(messages, effectiveMaxInputTokens)
           messages.length = 0
           messages.push(...trimmed)
           this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Post-compaction trim: ${before} → ${messages.length} messages (~${estimateMessagesTokens(messages)} tokens)` })
@@ -1413,7 +1418,7 @@ class DirectBridge {
           const isPromptTooLarge = /Server returned HTTP 413|Prompt too large/.test(msg)
           if (isPromptTooLarge && attempt < 7) {
             this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Prompt too large (HTTP 413), trimming context and retrying...` })
-            const trimmed = trimMessages(messages, 24000)
+            const trimmed = trimMessages(messages, effectiveMaxInputTokens)
             messages.length = 0
             messages.push(...trimmed)
             await new Promise(r => setTimeout(r, 1000))

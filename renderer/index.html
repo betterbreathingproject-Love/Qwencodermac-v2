@@ -18,6 +18,10 @@
         <span class="lsp-dot" id="lspDot"></span>
         <span id="lspText">LSP</span>
       </span>
+      <span class="cal-chip" id="calChip" title="Calibration not available">
+        <span class="cal-dot" id="calDot"></span>
+        <span id="calText">Cal</span>
+      </span>
     </div>
   </div>
 
@@ -350,6 +354,7 @@
         <button class="ed-tab" data-tab="editor" onclick="switchMainTab('editor',this)">📝 Editor</button>
         <button class="ed-tab" data-tab="vision" onclick="switchMainTab('vision',this)">👁 Vision</button>
         <button class="ed-tab" data-tab="tools" onclick="switchMainTab('tools',this)">🔧 Tools</button>
+        <button class="ed-tab" data-tab="calibration" onclick="switchMainTab('calibration',this)">📊 Calibration</button>
       </div>
 
       <!-- AGENT TAB -->
@@ -520,6 +525,23 @@
             <span class="tools-subtitle">Tools the agent can use during conversations</span>
           </div>
           <div class="tools-grid" id="toolsGrid"></div>
+        </div>
+      </div>
+
+      <!-- CALIBRATION TAB -->
+      <div class="main-panel" id="mt-calibration">
+        <div class="calibration-layout">
+          <div class="calibration-header">
+            <span class="calibration-title">📊 Calibration Dashboard</span>
+            <span class="calibration-subtitle">Model benchmark results and computed agent settings</span>
+          </div>
+          <div class="calibration-content" id="calibrationContent">
+            <div class="calibration-empty" id="calibrationEmpty">
+              <div class="calibration-empty-icon">📊</div>
+              <div class="calibration-empty-text">No calibration data available</div>
+              <div class="calibration-empty-hint">Load a model to trigger automatic calibration</div>
+            </div>
+          </div>
         </div>
       </div>
 

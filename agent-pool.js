@@ -38,6 +38,7 @@ class AgentPool extends EventEmitter {
     this._defaultTimeout = options.defaultTimeout ?? DEFAULT_TIMEOUT;
     this._agentFactory = options.agentFactory || null;
     this._getLspStatus = options.getLspStatus || null;
+    this._getCalibrationProfile = options.getCalibrationProfile || null;
 
     // Subagent type registry: Map<name, SubagentType>
     this._types = new Map();
@@ -196,7 +197,8 @@ class AgentPool extends EventEmitter {
    */
   async dispatch(task, context, options = {}) {
     const agentType = this.selectType(task);
-    const timeout = agentType?.timeout ?? this._defaultTimeout;
+    const profile = this._getCalibrationProfile?.();
+    const timeout = agentType?.timeout ?? profile?.poolTimeout ?? this._defaultTimeout;
     const taskId = task.id || crypto.randomUUID();
     const agentTypeName = agentType?.name || 'general';
 

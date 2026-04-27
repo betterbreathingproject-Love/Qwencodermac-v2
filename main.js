@@ -12,6 +12,7 @@ const ipcProjects = require('./main/ipc-projects')
 const ipcTasks = require('./main/ipc-tasks')
 const ipcWatcher = require('./main/ipc-watcher')
 const ipcLsp = require('./main/ipc-lsp')
+const ipcCalibration = require('./main/ipc-calibration')
 const { LspManager } = require('./lsp-manager')
 const { TelegramBot } = require('./telegram-bot')
 const { RecordingManager } = require('./recording-manager')
@@ -147,12 +148,13 @@ ${taskList}
 
 const agentPool = new AgentPool({
   maxConcurrency: 1,
+  getCalibrationProfile: ipcServer.getCalibrationProfile,
   agentFactory: (task, agentType, context) => {
     const typeName = agentType?.name || 'general'
     const cwd = task.cwd || currentProject || process.cwd()
     console.log('[agent-factory] Creating', typeName, 'agent for task:', task.id, task.title)
 
-    const bridge = new DirectBridge(new WindowSink(mainWindow), { agentRole: typeName, allowedTools: agentType?.allowedTools || null, lspManager })
+    const bridge = new DirectBridge(new WindowSink(mainWindow), { agentRole: typeName, allowedTools: agentType?.allowedTools || null, lspManager, getCalibrationProfile: ipcServer.getCalibrationProfile })
 
     // Pick the specialized system prompt for this agent type
     const promptBuilder = SUBAGENT_PROMPTS[typeName] || SUBAGENT_PROMPTS['general']
@@ -246,6 +248,7 @@ ipcProjects.register(ipcMain, ctx)
 ipcTasks.register(ipcMain, ctx)
 ipcWatcher.register(ipcMain, ctx)
 ipcLsp.register(ipcMain, ctx)
+ipcCalibration.register(ipcMain, { getCalibrationProfile: ipcServer.getCalibrationProfile, isCalibrating: ipcServer.isCalibrating })
 
 // ── IPC: Qwen Code agent ─────────────────────────────────────────────────────
 ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, model, images, conversationHistory, samplingParams, taskGraphPath }) => {
@@ -295,7 +298,7 @@ function createWindow() {
   })
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'))
   mainWindow.on('closed', () => { ipcServer.stopServer(); mainWindow = null })
-  qwenBridge = new DirectBridge(new WindowSink(mainWindow))
+  qwenBridge = new DirectBridge(new WindowSink(mainWindow), { getCalibrationProfile: ipcServer.getCalibrationProfile })
 
   // Start LSP manager asynchronously — does not block window creation
   lspManager = new LspManager()

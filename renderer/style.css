@@ -987,3 +987,31 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   background: rgba(245, 158, 11, 0.15);
   border-color: rgba(245, 158, 11, 0.3);
 }
+
+/* ── calibration status chip ───────────────────────────────────────────────── */
+.cal-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border); cursor: pointer; position: relative; }
+.cal-chip:hover { border-color: var(--accent); }
+.cal-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); }
+.cal-chip #calText { font-size: 9px; color: var(--muted); font-weight: 600; letter-spacing: 0.5px; }
+
+/* calibration popover */
+.cal-popover { position: fixed; z-index: 9999; min-width: 220px; max-width: 300px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,0.5); padding: 8px 0; font-size: 11px; }
+.cal-popover-header { padding: 4px 10px 6px; font-size: 9px; font-weight: 600; letter-spacing: 0.08em; color: var(--muted); text-transform: uppercase; border-bottom: 1px solid var(--border); }
+.cal-popover-row { padding: 4px 10px; display: flex; justify-content: space-between; align-items: center; }
+.cal-popover-row + .cal-popover-row { border-top: 1px solid rgba(255,255,255,0.03); }
+.cal-popover-label { font-size: 10px; color: var(--muted); }
+.cal-popover-value { font-size: 11px; font-weight: 600; color: var(--text); font-family: 'SF Mono', monospace; }
+
+/* ── calibration dashboard ─────────────────────────────────────────────────── */
+.calibration-layout { display: flex; flex-direction: column; height: 100%; overflow-y: auto; }
+.calibration-header { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.calibration-title { font-size: 14px; font-weight: 600; color: var(--text); }
+.calibration-subtitle { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.calibration-content { padding: 12px 16px; flex: 1; overflow-y: auto; }
+.calibration-section { margin-bottom: 16px; }
+.calibration-section-title { font-size: 9px; font-weight: 600; letter-spacing: 0.1em; color: var(--muted); text-transform: uppercase; margin-bottom: 8px; }
+.calibration-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.calibration-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; color: var(--muted); }
+.calibration-empty-icon { font-size: 32px; margin-bottom: 8px; opacity: 0.5; }
+.calibration-empty-text { font-size: 13px; font-weight: 500; }
+.calibration-empty-hint { font-size: 11px; margin-top: 4px; }

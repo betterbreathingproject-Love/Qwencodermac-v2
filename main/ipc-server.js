@@ -4,6 +4,11 @@ const http = require('http')
 const fs = require('fs')
 const path = require('path')
 const { spawn } = require('child_process')
+const calibrator = require('../calibrator')
+
+// ── calibration state ─────────────────────────────────────────────────────────
+let _calibrationProfile = null
+let _calibrating = false
 
 // ── validation helpers ────────────────────────────────────────────────────────
 function isNonEmptyString(v) { return typeof v === 'string' && v.length > 0 }
@@ -120,6 +125,63 @@ function waitForServer(serverUrl) {
   })
 }
 
+// ── calibration ───────────────────────────────────────────────────────────────
+async function runCalibration(serverUrl, serverPort, mainWindow, modelId) {
+  _calibrating = true
+  mainWindow?.webContents.send('calibration-status', { status: 'calibrating' })
+
+  try {
+    const metrics = await new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: '127.0.0.1', port: serverPort,
+        path: '/admin/benchmark', method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, res => {
+        let d = ''
+        res.on('data', c => d += c)
+        res.on('end', () => {
+          if (res.statusCode === 200) {
+            try { resolve(JSON.parse(d)) } catch { reject(new Error('Invalid benchmark response')) }
+          } else {
+            reject(new Error(`Benchmark failed: HTTP ${res.statusCode}`))
+          }
+        })
+      })
+      req.on('error', reject)
+      req.setTimeout(15000, () => { req.destroy(); reject(new Error('Benchmark timed out')) })
+      req.end()
+    })
+
+    _calibrationProfile = calibrator.computeProfile(metrics)
+    mainWindow?.webContents.send('calibration-complete', {
+      modelId,
+      profile: _calibrationProfile,
+    })
+  } catch (err) {
+    console.log(`[main] Calibration failed: ${err.message}, using defaults`)
+    _calibrationProfile = calibrator.defaultProfile()
+    mainWindow?.webContents.send('calibration-complete', {
+      modelId,
+      profile: _calibrationProfile,
+      fallback: true,
+    })
+  } finally {
+    _calibrating = false
+  }
+}
+
+function getCalibrationProfile() {
+  return _calibrationProfile
+}
+
+function isCalibrating() {
+  return _calibrating
+}
+
+function clearCalibration() {
+  _calibrationProfile = null
+}
+
 // ── IPC registration ──────────────────────────────────────────────────────────
 function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir }) {
   const serverUrl = getServerUrl
@@ -148,7 +210,7 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
   ipcMain.handle('load-model', async (_, modelPath) => {
     if (!isNonEmptyString(modelPath)) return { error: 'modelPath must be a non-empty string' }
 
-    return new Promise((resolve) => {
+    const result = await new Promise((resolve) => {
       const body = JSON.stringify({ model_path: modelPath })
       const req = http.request({
         hostname: '127.0.0.1', port: serverPort(), path: '/admin/load', method: 'POST',
@@ -162,9 +224,22 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
       req.setTimeout(120000, () => { req.destroy(); resolve({ error: 'Model load timed out' }) })
       req.write(body); req.end()
     })
+
+    // Trigger calibration after successful model load
+    if (!result.error) {
+      runCalibration(serverUrl(), serverPort(), getMainWindow(), modelPath)
+    }
+
+    return result
+  })
+
+  ipcMain.handle('unload-model', async () => {
+    clearCalibration()
+    getMainWindow()?.webContents.send('calibration-status', { status: 'unavailable' })
+    return { ok: true }
   })
 
   ipcMain.handle('get-server-url', () => serverUrl())
 }
 
-module.exports = { register, startServer, stopServer, waitForServer, killStaleServer, findPython }
+module.exports = { register, startServer, stopServer, waitForServer, killStaleServer, findPython, runCalibration, getCalibrationProfile, isCalibrating, clearCalibration }

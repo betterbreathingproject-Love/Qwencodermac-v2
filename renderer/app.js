@@ -53,6 +53,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   refreshTelegramStatus()
   refreshWelcomeProjectBar()
   initLspStatus()
+  initCalibrationStatus()
   refreshSteeringDocs()
 })
 
@@ -316,6 +317,7 @@ function setLoadedModel(id) {
   document.getElementById('loadedModelName').textContent = id ? _formatModelName(id) : 'None'
   document.getElementById('f-modelid').textContent=id||'—'
   renderModels(allModels)
+  if (!id && typeof clearCalibrationUI === 'function') clearCalibrationUI()
 }
 
 // ── model loading overlay ─────────────────────────────────────────────────────
@@ -4160,6 +4162,173 @@ async function toggleLspPopover() {
     }
     document.addEventListener('click', onOutside)
   }, 0)
+}
+
+// ── Calibration status chip ────────────────────────────────────────────────────
+
+let _calibrationProfile = null
+let _calPopoverOpen = false
+
+function setCalibrationStatus(status, profile) {
+  const chip = document.getElementById('calChip')
+  const dot  = document.getElementById('calDot')
+  const txt  = document.getElementById('calText')
+  if (!chip) return
+
+  chip.style.display = 'inline-flex'
+
+  const colors = {
+    calibrating:  '#f5a623',
+    ready:        'var(--green)',
+    unavailable:  'var(--muted)',
+  }
+  dot.style.background = colors[status] || 'var(--muted)'
+
+  const labels = {
+    calibrating:  'Calibrating',
+    ready:        'Calibrated',
+    unavailable:  'Uncalibrated',
+  }
+  txt.textContent = labels[status] || 'Cal'
+
+  const tooltips = {
+    calibrating:  'Calibration in progress...',
+    ready:        'Model calibrated — click for details',
+    unavailable:  'No calibration data — load a model to calibrate',
+  }
+  chip.title = tooltips[status] || 'Calibration'
+
+  if (profile) _calibrationProfile = profile
+  if (status === 'unavailable') _calibrationProfile = null
+}
+
+function toggleCalPopover() {
+  const chip = document.getElementById('calChip')
+  if (!chip) return
+
+  const existing = document.querySelector('.cal-popover')
+  if (existing) {
+    existing.remove()
+    _calPopoverOpen = false
+    return
+  }
+  if (!_calibrationProfile) return
+
+  _calPopoverOpen = true
+  const pop = document.createElement('div')
+  pop.className = 'cal-popover'
+
+  const p = _calibrationProfile
+  const m = p.metrics || {}
+
+  let html = '<div class="cal-popover-header">Calibration Profile</div>'
+  const rows = [
+    ['Gen TPS',       m.generation_tps != null ? m.generation_tps + ' tk/s' : '—'],
+    ['Prompt TPS',    m.prompt_tps != null ? m.prompt_tps + ' tk/s' : '—'],
+    ['Max Turns',     p.maxTurns],
+    ['Timeout/Turn',  (p.timeoutPerTurn / 1000).toFixed(0) + 's'],
+    ['Max Input',     p.maxInputTokens != null ? p.maxInputTokens.toLocaleString() + ' tok' : '—'],
+    ['Compaction @',  p.compactionThreshold != null ? p.compactionThreshold.toLocaleString() + ' tok' : '—'],
+  ]
+  for (const [label, value] of rows) {
+    html += `<div class="cal-popover-row"><span class="cal-popover-label">${label}</span><span class="cal-popover-value">${value}</span></div>`
+  }
+  pop.innerHTML = html
+
+  const rect = chip.getBoundingClientRect()
+  pop.style.top = (rect.bottom + 4) + 'px'
+  pop.style.right = (window.innerWidth - rect.right) + 'px'
+  document.body.appendChild(pop)
+
+  setTimeout(() => {
+    const close = (e) => {
+      if (!pop.contains(e.target) && !chip.contains(e.target)) {
+        pop.remove()
+        _calPopoverOpen = false
+        document.removeEventListener('click', close)
+      }
+    }
+    document.addEventListener('click', close)
+  }, 0)
+}
+
+async function initCalibrationStatus() {
+  if (!window.app || !window.app.calibrationStatus) return
+
+  try {
+    const s = await window.app.calibrationStatus()
+    setCalibrationStatus(s.status, s.profile)
+    if (s.profile) renderCalibrationDashboard(s.profile)
+  } catch { /* ignore */ }
+
+  if (window.app.onCalibrationComplete) {
+    window.app.onCalibrationComplete(({ modelId, profile, fallback }) => {
+      setCalibrationStatus('ready', profile)
+      renderCalibrationDashboard(profile)
+    })
+  }
+
+  if (window.app.onCalibrationStatus) {
+    window.app.onCalibrationStatus(({ status }) => {
+      setCalibrationStatus(status, null)
+    })
+  }
+
+  const chip = document.getElementById('calChip')
+  if (chip) chip.addEventListener('click', toggleCalPopover)
+}
+
+function renderCalibrationDashboard(profile) {
+  const content = document.getElementById('calibrationContent')
+  const empty = document.getElementById('calibrationEmpty')
+  if (!content) return
+
+  if (!profile) {
+    if (empty) empty.style.display = 'flex'
+    return
+  }
+  if (empty) empty.style.display = 'none'
+
+  const m = profile.metrics || {}
+
+  const benchmarkChips = [
+    { label: 'Generation TPS', value: m.generation_tps != null ? m.generation_tps + ' tk/s' : '—', accent: true },
+    { label: 'Prompt TPS',     value: m.prompt_tps != null ? m.prompt_tps + ' tk/s' : '—', accent: true },
+    { label: 'Peak Memory',    value: m.peak_memory_gb != null ? m.peak_memory_gb + ' GB' : '—' },
+    { label: 'Available Memory', value: m.available_memory_gb != null ? m.available_memory_gb + ' GB' : '—' },
+    { label: 'Context Window', value: m.context_window != null ? m.context_window.toLocaleString() + ' tok' : '—' },
+  ]
+
+  const settingsChips = [
+    { label: 'Max Turns',            value: profile.maxTurns },
+    { label: 'Timeout / Turn',       value: (profile.timeoutPerTurn / 1000).toFixed(0) + 's' },
+    { label: 'Max Input Tokens',     value: profile.maxInputTokens?.toLocaleString() + ' tok' },
+    { label: 'Compaction Threshold', value: profile.compactionThreshold?.toLocaleString() + ' tok' },
+    { label: 'Pool Timeout',         value: (profile.poolTimeout / 1000).toFixed(0) + 's' },
+  ]
+
+  function chipHtml(chips) {
+    return chips.map(c => {
+      const cls = c.accent ? 'stat-chip accent' : 'stat-chip'
+      return `<div class="${cls}"><span class="stat-label">${c.label}</span><span class="stat-val">${c.value}</span></div>`
+    }).join('')
+  }
+
+  content.innerHTML = `
+    <div class="calibration-section">
+      <div class="calibration-section-title">Benchmark Results</div>
+      <div class="calibration-grid">${chipHtml(benchmarkChips)}</div>
+    </div>
+    <div class="calibration-section">
+      <div class="calibration-section-title">Computed Settings</div>
+      <div class="calibration-grid">${chipHtml(settingsChips)}</div>
+    </div>
+  `
+}
+
+function clearCalibrationUI() {
+  setCalibrationStatus('unavailable', null)
+  renderCalibrationDashboard(null)
 }
 
 // ── Symbol panel ──────────────────────────────────────────────────────────────

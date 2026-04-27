@@ -527,3 +527,93 @@ describe('AgentPool - LSP tool merging', () => {
     });
   });
 });
+
+// --- 7.3 Calibration timeout integration in AgentPool ---
+
+describe('AgentPool - calibration timeout integration', () => {
+  it('uses calibrated poolTimeout when no agent type matches (Req 5.1)', async () => {
+    // Pool with getCalibrationProfile returning poolTimeout: 270000
+    // No types registered → selectType returns null → agentType?.timeout is undefined
+    // So timeout chain falls through to profile.poolTimeout = 270000
+    const pool = new AgentPool({
+      maxConcurrency: 1,
+      getCalibrationProfile: () => ({ poolTimeout: 270000 }),
+    });
+
+    // Agent completes in 20ms — well within 270000ms timeout
+    const task = createTask('cal-1', 'Unknown task with no matching type');
+    const result = await pool.dispatch(task, {}, {
+      agentFactory: mockAgentFactory('calibrated-ok', 20),
+    });
+
+    assert.equal(result.output, 'calibrated-ok');
+    assert.ok(!result.error, 'Should not timeout with 270000ms budget');
+  });
+
+  it('uses calibrated poolTimeout and times out slow agents (Req 5.1)', async () => {
+    // Pool with a very short calibrated poolTimeout (50ms)
+    // No types registered → falls through to profile.poolTimeout = 50
+    const pool = new AgentPool({
+      maxConcurrency: 1,
+      getCalibrationProfile: () => ({ poolTimeout: 50 }),
+    });
+
+    // Agent takes 500ms — exceeds the 50ms calibrated timeout
+    const task = createTask('cal-2', 'Unknown slow task');
+    const result = await pool.dispatch(task, {}, {
+      agentFactory: mockAgentFactory('should-not-reach', 500),
+    });
+
+    assert.ok(result.error, 'Should timeout with 50ms calibrated poolTimeout');
+    assert.ok(result.error.includes('timed out'));
+  });
+
+  it('task-specific timeout overrides calibrated poolTimeout (Req 5.2)', async () => {
+    // Pool with calibrated poolTimeout of 50ms (very short)
+    // But register a type with explicit timeout of 5000ms
+    const pool = new AgentPool({
+      maxConcurrency: 1,
+      getCalibrationProfile: () => ({ poolTimeout: 50 }),
+    });
+    pool.registerType({
+      name: 'implementation',
+      systemPrompt: 'Impl.',
+      allowedTools: [],
+      timeout: 5000,
+      maxConcurrent: 1,
+    });
+    pool.registerType({
+      name: 'general',
+      systemPrompt: 'General.',
+      allowedTools: [],
+      timeout: 5000,
+      maxConcurrent: 1,
+    });
+
+    // Agent takes 100ms — would timeout at 50ms (calibrated) but not at 5000ms (type-specific)
+    const task = createTask('cal-3', 'Implement a feature');
+    const result = await pool.dispatch(task, {}, {
+      agentFactory: mockAgentFactory('type-wins', 100),
+    });
+
+    assert.equal(result.output, 'type-wins');
+    assert.ok(!result.error, 'Type-specific timeout (5000ms) should override calibrated poolTimeout (50ms)');
+  });
+
+  it('falls back to DEFAULT_TIMEOUT when no profile and no agent type (Req 5.3)', async () => {
+    // Pool with no getCalibrationProfile and no registered types
+    // timeout chain: agentType?.timeout (undefined) ?? profile?.poolTimeout (undefined) ?? DEFAULT_TIMEOUT (600000)
+    const pool = new AgentPool({
+      maxConcurrency: 1,
+    });
+
+    // Agent completes quickly — should succeed with the generous DEFAULT_TIMEOUT
+    const task = createTask('cal-4', 'Unknown task no profile');
+    const result = await pool.dispatch(task, {}, {
+      agentFactory: mockAgentFactory('default-ok', 10),
+    });
+
+    assert.equal(result.output, 'default-ok');
+    assert.ok(!result.error, 'Should not timeout with DEFAULT_TIMEOUT (600000ms)');
+  });
+});

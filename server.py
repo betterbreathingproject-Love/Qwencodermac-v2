@@ -613,6 +613,127 @@ def admin_status():
     return {"loaded": _model_id, "models": models}
 
 
+# ── benchmark ─────────────────────────────────────────────────────────────────
+BENCHMARK_PROMPT = (
+    "You are a helpful coding assistant. Explain step by step how to implement "
+    "a binary search algorithm in Python. Include the function signature, the "
+    "base case for an empty array, the midpoint calculation using integer "
+    "division, the comparison logic for the target value against the middle "
+    "element, and the recursive calls for the left and right halves of the "
+    "array. Also describe the time complexity and space complexity of the "
+    "algorithm, and give an example of calling the function with a sorted "
+    "list of integers and a target value that exists in the list."
+)
+
+
+class BenchmarkResponse(BaseModel):
+    generation_tps: float
+    prompt_tps: float
+    peak_memory_gb: float
+    available_memory_gb: float
+    context_window: int
+
+
+@app.post("/admin/benchmark")
+async def benchmark():
+    """Run a short inference pass and return performance metrics."""
+    if _model is None:
+        raise HTTPException(status_code=503, detail="No model loaded")
+
+    sem = _get_inference_semaphore()
+    async with sem:
+        try:
+            import mlx.core as mx
+
+            # Build a simple text prompt for benchmarking
+            if _model_is_vision:
+                from mlx_vlm import generate
+                from mlx_vlm.prompt_utils import apply_chat_template
+                prompt = apply_chat_template(
+                    _processor, _config, BENCHMARK_PROMPT,
+                    num_images=0,
+                )
+                gen_kwargs = dict(max_tokens=80, verbose=False)
+            else:
+                from mlx_lm import generate
+                # Build prompt using chat template or simple fallback
+                if _chat_template:
+                    from jinja2 import Environment, BaseLoader
+                    env = Environment(loader=BaseLoader(), keep_trailing_newline=True)
+                    env.globals["raise_exception"] = lambda msg: (_ for _ in ()).throw(Exception(msg))
+                    template = env.from_string(_chat_template)
+                    prompt = template.render(
+                        messages=[{"role": "user", "content": BENCHMARK_PROMPT}],
+                        tools=None,
+                        add_generation_prompt=True,
+                        enable_thinking=False,
+                    )
+                else:
+                    prompt = f"<|im_start|>user\n{BENCHMARK_PROMPT}<|im_end|>\n<|im_start|>assistant\n"
+                gen_kwargs = dict(max_tokens=80)
+
+            # Run generation in a thread to keep the event loop responsive
+            loop = asyncio.get_event_loop()
+
+            start = time.perf_counter()
+            result = await loop.run_in_executor(
+                None, lambda: generate(_model, _processor, prompt, **gen_kwargs)
+            )
+            elapsed = time.perf_counter() - start
+
+            # Extract token counts from the result object
+            gen_tokens = getattr(result, "generation_tokens", None)
+            prompt_tokens = getattr(result, "prompt_tokens", None)
+
+            # Fallback: estimate from result text if attributes missing
+            if gen_tokens is None:
+                result_text = result.text if hasattr(result, "text") else str(result)
+                gen_tokens = max(1, len(result_text.split()))
+            if prompt_tokens is None:
+                prompt_tokens = max(1, len(BENCHMARK_PROMPT.split()))
+
+            gen_tps = gen_tokens / elapsed if elapsed > 0 else 0
+            prompt_tps = prompt_tokens / elapsed if elapsed > 0 else 0
+
+            peak_mem = mx.metal.get_peak_memory() / (1024**3)
+            avail_mem = mx.metal.get_cache_memory() / (1024**3)
+
+            # Read context window from model config
+            ctx_window = 32768  # default
+            if _config and isinstance(_config, dict):
+                ctx_window = _config.get("max_position_embeddings", 32768)
+            elif _model_path:
+                # Text-only model: read from config.json on disk
+                try:
+                    cfg_path = Path(_model_path) / "config.json"
+                    if cfg_path.exists():
+                        with open(cfg_path) as f:
+                            disk_cfg = json.load(f)
+                        ctx_window = disk_cfg.get("max_position_embeddings", 32768)
+                except Exception:
+                    pass
+
+            return BenchmarkResponse(
+                generation_tps=round(gen_tps, 2),
+                prompt_tps=round(prompt_tps, 2),
+                peak_memory_gb=round(peak_mem, 3),
+                available_memory_gb=round(avail_mem, 3),
+                context_window=ctx_window,
+            )
+        except Exception as e:
+            # Task 3.2: Metal memory error handling
+            if "metal" in str(e).lower() or "mps" in str(e).lower():
+                try:
+                    import mlx.core as mx
+                    mx.metal.clear_cache()
+                    import gc
+                    gc.collect()
+                except Exception:
+                    pass
+                raise HTTPException(status_code=500, detail=f"Metal memory error: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(req: ChatRequest):
     if _model is None:
