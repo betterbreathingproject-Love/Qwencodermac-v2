@@ -1653,15 +1653,15 @@ class DirectBridge {
         const hasToolHistory = messages.some(m => m.role === 'tool')
         const userMsg = messages.find(m => m.role === 'user')
         const userText = (userMsg?.content || '').toLowerCase()
-        const actionKeywords = /\b(record|film|video|screenshot|build|create|write|implement|fix|update|deploy|send|make)\b/
-        const looksIncomplete = hasToolHistory && actionKeywords.test(userText) && text && text.length > 100 && turn < 5
+        const actionKeywords = /\b(record|film|video|screenshot|build|create|write|implement|fix|update|deploy|send|make|check|review|test)\b/
+        const looksIncomplete = hasToolHistory && actionKeywords.test(userText) && turn < 8
 
         if (looksIncomplete) {
           this.send('qwen-event', { type: 'system', subtype: 'debug', data: 'Text-only response but user request appears incomplete — nudging to continue' })
           messages.push({ role: 'assistant', content: text })
           messages.push({
             role: 'system',
-            content: 'You provided a text response but the user\'s request is not yet complete. Continue working — use your tools to finish the task. Do not stop until the user\'s full request has been fulfilled.',
+            content: 'You provided a text response but the user\'s request is not yet complete. You have only browsed/read so far — you still need to take action to fulfill the request. Continue working — use your tools NOW. Do not stop until the user\'s full request has been fulfilled.',
           })
           continue
         }
