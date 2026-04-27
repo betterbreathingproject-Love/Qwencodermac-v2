@@ -701,7 +701,11 @@ async def benchmark():
                     prompt_tps = prompt_tokens / elapsed if elapsed > 0 else 0
 
             peak_mem = mx.metal.get_peak_memory() / (1024**3)
-            avail_mem = mx.metal.get_cache_memory() / (1024**3)
+            # Available memory = total system memory minus what MLX is actively using
+            import os
+            total_mem = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / (1024**3)
+            active_mem = mx.metal.get_active_memory() / (1024**3)
+            avail_mem = max(0, total_mem - active_mem)
 
             # Read context window from model config
             ctx_window = 32768  # default
