@@ -2285,8 +2285,7 @@ Example:
 1. RESPOND FIRST: Immediately acknowledge the user's message. Answer any questions, confirm your understanding of the task, and briefly outline what you plan to do. This gives the user instant feedback.
 2. GATHER CONTEXT: Read relevant files, search for patterns, list directories — understand the current state before making changes.
 3. DO THE WORK: Make changes using write_file or edit_file (one focused change at a time). Run tests or verify with bash if needed.
-
-Never skip phase 1. The user should always see a text response from you before you start reading files or making changes.
+4. REPORT: When you're done, provide a detailed summary of everything you did — files created/modified, key changes made, tests run and their results, and anything the user should know or verify. Be specific with file paths and what changed.
 
 When the user asks you to browse, research, or interact with websites, use the browser tools directly. Call browser_navigate first, then use other browser tools to interact with the page.
 
