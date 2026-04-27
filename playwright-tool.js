@@ -90,13 +90,15 @@ function createPlaywrightInstance(options = {}) {
 
   async function browser_screenshot({ selector, fullPage, prompt }) {
     const page = await ensureBrowser()
+    // Coerce fullPage to boolean — the model sometimes sends "True"/"true" as a string
+    const isFullPage = fullPage === true || fullPage === 'true' || fullPage === 'True'
     let buf
     if (selector) {
       const el = await page.$(selector)
       if (!el) return { error: `Element not found for selector "${selector}"` }
       buf = await el.screenshot({ type: 'png' })
     } else {
-      buf = await page.screenshot({ type: 'png', fullPage: fullPage || false })
+      buf = await page.screenshot({ type: 'png', fullPage: isFullPage })
     }
 
     // Convert to JPEG at 80% quality for vision analysis — keeps the payload
@@ -143,7 +145,7 @@ function createPlaywrightInstance(options = {}) {
         req.write(body)
         req.end()
       })
-      const desc = result.choices?.[0]?.message?.content || result.error?.message || result.detail || 'Could not analyze screenshot.'
+      const desc = result.choices?.[0]?.message?.content || result.error?.message || result.detail || `Could not analyze screenshot. Server response: ${JSON.stringify(result).slice(0, 200)}`
       return `[Screenshot captured, ${buf.length} bytes]\n\n![screenshot](${displayB64})\n\nVision analysis:\n${desc}`
     } catch (err) {
       return `[Screenshot captured, ${buf.length} bytes, but vision analysis failed: ${err.message}]\n\n![screenshot](${displayB64})`
