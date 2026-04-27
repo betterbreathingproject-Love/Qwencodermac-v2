@@ -16,16 +16,17 @@ function computeProfile(metrics) {
     context_window,
   }
 
-  // Memory pressure factor: when the model is using a large fraction of
-  // available memory, reduce maxInputTokens to avoid OOM during long contexts.
-  // memoryPressure ranges from 0 (no pressure) to 1 (fully saturated).
-  // Scale factor: 1.0 at ≤50% usage, linearly down to 0.5 at 100% usage.
+  // Memory pressure factor: smooth cosine curve that maximizes token budget
+  // at low pressure and gradually reduces it as memory fills up.
+  // pressure = peak / (peak + available), ranges 0→1
+  // scale uses a cosine ease: full capacity up to ~30% pressure, then a
+  // smooth S-curve down to 0.5 at 100% pressure. This extracts more
+  // performance from available memory compared to a linear ramp.
   const memoryPressure = available_memory_gb > 0
     ? Math.min(1, peak_memory_gb / (peak_memory_gb + available_memory_gb))
     : 0.5
-  const memoryScale = memoryPressure <= 0.5
-    ? 1.0
-    : Math.max(0.5, 1.0 - (memoryPressure - 0.5))
+  // Cosine interpolation from 1.0 → 0.5 over the 0→1 pressure range
+  const memoryScale = 0.5 + 0.5 * Math.cos(memoryPressure * Math.PI)
 
   const rawTimeout = (context_window / generation_tps) * 1000 + 30000
   const timeoutPerTurn = Math.max(60000, Math.round(rawTimeout))

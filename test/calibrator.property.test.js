@@ -47,13 +47,11 @@ describe('Feature: adaptive-agent-calibration — calibrator property tests', ()
         assert.equal(profile.timeoutPerTurn, expectedTimeout,
           `timeoutPerTurn mismatch for generation_tps=${metrics.generation_tps}, context_window=${metrics.context_window}`)
 
-        // Memory pressure scaling
+        // Memory pressure scaling (cosine curve)
         const memoryPressure = metrics.available_memory_gb > 0
           ? Math.min(1, metrics.peak_memory_gb / (metrics.peak_memory_gb + metrics.available_memory_gb))
           : 0.5
-        const memoryScale = memoryPressure <= 0.5
-          ? 1.0
-          : Math.max(0.5, 1.0 - (memoryPressure - 0.5))
+        const memoryScale = 0.5 + 0.5 * Math.cos(memoryPressure * Math.PI)
 
         // maxInputTokens = clamp(round(context_window * 0.6 * memoryScale), 8000, 200000)
         const expectedMaxInput = Math.min(200000, Math.max(8000, Math.round(metrics.context_window * 0.6 * memoryScale)))

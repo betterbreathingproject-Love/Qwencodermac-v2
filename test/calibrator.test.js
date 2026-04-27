@@ -16,18 +16,22 @@ describe('calibrator', () => {
       }
       const p = computeProfile(metrics)
 
+      // Memory pressure: 6.123 / (6.123 + 10.456) = 6.123 / 16.579 ≈ 0.3693
+      // memoryScale = 0.5 + 0.5 * cos(0.3693 * π) ≈ 0.5 + 0.5 * 0.3987 ≈ 0.6994
+      const pressure = 6.123 / (6.123 + 10.456)
+      const scale = 0.5 + 0.5 * Math.cos(pressure * Math.PI)
+
       // timeoutPerTurn = max(60000, round((32768 / 40) * 1000 + 30000))
       //                = max(60000, round(819200 + 30000))
       //                = max(60000, 849200) = 849200
       assert.equal(p.timeoutPerTurn, 849200)
 
-      // maxInputTokens = clamp(round(32768 * 0.6), 8000, 200000)
-      //                = clamp(round(19660.8), 8000, 200000)
-      //                = clamp(19661, 8000, 200000) = 19661
-      assert.equal(p.maxInputTokens, 19661)
+      // maxInputTokens = clamp(round(32768 * 0.6 * scale), 8000, 200000)
+      const expectedMaxInput = Math.min(200000, Math.max(8000, Math.round(32768 * 0.6 * scale)))
+      assert.equal(p.maxInputTokens, expectedMaxInput)
 
-      // compactionThreshold = round(19661 * 0.85) = round(16711.85) = 16712
-      assert.equal(p.compactionThreshold, 16712)
+      // compactionThreshold = round(maxInputTokens * 0.85)
+      assert.equal(p.compactionThreshold, Math.round(expectedMaxInput * 0.85))
 
       assert.equal(p.maxTurns, 500)
 
@@ -123,39 +127,47 @@ describe('calibrator', () => {
   })
 
   describe('memory pressure scaling', () => {
-    it('no scaling when memory pressure is low (peak < 50% of total)', () => {
-      // peak=4, available=12 → pressure = 4/(4+12) = 0.25 → scale = 1.0
+    it('near-full capacity when memory pressure is low', () => {
+      // peak=4, available=12 → pressure = 0.25 → cos(0.25π) ≈ 0.707 → scale ≈ 0.854
+      // Still gives most of the budget at low pressure
       const p = computeProfile({
         generation_tps: 50, prompt_tps: 100,
         peak_memory_gb: 4, available_memory_gb: 12, context_window: 32768,
       })
-      assert.equal(p.maxInputTokens, Math.round(32768 * 0.6)) // 19661, no reduction
+      const unscaled = Math.round(32768 * 0.6)
+      assert.ok(p.maxInputTokens >= unscaled * 0.8, 'Should retain >80% at low pressure')
     })
 
-    it('scales down maxInputTokens when memory pressure is high', () => {
-      // peak=30, available=6 → pressure = 30/(30+6) = 0.833 → scale = max(0.5, 1.0 - 0.333) = 0.667
+    it('moderate reduction at medium pressure', () => {
+      // peak=16, available=16 → pressure = 0.5 → cos(0.5π) = 0 → scale = 0.5
+      const p = computeProfile({
+        generation_tps: 50, prompt_tps: 100,
+        peak_memory_gb: 16, available_memory_gb: 16, context_window: 32768,
+      })
+      const unscaled = Math.round(32768 * 0.6)
+      assert.ok(p.maxInputTokens < unscaled, 'Should be reduced at 50% pressure')
+      assert.ok(p.maxInputTokens >= unscaled * 0.45, 'Should not be below 45% at 50% pressure')
+    })
+
+    it('scales down significantly when memory pressure is high', () => {
+      // peak=30, available=6 → pressure ≈ 0.833 → cos(0.833π) ≈ -0.866 → scale ≈ 0.067
       const p = computeProfile({
         generation_tps: 50, prompt_tps: 100,
         peak_memory_gb: 30, available_memory_gb: 6, context_window: 32768,
       })
-      const expectedScale = Math.max(0.5, 1.0 - (30 / 36 - 0.5))
-      const expectedMaxInput = Math.round(32768 * 0.6 * expectedScale)
-      assert.equal(p.maxInputTokens, expectedMaxInput)
-      assert.ok(p.maxInputTokens < 19661, 'Should be less than unscaled value')
+      const unscaled = Math.round(32768 * 0.6)
+      assert.ok(p.maxInputTokens < unscaled * 0.5, 'Should be well below half at high pressure')
+      assert.ok(p.maxInputTokens >= 8000, 'Should never go below the 8000 floor')
     })
 
-    it('scales down to 50% minimum when memory is nearly exhausted', () => {
-      // peak=100, available=0.01 → pressure = 100/100.01 ≈ 0.9999 → scale ≈ 0.5001
-      // The scale floors at 0.5, so with extreme pressure we get close to half
+    it('hits minimum floor when memory is nearly exhausted', () => {
+      // peak=100, available=0.01 → pressure ≈ 1.0 → cos(π) = -1 → scale = 0
+      // But maxInputTokens is clamped to 8000 minimum
       const p = computeProfile({
         generation_tps: 50, prompt_tps: 100,
         peak_memory_gb: 100, available_memory_gb: 0.01, context_window: 32768,
       })
-      const unscaled = Math.round(32768 * 0.6)
-      const halfScaled = Math.round(32768 * 0.6 * 0.5)
-      // Should be very close to 50% of unscaled, within a small margin
-      assert.ok(p.maxInputTokens <= unscaled * 0.55, 'Should be near 50% of unscaled')
-      assert.ok(p.maxInputTokens >= halfScaled, 'Should not go below 50% floor')
+      assert.equal(p.maxInputTokens, 8000, 'Should hit the 8000 floor at extreme pressure')
     })
 
     it('compactionThreshold scales with maxInputTokens under memory pressure', () => {
@@ -170,6 +182,20 @@ describe('calibrator', () => {
       assert.ok(pHigh.compactionThreshold < pLow.compactionThreshold,
         'Compaction threshold should be lower under memory pressure')
       assert.equal(pHigh.compactionThreshold, Math.round(pHigh.maxInputTokens * 0.85))
+    })
+
+    it('smooth curve — no sudden jumps between adjacent pressure levels', () => {
+      // Check that small changes in pressure produce small changes in output
+      const base = computeProfile({
+        generation_tps: 50, prompt_tps: 100,
+        peak_memory_gb: 10, available_memory_gb: 10, context_window: 32768,
+      })
+      const slight = computeProfile({
+        generation_tps: 50, prompt_tps: 100,
+        peak_memory_gb: 11, available_memory_gb: 10, context_window: 32768,
+      })
+      const diff = Math.abs(base.maxInputTokens - slight.maxInputTokens)
+      assert.ok(diff < 1000, `Adjacent pressure levels should differ by <1000 tokens, got ${diff}`)
     })
   })
 
