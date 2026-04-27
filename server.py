@@ -789,17 +789,17 @@ async def chat_completions(req: ChatRequest):
     # Preventive guard: reject dangerously large prompts
     # Use the model's actual context window (with 10% safety margin) instead of hardcoded 30k
     # Allow override via CTX_WINDOW env var for users with extra memory
-    ctx_window = int(os.environ.get("CTX_WINDOW", 0)) or 65536
-    if ctx_window == 65536:
+    ctx_window = int(os.environ.get("CTX_WINDOW", 0)) or 84000
+    if ctx_window == 84000:
         if _config and isinstance(_config, dict):
-            ctx_window = max(_config.get("max_position_embeddings", 65536), 65536)
+            ctx_window = max(_config.get("max_position_embeddings", 84000), 84000)
         elif _model_path:
             try:
                 cfg_path = Path(_model_path) / "config.json"
                 if cfg_path.exists():
                     with open(cfg_path) as f:
                         disk_cfg = json.load(f)
-                    ctx_window = max(disk_cfg.get("max_position_embeddings", 65536), 65536)
+                    ctx_window = max(disk_cfg.get("max_position_embeddings", 84000), 84000)
             except Exception:
                 pass
     prompt_limit = int(ctx_window * 0.9)  # 90% of context window
