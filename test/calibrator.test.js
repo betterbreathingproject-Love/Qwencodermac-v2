@@ -122,6 +122,57 @@ describe('calibrator', () => {
     })
   })
 
+  describe('memory pressure scaling', () => {
+    it('no scaling when memory pressure is low (peak < 50% of total)', () => {
+      // peak=4, available=12 → pressure = 4/(4+12) = 0.25 → scale = 1.0
+      const p = computeProfile({
+        generation_tps: 50, prompt_tps: 100,
+        peak_memory_gb: 4, available_memory_gb: 12, context_window: 32768,
+      })
+      assert.equal(p.maxInputTokens, Math.round(32768 * 0.6)) // 19661, no reduction
+    })
+
+    it('scales down maxInputTokens when memory pressure is high', () => {
+      // peak=30, available=6 → pressure = 30/(30+6) = 0.833 → scale = max(0.5, 1.0 - 0.333) = 0.667
+      const p = computeProfile({
+        generation_tps: 50, prompt_tps: 100,
+        peak_memory_gb: 30, available_memory_gb: 6, context_window: 32768,
+      })
+      const expectedScale = Math.max(0.5, 1.0 - (30 / 36 - 0.5))
+      const expectedMaxInput = Math.round(32768 * 0.6 * expectedScale)
+      assert.equal(p.maxInputTokens, expectedMaxInput)
+      assert.ok(p.maxInputTokens < 19661, 'Should be less than unscaled value')
+    })
+
+    it('scales down to 50% minimum when memory is nearly exhausted', () => {
+      // peak=100, available=0.01 → pressure = 100/100.01 ≈ 0.9999 → scale ≈ 0.5001
+      // The scale floors at 0.5, so with extreme pressure we get close to half
+      const p = computeProfile({
+        generation_tps: 50, prompt_tps: 100,
+        peak_memory_gb: 100, available_memory_gb: 0.01, context_window: 32768,
+      })
+      const unscaled = Math.round(32768 * 0.6)
+      const halfScaled = Math.round(32768 * 0.6 * 0.5)
+      // Should be very close to 50% of unscaled, within a small margin
+      assert.ok(p.maxInputTokens <= unscaled * 0.55, 'Should be near 50% of unscaled')
+      assert.ok(p.maxInputTokens >= halfScaled, 'Should not go below 50% floor')
+    })
+
+    it('compactionThreshold scales with maxInputTokens under memory pressure', () => {
+      const pLow = computeProfile({
+        generation_tps: 50, prompt_tps: 100,
+        peak_memory_gb: 4, available_memory_gb: 12, context_window: 32768,
+      })
+      const pHigh = computeProfile({
+        generation_tps: 50, prompt_tps: 100,
+        peak_memory_gb: 30, available_memory_gb: 6, context_window: 32768,
+      })
+      assert.ok(pHigh.compactionThreshold < pLow.compactionThreshold,
+        'Compaction threshold should be lower under memory pressure')
+      assert.equal(pHigh.compactionThreshold, Math.round(pHigh.maxInputTokens * 0.85))
+    })
+  })
+
   describe('round2 and round3', () => {
     it('round2 rounds to 2 decimal places', () => {
       assert.equal(round2(3.14159), 3.14)

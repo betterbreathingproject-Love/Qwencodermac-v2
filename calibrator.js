@@ -16,9 +16,21 @@ function computeProfile(metrics) {
     context_window,
   }
 
+  // Memory pressure factor: when the model is using a large fraction of
+  // available memory, reduce maxInputTokens to avoid OOM during long contexts.
+  // memoryPressure ranges from 0 (no pressure) to 1 (fully saturated).
+  // Scale factor: 1.0 at ≤50% usage, linearly down to 0.5 at 100% usage.
+  const memoryPressure = available_memory_gb > 0
+    ? Math.min(1, peak_memory_gb / (peak_memory_gb + available_memory_gb))
+    : 0.5
+  const memoryScale = memoryPressure <= 0.5
+    ? 1.0
+    : Math.max(0.5, 1.0 - (memoryPressure - 0.5))
+
   const rawTimeout = (context_window / generation_tps) * 1000 + 30000
   const timeoutPerTurn = Math.max(60000, Math.round(rawTimeout))
-  const maxInputTokens = Math.min(200000, Math.max(8000, Math.round(context_window * 0.6)))
+  const rawMaxInput = Math.round(context_window * 0.6 * memoryScale)
+  const maxInputTokens = Math.min(200000, Math.max(8000, rawMaxInput))
   const compactionThreshold = Math.round(maxInputTokens * 0.85)
   const maxTurns = 500
   const poolTimeout = Math.max(120000, timeoutPerTurn * 3)
