@@ -128,7 +128,7 @@ function createPlaywrightInstance(options = {}) {
     ]
     try {
       const http = require('http')
-      const body = JSON.stringify({ messages: [{ role: 'user', content }], max_tokens: 1024 })
+      const body = JSON.stringify({ messages: [{ role: 'user', content }], max_tokens: 1024, stream: false })
       const result = await new Promise((resolve, reject) => {
         const req = http.request({
           hostname: '127.0.0.1', port: 8090,
