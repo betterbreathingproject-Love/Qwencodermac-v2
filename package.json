@@ -69,6 +69,7 @@
     "node-pty": "^1.1.0",
     "openai": "^4.0.0",
     "playwright": "^1.59.1",
+    "sharp": "^0.34.5",
     "ws": "^8.20.0"
   },
   "devDependencies": {
