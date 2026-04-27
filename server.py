@@ -531,13 +531,28 @@ def _build_prompt_and_kwargs(req: ChatRequest):
             prompt = "\n".join(parts)
         print(f"[server] Built text-only prompt, len={len(prompt)}", file=sys.stderr)
 
-    kwargs = dict(max_tokens=min(req.max_tokens or 1024, 16384), verbose=False)
+    kwargs = dict(max_tokens=min(req.max_tokens or 1024, 16384))
+    if _model_is_vision:
+        kwargs["verbose"] = False
     if req.temperature is not None:
-        kwargs["temp"] = req.temperature
+        if _model_is_vision:
+            kwargs["temp"] = req.temperature
+        else:
+            # mlx_lm uses a sampler callable for temperature control
+            import mlx.core as mx
+            t = req.temperature
+            if t == 0:
+                kwargs["sampler"] = lambda logits: mx.argmax(logits, axis=-1)
+            else:
+                def _temp_sampler(logits, _t=t):
+                    return mx.random.categorical(logits / _t)
+                kwargs["sampler"] = _temp_sampler
     if req.top_p is not None:
-        kwargs["top_p"] = req.top_p
+        if _model_is_vision:
+            kwargs["top_p"] = req.top_p
     if req.repetition_penalty is not None:
-        kwargs["repetition_penalty"] = req.repetition_penalty
+        if _model_is_vision:
+            kwargs["repetition_penalty"] = req.repetition_penalty
     if images:
         kwargs["image"] = images[0] if len(images) == 1 else images
     return prompt, kwargs, images
