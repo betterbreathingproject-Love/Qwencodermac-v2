@@ -401,12 +401,23 @@ function createWindow() {
           })
         } else {
           // Create a minimal controller for the mini app to work standalone
+          // Uses mutable state so the mini app can track job status via polling
           const { EventEmitter } = require('node:events')
-          remoteJobController = Object.assign(new EventEmitter(), {
-            getJobState: () => 'idle',
-            getJobId: () => null,
-            handleCommand: () => {},
+          const stubCtrl = Object.assign(new EventEmitter(), {
+            _state: 'idle',
+            _jobId: null,
+            getJobState() { return this._state },
+            getJobId() { return this._jobId },
+            handleCommand(command) {
+              if (command === 'stop') {
+                if (this._state === 'running' && qwenBridge) {
+                  qwenBridge.interrupt()
+                  this._state = 'idle'
+                }
+              }
+            },
           })
+          remoteJobController = stubCtrl
         }
       }
 
@@ -415,7 +426,14 @@ function createWindow() {
         miniAppServer = new MiniAppServer({
           jobController: remoteJobController,
           port: MINIAPP_PORT,
-          onRunJob: (prompt) => {
+          onStopJob: () => {
+            if (qwenBridge) {
+              qwenBridge.interrupt()
+            }
+            remoteJobController._state = 'idle'
+            miniAppServer?._logs.push({ type: 'log', text: '⏹ Job stopped', logType: 'info', time: Date.now() })
+          },
+          onRunJob: async (prompt) => {
             // Use the SAME qwenBridge as the main UI — so it shows in the app too
             if (!qwenBridge) {
               miniAppServer._logs.push({ type: 'log', text: '❌ Agent not ready (no bridge)', logType: 'error', time: Date.now() })
@@ -426,12 +444,79 @@ function createWindow() {
             const jobId = `miniapp_${Date.now()}`
 
             // Update controller state for mini app polling
-            if (remoteJobController._state !== undefined) {
-              remoteJobController._state = 'running'
-              remoteJobController._jobId = jobId
-            }
+            remoteJobController._state = 'running'
+            remoteJobController._jobId = jobId
 
             miniAppServer._logs.push({ type: 'log', text: `🚀 Job started: ${prompt}`, logType: 'info', time: Date.now() })
+
+            // ── Auto-start server & load model if needed ──
+            try {
+              const http = require('http')
+              const serverReady = await new Promise((resolve) => {
+                const req = http.get(`${SERVER_URL}/admin/status`, { timeout: 3000 }, (res) => {
+                  let d = ''; res.on('data', c => d += c)
+                  res.on('end', () => {
+                    try { resolve(JSON.parse(d)) } catch { resolve(null) }
+                  })
+                })
+                req.on('error', () => resolve(null))
+                req.on('timeout', () => { req.destroy(); resolve(null) })
+              })
+
+              if (!serverReady) {
+                // Server not running — start it
+                miniAppServer._logs.push({ type: 'log', text: '⏳ Starting MLX server...', logType: 'info', time: Date.now() })
+                ipcServer.startServer(SERVER_PORT, __dirname, mainWindow)
+                const ok = await ipcServer.waitForServer(SERVER_URL)
+                if (!ok) {
+                  remoteJobController._state = 'failed'
+                  miniAppServer._logs.push({ type: 'log', text: '❌ Failed to start server', logType: 'error', time: Date.now() })
+                  return
+                }
+                miniAppServer._logs.push({ type: 'log', text: '✓ Server started', logType: 'result', time: Date.now() })
+              }
+
+              // Check if a model is loaded
+              const status = serverReady || await new Promise((resolve) => {
+                const req = http.get(`${SERVER_URL}/admin/status`, { timeout: 3000 }, (res) => {
+                  let d = ''; res.on('data', c => d += c)
+                  res.on('end', () => { try { resolve(JSON.parse(d)) } catch { resolve({}) } })
+                })
+                req.on('error', () => resolve({}))
+                req.on('timeout', () => { req.destroy(); resolve({}) })
+              })
+
+              if (!status.loaded && status.models && status.models.length > 0) {
+                // No model loaded but models available — auto-load the first one
+                const modelToLoad = status.models[0]
+                const modelPath = modelToLoad.path || modelToLoad.id
+                miniAppServer._logs.push({ type: 'log', text: `⏳ Loading model: ${modelPath}...`, logType: 'info', time: Date.now() })
+                const loadResult = await new Promise((resolve) => {
+                  const body = JSON.stringify({ model_path: modelPath })
+                  const req = http.request({
+                    hostname: '127.0.0.1', port: SERVER_PORT, path: '/admin/load', method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+                    timeout: 120000,
+                  }, (res) => {
+                    let d = ''; res.on('data', c => d += c)
+                    res.on('end', () => { try { resolve(JSON.parse(d)) } catch { resolve({ status: 'ok' }) } })
+                  })
+                  req.on('error', (err) => resolve({ error: err.message }))
+                  req.on('timeout', () => { req.destroy(); resolve({ error: 'timeout' }) })
+                  req.write(body); req.end()
+                })
+                if (loadResult.error) {
+                  remoteJobController._state = 'failed'
+                  miniAppServer._logs.push({ type: 'log', text: `❌ Model load failed: ${loadResult.error}`, logType: 'error', time: Date.now() })
+                  return
+                }
+                miniAppServer._logs.push({ type: 'log', text: '✓ Model loaded', logType: 'result', time: Date.now() })
+                mainWindow?.webContents.send('server-status', { running: true })
+              }
+            } catch (err) {
+              miniAppServer._logs.push({ type: 'log', text: `⚠️ Server check: ${err.message}`, logType: 'error', time: Date.now() })
+              // Continue anyway — _waitForServer in DirectBridge will retry
+            }
 
             // Hook into qwen events to capture logs for the mini app
             const logHandler = (_, data) => {
@@ -444,11 +529,11 @@ function createWindow() {
               } else if (data.type === 'tool_result' || data.type === 'tool-end') {
                 miniAppServer._logs.push({ type: 'log', text: `✓ ${data.name || 'tool'} done`, logType: 'result', time: Date.now() })
               } else if (data.type === 'done' || data.type === 'finish') {
-                if (remoteJobController._state !== undefined) remoteJobController._state = 'completed'
+                remoteJobController._state = 'completed'
                 miniAppServer._logs.push({ type: 'log', text: '✅ Job completed', logType: 'result', time: Date.now() })
                 mainWindow?.webContents.off('qwen-event', logHandler)
               } else if (data.type === 'error') {
-                if (remoteJobController._state !== undefined) remoteJobController._state = 'failed'
+                remoteJobController._state = 'failed'
                 miniAppServer._logs.push({ type: 'log', text: `❌ ${data.error || 'Error'}`, logType: 'error', time: Date.now() })
                 mainWindow?.webContents.off('qwen-event', logHandler)
               }
@@ -461,14 +546,14 @@ function createWindow() {
             // Run using the shared bridge — shows in main app exactly like user typed it
             qwenBridge.run({ prompt, cwd, permissionMode: 'auto-edit' })
               .then(() => {
-                if (remoteJobController._state !== undefined && remoteJobController._state === 'running') {
+                if (remoteJobController._state === 'running') {
                   remoteJobController._state = 'completed'
                   miniAppServer?._logs.push({ type: 'log', text: '✅ Job completed', logType: 'result', time: Date.now() })
                 }
                 mainWindow?.webContents.off('qwen-event', logHandler)
               })
               .catch((err) => {
-                if (remoteJobController._state !== undefined) remoteJobController._state = 'failed'
+                remoteJobController._state = 'failed'
                 miniAppServer?._logs.push({ type: 'log', text: `❌ ${err.message}`, logType: 'error', time: Date.now() })
                 mainWindow?.webContents.off('qwen-event', logHandler)
               })

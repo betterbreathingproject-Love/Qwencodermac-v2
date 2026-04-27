@@ -17,12 +17,14 @@ class MiniAppServer extends EventEmitter {
    * @param {object} opts.jobController - RemoteJobController instance
    * @param {number} [opts.port=3847] - HTTP/WS port
    * @param {function} [opts.onRunJob] - Callback to actually run an agent job: (prompt) => void
+   * @param {function} [opts.onStopJob] - Callback to stop the running agent job: () => void
    */
-  constructor({ jobController, port = 3847, onRunJob }) {
+  constructor({ jobController, port = 3847, onRunJob, onStopJob }) {
     super()
     this._controller = jobController
     this._port = port
     this._onRunJob = onRunJob || null
+    this._onStopJob = onStopJob || null
     this._server = null
     this._wss = null
     this._clients = new Set()
@@ -170,8 +172,12 @@ class MiniAppServer extends EventEmitter {
         const [, projectId, sessionId] = runMatch
         // Append user message to session
         projects.appendSessionMessage(projectId, sessionId, { role: 'user', content: body.prompt, ts: Date.now() })
-        // Trigger the job via controller
-        this._controller.handleCommand('run', body.prompt)
+        // Trigger the job via onRunJob callback or controller
+        if (this._onRunJob) {
+          this._onRunJob(body.prompt)
+        } else {
+          this._controller.handleCommand('run', body.prompt)
+        }
         res.writeHead(200)
         res.end(JSON.stringify({ ok: true, jobId: this._controller.getJobId() }))
       }).catch(() => { res.writeHead(400); res.end('{"error":"Invalid body"}') })
@@ -290,7 +296,11 @@ class MiniAppServer extends EventEmitter {
         }
         break
       case 'stop':
-        this._controller.handleCommand('stop', '')
+        if (this._onStopJob) {
+          this._onStopJob()
+        } else {
+          this._controller.handleCommand('stop', '')
+        }
         break
       case 'status':
         // no-op for REST polling, status is returned in response

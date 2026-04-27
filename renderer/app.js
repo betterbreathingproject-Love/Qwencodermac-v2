@@ -4090,7 +4090,7 @@ async function toggleLspPopover() {
   if (!chip) return
 
   // Close if already open
-  const existing = chip.querySelector('.lsp-popover')
+  const existing = document.querySelector('.lsp-popover')
   if (existing) {
     existing.remove()
     _lspPopoverOpen = false
@@ -4136,13 +4136,17 @@ async function toggleLspPopover() {
     }
   }
 
-  chip.appendChild(pop)
+  document.body.appendChild(pop)
+  // Position fixed relative to the chip
+  const rect = chip.getBoundingClientRect()
+  pop.style.top = (rect.bottom + 6) + 'px'
+  pop.style.right = (window.innerWidth - rect.right) + 'px'
   _lspPopoverOpen = true
 
   // Close on outside click (delayed so the current click doesn't immediately close it)
   setTimeout(() => {
     const onOutside = (e) => {
-      if (!pop.contains(e.target)) {
+      if (!pop.contains(e.target) && !chip.contains(e.target)) {
         pop.remove()
         _lspPopoverOpen = false
         document.removeEventListener('click', onOutside)

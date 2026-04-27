@@ -20,7 +20,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .lsp-chip #lspText { font-size: 9px; color: var(--muted); font-weight: 600; letter-spacing: 0.5px; }
 
 /* LSP status popover */
-.lsp-popover { position: absolute; top: calc(100% + 6px); right: 0; z-index: 300; min-width: 200px; max-width: 280px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,0.5); padding: 8px 0; font-size: 11px; }
+.lsp-popover { position: fixed; z-index: 9999; min-width: 200px; max-width: 280px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,0.5); padding: 8px 0; font-size: 11px; }
 .lsp-popover-header { padding: 4px 10px 6px; font-size: 9px; font-weight: 600; letter-spacing: 0.08em; color: var(--muted); text-transform: uppercase; border-bottom: 1px solid var(--border); }
 .lsp-popover-item { padding: 6px 10px; display: flex; align-items: center; gap: 8px; }
 .lsp-popover-item + .lsp-popover-item { border-top: 1px solid rgba(255,255,255,0.03); }
