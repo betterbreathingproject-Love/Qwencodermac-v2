@@ -5,11 +5,12 @@
  */
 
 /**
- * Rough token count estimate (~4 chars per token for English text).
+ * Rough token count estimate (~3.5 chars per token for English text/code).
+ * Aligned with direct-bridge.js estimateTokens for consistent thresholds.
  */
 function estimateTokens(text) {
   if (!text) return 0
-  return Math.ceil(text.length / 4)
+  return Math.ceil(text.length / 3.5)
 }
 
 /**

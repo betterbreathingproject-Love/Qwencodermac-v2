@@ -16,9 +16,9 @@ const COMPACTOR_SCRIPT = path.join(__dirname, 'compactor-bridge.py')
  */
 function checkInstalled(pythonPath = 'python3') {
   return new Promise(resolve => {
-    execFile(pythonPath, ['-c', 'import scripts.lib.fusion.engine; print("ok")'], { timeout: 5000 }, (err) => {
+    execFile(pythonPath, ['-c', 'from claw_compactor.fusion.engine import FusionEngine; print("ok")'], { timeout: 5000 }, (err) => {
       if (err) {
-        // try pip-installed version
+        // try legacy top-level import
         execFile(pythonPath, ['-c', 'from claw_compactor import FusionEngine; print("ok")'], { timeout: 5000 }, (err2) => {
           resolve(!err2)
         })
