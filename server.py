@@ -681,19 +681,24 @@ async def benchmark():
             )
             elapsed = time.perf_counter() - start
 
-            # Extract token counts from the result object
-            gen_tokens = getattr(result, "generation_tokens", None)
-            prompt_tokens = getattr(result, "prompt_tokens", None)
+            # Prefer MLX's own TPS metrics — they measure each phase separately
+            # and match what users see during normal inference.
+            gen_tps = getattr(result, 'generation_tps', None)
+            prompt_tps = getattr(result, 'prompt_tps', None)
 
-            # Fallback: estimate from result text if attributes missing
-            if gen_tokens is None:
-                result_text = result.text if hasattr(result, "text") else str(result)
-                gen_tokens = max(1, len(result_text.split()))
-            if prompt_tokens is None:
-                prompt_tokens = max(1, len(BENCHMARK_PROMPT.split()))
-
-            gen_tps = gen_tokens / elapsed if elapsed > 0 else 0
-            prompt_tps = prompt_tokens / elapsed if elapsed > 0 else 0
+            # Fallback: estimate from token counts / total elapsed (less accurate)
+            if gen_tps is None or prompt_tps is None:
+                gen_tokens = getattr(result, 'generation_tokens', None)
+                prompt_tokens = getattr(result, 'prompt_tokens', None)
+                if gen_tokens is None:
+                    result_text = result.text if hasattr(result, 'text') else str(result)
+                    gen_tokens = max(1, len(result_text.split()))
+                if prompt_tokens is None:
+                    prompt_tokens = max(1, len(BENCHMARK_PROMPT.split()))
+                if gen_tps is None:
+                    gen_tps = gen_tokens / elapsed if elapsed > 0 else 0
+                if prompt_tps is None:
+                    prompt_tps = prompt_tokens / elapsed if elapsed > 0 else 0
 
             peak_mem = mx.metal.get_peak_memory() / (1024**3)
             avail_mem = mx.metal.get_cache_memory() / (1024**3)
