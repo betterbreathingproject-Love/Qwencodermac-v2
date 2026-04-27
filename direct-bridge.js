@@ -2059,13 +2059,14 @@ class DirectBridge {
       lastTextResponses = []
       _textOnlyTurns = 0  // Reset — model is using tools again
 
-      // Enforce todo list: if the model has used tools (turn >= 1) but never
-      // created a todo list, force it to create one before continuing.
-      // This ensures multi-step tasks are tracked and the agent won't stop early.
-      if (turn === 1 && !_lastTodos) {
+      // Enforce todo list: block progress until todos are created.
+      // After the first tool turn, if no todos exist, keep injecting the reminder
+      // every turn until the model complies. This is aggressive but necessary
+      // because local models often ignore single instructions.
+      if (turn >= 1 && !_lastTodos) {
         messages.push({
           role: 'system',
-          content: 'IMPORTANT: You started working but have not created a todo list. Call update_todos NOW with your plan before making any more changes. List all the steps needed to complete the user\'s request, each with status "pending". This is required — the system uses your todo list to track completion.',
+          content: 'BLOCKED: You MUST call update_todos before any other tool. Create your todo list NOW with all steps needed, each set to "pending". No other tools will be effective until you do this. Example: update_todos({"todos": [{"text": "Step 1 description", "status": "pending"}, {"text": "Step 2 description", "status": "pending"}]})',
         })
       }
 
@@ -2439,9 +2440,9 @@ Example:
 \`\`\`
 
 **CRITICAL RULES — READ CAREFULLY:**
-1. You CANNOT end a session by outputting text. Text-only responses will be REJECTED and you will be asked to use tools.
-2. The ONLY way to finish is by calling the task_complete tool. If you don't call it, the session continues.
-3. You MUST call update_todos at the start of every task to create a checklist.
+1. Your FIRST tool call in every session MUST be update_todos. No exceptions. Create a checklist before doing anything else.
+2. You CANNOT end a session by outputting text. Text-only responses will be REJECTED and you will be asked to use tools.
+3. The ONLY way to finish is by calling the task_complete tool. If you don't call it, the session continues.
 4. You MUST call update_todos to mark items "done" as you complete each step.
 5. You MUST call task_complete when all work is finished.
 
