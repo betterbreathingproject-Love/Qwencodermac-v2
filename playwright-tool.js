@@ -98,13 +98,31 @@ function createPlaywrightInstance(options = {}) {
     } else {
       buf = await page.screenshot({ type: 'png', fullPage: fullPage || false })
     }
-    const b64 = `data:image/png;base64,${buf.toString('base64')}`
 
-    // Send the screenshot through the vision endpoint for analysis
+    // Convert to JPEG at 80% quality for vision analysis — keeps the payload
+    // manageable (typically <500KB vs 2-3MB PNG) and avoids server timeouts.
+    const sharp = (() => { try { return require('sharp') } catch { return null } })()
+    let visionB64 = `data:image/png;base64,${buf.toString('base64')}`
+    let visionMime = 'image/png'
+    if (sharp) {
+      try {
+        const resized = await sharp(buf)
+          .resize({ width: 1280, height: 960, fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 80 })
+          .toBuffer()
+        visionB64 = `data:image/jpeg;base64,${resized.toString('base64')}`
+        visionMime = 'image/jpeg'
+      } catch { /* fall back to original PNG */ }
+    }
+
+    // Full-res PNG for the renderer (displayed in chat)
+    const displayB64 = `data:image/png;base64,${buf.toString('base64')}`
+
+    // Send the resized screenshot through the vision endpoint for analysis
     const visionPrompt = prompt || 'Describe what you see on this web page screenshot in detail. Note any text, UI elements, layout, errors, or notable content.'
     const content = [
       { type: 'text', text: visionPrompt },
-      { type: 'image_url', image_url: { url: b64 } },
+      { type: 'image_url', image_url: { url: visionB64 } },
     ]
     try {
       const http = require('http')
@@ -118,17 +136,17 @@ function createPlaywrightInstance(options = {}) {
         }, (res) => {
           let data = ''
           res.on('data', chunk => data += chunk)
-          res.on('end', () => { try { resolve(JSON.parse(data)) } catch { reject(new Error(data || 'Empty response')) } })
+          res.on('end', () => { try { resolve(JSON.parse(data)) } catch { reject(new Error(data.slice(0, 500) || 'Empty response')) } })
         })
         req.on('timeout', () => { req.destroy(); reject(new Error('Vision request timed out')) })
         req.on('error', reject)
         req.write(body)
         req.end()
       })
-      const desc = result.choices?.[0]?.message?.content || 'Could not analyze screenshot.'
-      return `[Screenshot captured, ${buf.length} bytes]\n\n![screenshot](${b64})\n\nVision analysis:\n${desc}`
+      const desc = result.choices?.[0]?.message?.content || result.error?.message || result.detail || 'Could not analyze screenshot.'
+      return `[Screenshot captured, ${buf.length} bytes]\n\n![screenshot](${displayB64})\n\nVision analysis:\n${desc}`
     } catch (err) {
-      return `[Screenshot captured, ${buf.length} bytes, but vision analysis failed: ${err.message}]\n\n![screenshot](${b64})`
+      return `[Screenshot captured, ${buf.length} bytes, but vision analysis failed: ${err.message}]\n\n![screenshot](${displayB64})`
     }
   }
 
