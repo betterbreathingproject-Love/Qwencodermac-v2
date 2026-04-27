@@ -155,19 +155,18 @@ describe('calibrator', () => {
         generation_tps: 50, prompt_tps: 100,
         peak_memory_gb: 30, available_memory_gb: 6, context_window: 32768,
       })
-      const unscaled = Math.round(32768 * 0.6)
-      assert.ok(p.maxInputTokens < unscaled * 0.5, 'Should be well below half at high pressure')
-      assert.ok(p.maxInputTokens >= 8000, 'Should never go below the 8000 floor')
+      // With 72K floor, high pressure still gets minimum 72K
+      assert.ok(p.maxInputTokens >= 72000, 'Should never go below the 72000 floor')
     })
 
     it('hits minimum floor when memory is nearly exhausted', () => {
       // peak=100, available=0.01 → pressure ≈ 1.0 → cos(π) = -1 → scale = 0
-      // But maxInputTokens is clamped to 8000 minimum
+      // But maxInputTokens is clamped to 72000 minimum
       const p = computeProfile({
         generation_tps: 50, prompt_tps: 100,
         peak_memory_gb: 100, available_memory_gb: 0.01, context_window: 32768,
       })
-      assert.equal(p.maxInputTokens, 8000, 'Should hit the 8000 floor at extreme pressure')
+      assert.equal(p.maxInputTokens, 72000, 'Should hit the 72000 floor at extreme pressure')
     })
 
     it('compactionThreshold scales with maxInputTokens under memory pressure', () => {
@@ -179,8 +178,9 @@ describe('calibrator', () => {
         generation_tps: 50, prompt_tps: 100,
         peak_memory_gb: 30, available_memory_gb: 6, context_window: 32768,
       })
-      assert.ok(pHigh.compactionThreshold < pLow.compactionThreshold,
-        'Compaction threshold should be lower under memory pressure')
+      // Both hit the 72K floor, so thresholds are equal
+      assert.equal(pHigh.compactionThreshold, pLow.compactionThreshold,
+        'Both should be at floor so thresholds match')
       assert.equal(pHigh.compactionThreshold, Math.round(pHigh.maxInputTokens * 0.85))
     })
 

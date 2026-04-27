@@ -30,8 +30,10 @@ function computeProfile(metrics) {
 
   const rawTimeout = (context_window / generation_tps) * 1000 + 30000
   const timeoutPerTurn = Math.max(60000, Math.round(rawTimeout))
-  const rawMaxInput = Math.round(context_window * 0.6 * memoryScale)
-  const maxInputTokens = Math.min(200000, Math.max(8000, rawMaxInput))
+  // Use actual context budget (84K) regardless of model-reported context_window
+  const effectiveContext = Math.max(context_window, 84000)
+  const rawMaxInput = Math.round(effectiveContext * 0.85 * memoryScale)
+  const maxInputTokens = Math.min(200000, Math.max(32000, rawMaxInput))
   const compactionThreshold = Math.round(maxInputTokens * 0.85)
   const maxTurns = 500
   const poolTimeout = Math.max(120000, timeoutPerTurn * 3)
@@ -53,8 +55,8 @@ function defaultProfile() {
   return {
     maxTurns: 50,
     timeoutPerTurn: 120000,
-    maxInputTokens: 24000,
-    compactionThreshold: 20000,
+    maxInputTokens: 72000,
+    compactionThreshold: 64000,
     poolTimeout: 600000,
     metrics: null,
   }
