@@ -261,6 +261,20 @@ const TOOL_DEFS = [
   {
     type: 'function',
     function: {
+      name: 'task_complete',
+      description: 'Signal that you have finished the user\'s request. You MUST call this tool when you are done — do NOT just output text. Include a summary of what you accomplished.',
+      parameters: {
+        type: 'object',
+        properties: {
+          summary: { type: 'string', description: 'A detailed summary of what you did: files created/modified, changes made, tests run, and anything the user should verify.' },
+        },
+        required: ['summary'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'ask_user',
       description: 'Ask the user a question and wait for their reply. Use when you need clarification or input.',
       parameters: {
@@ -1119,6 +1133,11 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         const done = todos.filter(t => t.status === 'done' || t.status === 'completed').length
         return { result: `Updated todo list: ${done}/${todos.length} complete` }
       }
+      case 'task_complete': {
+        // Signal that the agent has finished. Return a special marker that
+        // the agent loop checks to end the session gracefully.
+        return { result: '__TASK_COMPLETE__', summary: args.summary || '' }
+      }
       case 'search_files': {
         if (typeof args.pattern !== 'string' || !args.pattern.trim()) return { error: 'pattern must be a non-empty string. Usage: search_files({"pattern": "searchTerm", "path": ".", "include": "*.js"})' }
         const searchV = validatePath(args.path || '.')
@@ -1359,6 +1378,7 @@ class DirectBridge {
     let lastTextResponses = []  // Track recent text-only responses for repetition detection
     let consecutivePlanningNudges = 0  // Track how many times we've nudged for planning-only responses
     let _lastTodos = null  // Track the latest todo list for completion checking
+    let _textOnlyTurns = 0  // Track consecutive text-only responses for safety valve
     for (let turn = 0; turn < effectiveMaxTurns; turn++) {
       if (this._aborted) return
 
@@ -1632,47 +1652,62 @@ class DirectBridge {
           }
         }
 
-        // Check if there are incomplete todos — don't stop if work remains
+        // ── Text-only response: the model did NOT use any tools ──
+        // Instead of treating this as "done", nudge the model to use tools.
+        // The ONLY way to properly end a session is via the task_complete tool.
+        // This prevents premature stops where the model just describes what it
+        // plans to do (or did) without actually finishing.
+
+        // Exception: if this is a simple Q&A (no tools ever used, short answer),
+        // allow it through as a final response.
+        const hasToolHistory = messages.some(m => m.role === 'tool')
+        if (!hasToolHistory && turn === 0) {
+          // Pure Q&A — no tools used at all, first turn. Let it through.
+          this.send('qwen-event', {
+            type: 'result',
+            subtype: 'success',
+            is_error: false,
+            result: text,
+          })
+          return
+        }
+
+        // Check incomplete todos
         if (_lastTodos && _lastTodos.length > 0) {
           const incomplete = _lastTodos.filter(t => t.status !== 'done' && t.status !== 'completed')
           if (incomplete.length > 0) {
             const remaining = incomplete.map(t => t.text || t.label || t.title || 'unnamed').join(', ')
-            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `${incomplete.length} todo items still incomplete — nudging to continue` })
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `${incomplete.length} todo items still incomplete` })
             messages.push({ role: 'assistant', content: text })
             messages.push({
               role: 'system',
-              content: `You have ${incomplete.length} incomplete todo items remaining: ${remaining}. Do NOT stop — continue working through your todo list. Call update_todos to mark items done as you complete them.`,
+              content: `You have ${incomplete.length} incomplete todo items: ${remaining}. Continue working. When ALL items are done, call task_complete with a summary.`,
             })
             continue
           }
         }
 
-        // Normal completion — send final assistant message
-        // But first check: if the model just browsed/read files and the user asked
-        // for more (like recording, writing, building), don't stop yet — nudge it.
-        const hasToolHistory = messages.some(m => m.role === 'tool')
-        const userMsg = messages.find(m => m.role === 'user')
-        const userText = (userMsg?.content || '').toLowerCase()
-        const actionKeywords = /\b(record|film|video|screenshot|build|create|write|implement|fix|update|deploy|send|make|check|review|test)\b/
-        const looksIncomplete = hasToolHistory && actionKeywords.test(userText) && turn < 8
-
-        if (looksIncomplete) {
-          this.send('qwen-event', { type: 'system', subtype: 'debug', data: 'Text-only response but user request appears incomplete — nudging to continue' })
-          messages.push({ role: 'assistant', content: text })
-          messages.push({
-            role: 'system',
-            content: 'You provided a text response but the user\'s request is not yet complete. You have only browsed/read so far — you still need to take action to fulfill the request. Continue working — use your tools NOW. Do not stop until the user\'s full request has been fulfilled.',
+        // After many consecutive text-only turns, allow completion as a safety valve
+        _textOnlyTurns = (_textOnlyTurns || 0) + 1
+        if (_textOnlyTurns >= 3) {
+          // Model has given 3 text-only responses in a row — it's probably done
+          // or stuck. Let it through rather than looping forever.
+          this.send('qwen-event', {
+            type: 'result',
+            subtype: 'success',
+            is_error: false,
+            result: text,
           })
-          continue
+          return
         }
 
-        this.send('qwen-event', {
-          type: 'result',
-          subtype: 'success',
-          is_error: false,
-          result: text,
+        // Nudge the model to use tools or call task_complete
+        messages.push({ role: 'assistant', content: text })
+        messages.push({
+          role: 'system',
+          content: 'You output text without using any tools. If you are DONE with the task, call the task_complete tool with a summary of what you accomplished. If you are NOT done, use your tools NOW to continue working. Do NOT just output text — either use a tool or call task_complete.',
         })
-        return
+        continue
       }
 
       // Check for truncated tool calls — model hit token limit mid-tool-call
@@ -2002,11 +2037,24 @@ class DirectBridge {
 
         if (isError) consecutiveErrors++
         else consecutiveErrors = 0
+
+        // Check if the model called task_complete — end the session
+        if (fnName === 'task_complete' && !isError) {
+          const summary = fnArgs.summary || text || 'Task completed.'
+          this.send('qwen-event', {
+            type: 'result',
+            subtype: 'success',
+            is_error: false,
+            result: summary,
+          })
+          return
+        }
       }
 
       // Reset planning/repetition counters when tools are used (model is making progress)
       consecutivePlanningNudges = 0
       lastTextResponses = []
+      _textOnlyTurns = 0  // Reset — model is using tools again
 
       // Enforce todo list: if the model has used tools (turn >= 1) but never
       // created a todo list, force it to create one before continuing.
@@ -2379,7 +2427,7 @@ Example:
 2. CREATE TODO LIST: Call update_todos with your plan — list every step needed, all set to "pending". This is MANDATORY for any task with more than one step.
 3. GATHER CONTEXT: Read relevant files, search for patterns, list directories — understand the current state before making changes.
 4. DO THE WORK: Make changes using write_file or edit_file (one focused change at a time). Run tests or verify with bash if needed. Update todo items to "done" as you complete each step.
-5. REPORT: When ALL todo items are "done", provide a detailed summary of everything you did — files created/modified, key changes made, tests run and their results, and anything the user should know or verify. Be specific with file paths and what changed.
+5. COMPLETE: When ALL work is done, call the task_complete tool with a detailed summary. Do NOT just output text — you MUST call task_complete to end the session. This is how the system knows you're finished.
 
 When the user asks you to browse, research, or interact with websites, use the browser tools directly. Call browser_navigate first, then use other browser tools to interact with the page.
 
