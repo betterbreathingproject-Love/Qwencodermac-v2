@@ -149,6 +149,21 @@ function renderToolResult(content, isError=false) {
     displayText = text.replace(imgMatch[0], '').trim()
   }
 
+  // Extract and render inline video from browser_close results
+  const videoMatch = text.match(/Video recording saved:\s*(.+\.(?:webm|mp4))/i)
+  let videoHtml = ''
+  if (videoMatch) {
+    const videoPath = videoMatch[1].trim()
+    const ext = videoPath.split('.').pop().toLowerCase()
+    const mimeType = ext === 'mp4' ? 'video/mp4' : 'video/webm'
+    videoHtml = `<div style="margin:8px 0">
+      <video controls playsinline style="max-width:100%;max-height:400px;border-radius:6px;border:1px solid var(--border);background:#000">
+        <source src="file://${esc(videoPath)}" type="${mimeType}">
+      </video>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px;cursor:pointer" onclick="navigator.clipboard.writeText('${esc(videoPath)}');this.textContent='Copied!';setTimeout(()=>this.textContent='${esc(videoPath)}',1500)" title="Click to copy path">${esc(videoPath)}</div>
+    </div>`
+  }
+
   const escaped = esc(displayText)
   const limit = 8000
   const cls = isError ? 'tool-result error' : 'tool-result'
@@ -158,14 +173,14 @@ function renderToolResult(content, isError=false) {
     const id = 'tr-' + Date.now() + Math.random().toString(36).slice(2,6)
     return `<div class="${cls}" id="${id}">
       <div class="tool-result-header"><span class="tool-result-icon ${isError?'error':''}">${icon}</span> ${label}</div>
-      ${imgHtml}
+      ${imgHtml}${videoHtml}
       <div class="tool-result-body">${escaped.slice(0, limit)}<span class="tool-result-more" onclick="this.parentElement.innerHTML=window._toolResultFull['${id}'];delete window._toolResultFull['${id}']">… show all (${displayText.length} chars)</span></div>
     </div>`
       + `<script>if(!window._toolResultFull)window._toolResultFull={};window._toolResultFull['${id}']=\`${escaped.replace(/`/g,'\\`').replace(/<\/script/gi,'<\\/script')}\`</script>`
   }
   return `<div class="${cls}">
     <div class="tool-result-header"><span class="tool-result-icon ${isError?'error':''}">${icon}</span> ${label}</div>
-    ${imgHtml}
+    ${imgHtml}${videoHtml}
     <div class="tool-result-body">${escaped}</div>
   </div>`
 }

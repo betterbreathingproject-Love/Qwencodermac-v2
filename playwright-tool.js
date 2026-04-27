@@ -221,6 +221,9 @@ function createPlaywrightInstance(options = {}) {
 
   async function browser_close() {
     await closeBrowser()
+    if (_recordingPath) {
+      return `Browser closed. Video recording saved: ${_recordingPath}`
+    }
     return 'Browser closed.'
   }
 
