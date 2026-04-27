@@ -1203,8 +1203,11 @@ class DirectBridge {
     this._aborted = false
     this._samplingParams = samplingParams || {}
 
-    // Set up browser instance
-    this._browserInstance = createPlaywrightInstance()
+    // Set up browser instance with video recording enabled
+    const recordingDir = path.join(os.tmpdir(), 'qwencoder-recordings')
+    this._browserInstance = createPlaywrightInstance({
+      recordingOptions: { dir: recordingDir, size: { width: 1280, height: 720 } },
+    })
 
     // If images are attached, call the vision endpoint directly (same as Vision tab)
     // instead of relying on tool calls which the local model doesn't handle reliably.
@@ -2341,7 +2344,9 @@ You have access to these tools:
 - browser_evaluate: Run JavaScript in the page context
 - browser_wait_for: Wait for an element or navigation
 - browser_select_option: Select a dropdown option
-- browser_close: Close the browser when done
+- browser_close: Close the browser when done. If video recording was active, this returns the path to the recorded video file.
+
+**Video recording:** The browser automatically records video of all page interactions. When you close the browser with browser_close, you get the video file path. You can then send this video to the user via Telegram or reference it in your response. Video recording is always active — you don't need to enable it.
 
 **Web search & fetch tools:**
 - web_search: Search the web using Brave Search. Returns titles, URLs, and descriptions. Use this to find documentation, solutions, tutorials, or any information online.
