@@ -258,21 +258,32 @@ class TelegramBot extends EventEmitter {
   /**
    * Ensure the bot is connected. If disconnected but a saved token exists,
    * attempt to auto-reconnect. Returns true if connected, false otherwise.
+   * Uses a lock to prevent concurrent reconnection attempts.
    * @private
    * @returns {Promise<boolean>}
    */
   async _ensureConnected() {
     if (this._token && this._polling) return true
 
+    // Prevent concurrent reconnection attempts
+    if (this._reconnecting) return false
+
     // Try to auto-reconnect from saved config
     const saved = this.loadConfig()
     if (saved && saved.token) {
+      this._reconnecting = true
       try {
-        await this.start(saved.token)
+        // Race against a 10s timeout to avoid blocking the main thread
+        await Promise.race([
+          this.start(saved.token),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Reconnect timeout')), 10000))
+        ])
         if (saved.pairedChatId) this._pairedChatId = saved.pairedChatId
         return true
       } catch {
         return false
+      } finally {
+        this._reconnecting = false
       }
     }
     return false

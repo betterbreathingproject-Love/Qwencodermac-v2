@@ -1107,23 +1107,45 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         // Block obviously dangerous commands
         const dangerous = /\b(rm\s+-rf\s+\/|mkfs|dd\s+if=|:(){ :|fork\s*bomb)\b/i
         if (dangerous.test(args.command)) return { error: 'Command blocked for safety' }
-        try {
-          const out = execSync(args.command, {
+        return new Promise((resolve) => {
+          let stdout = ''
+          let stderr = ''
+          let killed = false
+          const proc = spawn('bash', ['-c', args.command], {
             cwd,
-            encoding: 'utf-8',
-            timeout: 120000,
-            maxBuffer: 2 * 1024 * 1024,
+            env: { ...process.env },
             stdio: ['pipe', 'pipe', 'pipe'],
           })
-          return { result: out || '(no output)' }
-        } catch (execErr) {
-          // execSync throws on non-zero exit — capture stdout+stderr
-          const stdout = execErr.stdout || ''
-          const stderr = execErr.stderr || ''
-          const combined = (stdout + '\n' + stderr).trim()
-          const exitCode = execErr.status ?? 1
-          return { error: `Command failed (exit ${exitCode}):\n${combined || execErr.message}` }
-        }
+          const timer = setTimeout(() => {
+            killed = true
+            proc.kill('SIGKILL')
+          }, 30000)
+          proc.stdout.on('data', (chunk) => {
+            stdout += chunk.toString()
+            if (stdout.length > 2 * 1024 * 1024) { killed = true; proc.kill('SIGKILL') }
+          })
+          proc.stderr.on('data', (chunk) => {
+            stderr += chunk.toString()
+            if (stderr.length > 2 * 1024 * 1024) { killed = true; proc.kill('SIGKILL') }
+          })
+          proc.on('close', (code) => {
+            clearTimeout(timer)
+            if (killed) {
+              resolve({ error: `Command timed out or exceeded output limit (30s):\n${(stdout + '\n' + stderr).trim().slice(0, 2000)}` })
+            } else if (code === 0) {
+              resolve({ result: stdout || '(no output)' })
+            } else {
+              const combined = (stdout + '\n' + stderr).trim()
+              resolve({ error: `Command failed (exit ${code}):\n${combined || 'Unknown error'}` })
+            }
+          })
+          proc.on('error', (err) => {
+            clearTimeout(timer)
+            resolve({ error: `Failed to spawn command: ${err.message}` })
+          })
+          // Close stdin immediately — we don't send input
+          proc.stdin.end()
+        })
       }
       case 'update_todos': {
         // update_todos is handled by the renderer via the tool-use/tool-result event flow.
@@ -1146,12 +1168,15 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         let cmd = `grep -rn "${args.pattern.replace(/"/g, '\\"')}" "${searchPath}"`
         if (args.include) cmd += ` --include="${args.include}"`
         cmd += ' 2>/dev/null | head -50'
-        try {
-          const out = execSync(cmd, { cwd, encoding: 'utf-8', timeout: 10000, maxBuffer: 512 * 1024 })
-          return { result: out || 'No matches found.' }
-        } catch {
-          return { result: 'No matches found.' }
-        }
+        return new Promise((resolve) => {
+          let output = ''
+          const proc = spawn('bash', ['-c', cmd], { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
+          const timer = setTimeout(() => { proc.kill('SIGKILL') }, 10000)
+          proc.stdout.on('data', (chunk) => { output += chunk.toString() })
+          proc.on('close', () => { clearTimeout(timer); resolve({ result: output || 'No matches found.' }) })
+          proc.on('error', () => { clearTimeout(timer); resolve({ result: 'No matches found.' }) })
+          proc.stdin.end()
+        })
       }
       case 'rewind_context': {
         if (!args.key) return { error: 'key parameter is required' }
