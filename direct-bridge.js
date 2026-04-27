@@ -1370,9 +1370,10 @@ class DirectBridge {
       // Retry on transient connection errors (ECONNRESET, ECONNREFUSED)
       let completion = null
 
-      // Compress context if it's getting too large — keep input under the
-      // calibrated token limit to leave room for the model's output
-      if (estimateMessagesTokens(messages) > effectiveMaxInputTokens) {
+      // Compress context if it's getting too large — trigger compaction early
+      // (at the compaction threshold) to give the compactor room to work before
+      // hitting the hard maxInputTokens ceiling.
+      if (estimateMessagesTokens(messages) > effectiveCompactionThreshold) {
         const before = messages.length
         try {
           const result = await compactor.compressMessages(pythonPath, messages, { dedup: true, keepRecent: 4 })
