@@ -17,21 +17,21 @@ def get_engine():
     # v7.1+: FusionEngine lives in claw_compactor.fusion.engine
     try:
         from claw_compactor.fusion.engine import FusionEngine
-        _engine_cache = FusionEngine(enable_rewind=True)
+        _engine_cache = FusionEngine(enable_rewind=False)
         return _engine_cache
     except (ImportError, TypeError):
         pass
     # v7.0 legacy: FusionEngine exported from top-level
     try:
         from claw_compactor import FusionEngine
-        _engine_cache = FusionEngine(rewind=True)
+        _engine_cache = FusionEngine(rewind=False)
         return _engine_cache
     except (ImportError, TypeError):
         pass
     # Dev path fallback
     try:
         from scripts.lib.fusion.engine import FusionEngine
-        _engine_cache = FusionEngine(rewind=True)
+        _engine_cache = FusionEngine(rewind=False)
         return _engine_cache
     except (ImportError, TypeError):
         pass
@@ -62,11 +62,10 @@ def _extract_stages_applied(stats):
 def cmd_status():
     engine = get_engine()
     if engine:
-        rewind_enabled = hasattr(engine, 'rewind_store') and engine.rewind_store is not None
         print(json.dumps({
             "installed": True,
             "version": _get_version(engine),
-            "rewind_enabled": bool(rewind_enabled),
+            "rewind_enabled": True,  # rewind is handled Node-side
             "stages": getattr(engine, 'stage_names', []),
         }))
     else:
@@ -112,26 +111,10 @@ def cmd_compress_messages():
         }
 
         # Store originals in rewind store if available and compression happened
-        rewind_keys = []
-        if engine.rewind_store and stats["reduction_pct"] > 0:
-            for i, (orig, comp) in enumerate(zip(messages, compressed_msgs)):
-                orig_content = orig.get("content", "")
-                comp_content = comp.get("content", "")
-                if orig_content != comp_content and len(orig_content) > 100:
-                    from claw_compactor.tokens import estimate_tokens
-                    key = engine.rewind_store.store(
-                        orig_content, comp_content,
-                        original_tokens=estimate_tokens(orig_content),
-                        compressed_tokens=estimate_tokens(comp_content),
-                    )
-                    rewind_keys.append(key)
-            if rewind_keys:
-                stats["rewind_keys"] = rewind_keys
-
-        # Include per-message stats from result
-        per_message = result.get("per_message", [])
-        if per_message:
-            stats["per_message"] = per_message
+        # NOTE: rewind is now handled Node-side; Python keys are not used
+        per_msg_list = result.get("per_message", [])
+        if per_msg_list:
+            stats["per_message"] = per_msg_list
 
         print(json.dumps({"messages": compressed_msgs, "stats": stats}))
     except Exception as e:
@@ -171,17 +154,7 @@ def cmd_compress_text():
             "compressed": compressed_text,
             "stats": stats,
         }
-
-        # Store in rewind if compression was meaningful
-        if engine.rewind_store and stats["reduction_pct"] > 10 and len(text) > 200:
-            from claw_compactor.tokens import estimate_tokens
-            key = engine.rewind_store.store(
-                text, compressed_text,
-                original_tokens=stats["original_tokens"],
-                compressed_tokens=stats["compressed_tokens"],
-            )
-            output["rewind_key"] = key
-            stats["rewind_key"] = key
+        # NOTE: rewind is now handled Node-side; no Python rewind key needed
 
         print(json.dumps(output))
     except Exception as e:
@@ -189,26 +162,8 @@ def cmd_compress_text():
 
 
 def cmd_rewind():
-    data = json.loads(sys.stdin.read())
-    key = data.get("key", "")
-
-    engine = get_engine()
-    if not engine:
-        print(json.dumps({"found": False, "error": "claw-compactor not installed"}))
-        return
-
-    if not engine.rewind_store:
-        print(json.dumps({"found": False, "error": "RewindStore not enabled"}))
-        return
-
-    try:
-        content = engine.rewind_store.retrieve(key)
-        if content is not None:
-            print(json.dumps({"content": content, "found": True}))
-        else:
-            print(json.dumps({"found": False, "error": "Content no longer available (expired or not found)"}))
-    except Exception as e:
-        print(json.dumps({"found": False, "error": str(e)}))
+    """Rewind is now handled Node-side. This command is kept for backward compat."""
+    print(json.dumps({"found": False, "error": "Rewind is handled Node-side. This bridge command is deprecated."}))
 
 
 if __name__ == "__main__":

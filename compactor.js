@@ -1,24 +1,61 @@
+'use strict'
+
 /**
  * Claw Compactor bridge — calls claw-compactor Python library from Node.
  * Uses the FusionEngine API to compress context before sending to LLM.
  * Falls back to built-in JS compactor when Python package is unavailable.
+ *
+ * Rewind store lives here in Node (not in the Python process) so it persists
+ * across all bridge invocations for the lifetime of the Electron app.
  */
 const { execFile } = require('child_process')
 const path = require('path')
-const fs = require('fs')
-const os = require('os')
+const crypto = require('crypto')
 const builtin = require('./compactor-builtin')
 
 const COMPACTOR_SCRIPT = path.join(__dirname, 'compactor-bridge.py')
 
-/**
- * Check if claw-compactor is installed
- */
+// ── Node-side Rewind Store ─────────────────────────────────────────────────
+const MAX_REWIND_ENTRIES = 200
+const REWIND_TTL_MS = 30 * 60 * 1000 // 30 minutes
+
+const _rewindStore = new Map() // key → { original, compressed, storedAt, tokens }
+
+function rewindStore(original, compressed, originalTokens = 0) {
+  const key = 'rw_' + crypto.randomBytes(12).toString('hex')
+  // Evict oldest if at capacity
+  if (_rewindStore.size >= MAX_REWIND_ENTRIES) {
+    const oldest = _rewindStore.keys().next().value
+    _rewindStore.delete(oldest)
+  }
+  _rewindStore.set(key, { original, compressed, storedAt: Date.now(), originalTokens })
+  return key
+}
+
+function rewindRetrieve(key) {
+  const entry = _rewindStore.get(key)
+  if (!entry) return null
+  if (Date.now() - entry.storedAt > REWIND_TTL_MS) {
+    _rewindStore.delete(key)
+    return null
+  }
+  return entry.original
+}
+
+function rewindClear() {
+  _rewindStore.clear()
+}
+
+function rewindSize() {
+  return _rewindStore.size
+}
+
+// ── Check installed ────────────────────────────────────────────────────────
+
 function checkInstalled(pythonPath = 'python3') {
   return new Promise(resolve => {
     execFile(pythonPath, ['-c', 'from claw_compactor.fusion.engine import FusionEngine; print("ok")'], { timeout: 5000 }, (err) => {
       if (err) {
-        // try legacy top-level import
         execFile(pythonPath, ['-c', 'from claw_compactor import FusionEngine; print("ok")'], { timeout: 5000 }, (err2) => {
           resolve(!err2)
         })
@@ -29,18 +66,15 @@ function checkInstalled(pythonPath = 'python3') {
   })
 }
 
-/**
- * Compress a list of chat messages using claw-compactor FusionEngine.
- * Forwards per-message contentType hints and dedup option to the Python bridge.
- * Falls back to built-in JS compactor if Python bridge fails.
- */
+// ── Compress messages ──────────────────────────────────────────────────────
+
 function compressMessages(pythonPath, messages, options = {}) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const input = JSON.stringify({ messages, options })
     const child = execFile(pythonPath, [COMPACTOR_SCRIPT, 'compress-messages'], {
       timeout: 30000,
       maxBuffer: 10 * 1024 * 1024,
-    }, (err, stdout, stderr) => {
+    }, (err, stdout) => {
       if (err) {
         const fallback = builtin.compressMessages(messages, options)
         fallback.stats = { ...fallback.stats, engine: 'builtin' }
@@ -50,6 +84,19 @@ function compressMessages(pythonPath, messages, options = {}) {
         const result = JSON.parse(stdout)
         if (result.stats?.compressed) {
           result.stats.engine = 'python'
+          // Store originals in Node-side rewind store for any compressed messages
+          const rewindKeys = []
+          if (result.messages && messages.length === result.messages.length) {
+            for (let i = 0; i < messages.length; i++) {
+              const origContent = typeof messages[i].content === 'string' ? messages[i].content : JSON.stringify(messages[i].content)
+              const compContent = typeof result.messages[i].content === 'string' ? result.messages[i].content : JSON.stringify(result.messages[i].content)
+              if (origContent !== compContent && origContent.length > 200) {
+                const key = rewindStore(origContent, compContent, result.stats?.per_message?.[i]?.original_tokens || 0)
+                rewindKeys.push(key)
+              }
+            }
+          }
+          if (rewindKeys.length) result.stats.rewind_keys = rewindKeys
           return resolve(result)
         }
         const fallback = builtin.compressMessages(messages, options)
@@ -66,13 +113,10 @@ function compressMessages(pythonPath, messages, options = {}) {
   })
 }
 
-/**
- * Compress a single text block (e.g. project context).
- * Returns rewind_key from the Python bridge response when present.
- * Falls back to built-in JS compactor if Python bridge fails.
- */
+// ── Compress text ──────────────────────────────────────────────────────────
+
 function compressText(pythonPath, text, contentType = 'auto', options = {}) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const input = JSON.stringify({ text, content_type: contentType, ...options })
     const child = execFile(pythonPath, [COMPACTOR_SCRIPT, 'compress-text'], {
       timeout: 15000,
@@ -87,6 +131,13 @@ function compressText(pythonPath, text, contentType = 'auto', options = {}) {
         const result = JSON.parse(stdout)
         if (result.stats?.compressed) {
           result.stats.engine = 'python'
+          // Store original in Node-side rewind store
+          const compressed = result.compressed || result.text || text
+          if (result.stats.reduction_pct > 10 && text.length > 200) {
+            const key = rewindStore(text, compressed, result.stats.original_tokens || 0)
+            result.rewind_key = key
+            result.stats.rewind_key = key
+          }
           return resolve(result)
         }
         const fallback = builtin.compressText(text, contentType)
@@ -103,45 +154,33 @@ function compressText(pythonPath, text, contentType = 'auto', options = {}) {
   })
 }
 
-/**
- * Retrieve original uncompressed content for a previously compressed section.
- * Calls the Python bridge rewind command with the given key.
- */
-function rewind(pythonPath, key) {
-  return new Promise((resolve, reject) => {
-    const input = JSON.stringify({ key })
-    const child = execFile(pythonPath, [COMPACTOR_SCRIPT, 'rewind'], {
-      timeout: 10000,
-    }, (err, stdout) => {
-      if (err) return resolve({ found: false, error: 'Python bridge failed' })
-      try {
-        const result = JSON.parse(stdout)
-        resolve(result)
-      } catch {
-        resolve({ found: false, error: 'Invalid response from bridge' })
-      }
-    })
-    child.stdin.write(input)
-    child.stdin.end()
-  })
-}
+// ── Rewind ─────────────────────────────────────────────────────────────────
 
 /**
- * Get compactor status/version info.
- * Includes rewind_enabled field from the Python bridge response.
- * Always reports installed since built-in fallback is available.
+ * Retrieve original uncompressed content by rewind key.
+ * Now uses the Node-side store (no Python call needed).
  */
+function rewind(_pythonPath, key) {
+  const content = rewindRetrieve(key)
+  if (content !== null) {
+    return Promise.resolve({ found: true, content })
+  }
+  return Promise.resolve({ found: false, error: 'Content no longer available (expired or evicted)' })
+}
+
+// ── Status ─────────────────────────────────────────────────────────────────
+
 function getStatus(pythonPath) {
   return new Promise(resolve => {
     execFile(pythonPath, [COMPACTOR_SCRIPT, 'status'], { timeout: 5000 }, (err, stdout) => {
-      if (err) return resolve({ installed: true, version: 'built-in', engine: 'builtin', rewind_enabled: false })
+      if (err) return resolve({ installed: true, version: 'built-in', engine: 'builtin', rewind_enabled: true, rewind_entries: rewindSize() })
       try {
         const result = JSON.parse(stdout)
-        if (result.installed) return resolve({ ...result, engine: 'python' })
-        resolve({ installed: true, version: 'built-in', engine: 'builtin', rewind_enabled: false })
-      } catch { resolve({ installed: true, version: 'built-in', engine: 'builtin', rewind_enabled: false }) }
+        if (result.installed) return resolve({ ...result, engine: 'python', rewind_enabled: true, rewind_entries: rewindSize() })
+        resolve({ installed: true, version: 'built-in', engine: 'builtin', rewind_enabled: true, rewind_entries: rewindSize() })
+      } catch { resolve({ installed: true, version: 'built-in', engine: 'builtin', rewind_enabled: true, rewind_entries: rewindSize() }) }
     })
   })
 }
 
-module.exports = { compressMessages, compressText, rewind, getStatus, checkInstalled }
+module.exports = { compressMessages, compressText, rewind, getStatus, checkInstalled, rewindClear, rewindSize }
