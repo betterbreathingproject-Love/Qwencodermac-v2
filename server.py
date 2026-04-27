@@ -421,13 +421,20 @@ def _build_prompt_with_tools(req: ChatRequest):
     env.globals["raise_exception"] = lambda msg: (_ for _ in ()).throw(Exception(msg))
     template = env.from_string(_chat_template)
 
+    # Template kwargs — the enhanced Barubary template supports these:
+    # - auto_disable_thinking_with_tools: prevents <tool_call> leaking into <think> blocks
+    # - max_tool_response_chars: truncate large tool responses in history
+    template_kwargs = {
+        "messages": tmpl_messages,
+        "tools": tmpl_tools,
+        "add_generation_prompt": True,
+        "enable_thinking": True,
+        "auto_disable_thinking_with_tools": True,
+        "max_tool_response_chars": 8000,
+    }
+
     try:
-        prompt = template.render(
-            messages=tmpl_messages,
-            tools=tmpl_tools,
-            add_generation_prompt=True,
-            enable_thinking=True,
-        )
+        prompt = template.render(**template_kwargs)
     except Exception as e:
         print(f"[server] ❌ Jinja template render FAILED: {e}", file=sys.stderr)
         import traceback
