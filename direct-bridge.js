@@ -1587,7 +1587,7 @@ class DirectBridge {
         }
 
         try {
-          const result = await compactor.compressMessages(pythonPath, messages, { dedup: true, keepRecent: 4 })
+          const result = await compactor.compressMessages(pythonPath, messages, { dedup: true, keepRecent: 12 })
           if (result && result.messages) {
             messages.length = 0
             messages.push(...result.messages)
@@ -1630,7 +1630,11 @@ class DirectBridge {
       // ── Memory: pre-LLM retrieval ─────────────────────────────────────────
       // Retrieve relevant context from memory before each LLM call.
       // Use 'thorough' mode when user message contains recall phrases.
-      if (memoryClient) {
+      // Skip injection if context is already above 70% of the compaction threshold
+      // to avoid re-inflating right after a compaction pass.
+      const _currentTokens = estimateMessagesTokens(messages)
+      const _memInjectBudget = Math.floor(effectiveCompactionThreshold * 0.70)
+      if (memoryClient && _currentTokens < _memInjectBudget) {
         try {
           const userMsg = messages.filter(m => m.role === 'user').pop()
           const userText = typeof userMsg?.content === 'string' ? userMsg.content : ''
