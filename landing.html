@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QwenCoder Mac Studio — Local AI Coding for Apple Silicon</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0f;
+      --surface: #111118;
+      --surface2: #1a1a24;
+      --border: rgba(255,255,255,0.07);
+      --accent: #7c6af7;
+      --accent2: #4fc3f7;
+      --accent3: #a78bfa;
+      --text: #e8e8f0;
+      --muted: #7a7a9a;
+      --radius: 14px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* ── NAV ── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 48px;
+      background: rgba(10,10,15,0.85);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-logo { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
+    .nav-logo span { color: var(--accent); }
+    .nav-links { display: flex; gap: 32px; list-style: none; }
+    .nav-links a { color: var(--muted); text-decoration: none; font-size: 14px; transition: color .2s; }
+    .nav-links a:hover { color: var(--text); }
+    .nav-cta {
+      background: var(--accent); color: #fff; border: none; border-radius: 8px;
+      padding: 9px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
+      transition: opacity .2s;
+    }
+    .nav-cta:hover { opacity: .85; }
+
+    /* ── HERO ── */
+    .hero {
+      min-height: 100vh;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center;
+      padding: 120px 24px 80px;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(ellipse 80% 60% at 50% 0%, rgba(124,106,247,0.18) 0%, transparent 70%),
+        radial-gradient(ellipse 50% 40% at 80% 80%, rgba(79,195,247,0.1) 0%, transparent 60%);
+      pointer-events: none;
+    }
+    .badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: rgba(124,106,247,0.12); border: 1px solid rgba(124,106,247,0.3);
+      border-radius: 100px; padding: 6px 16px; font-size: 13px; color: var(--accent3);
+      margin-bottom: 28px;
+    }
+    .badge-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    h1 {
+      font-size: clamp(42px, 7vw, 80px);
+      font-weight: 800;
+      letter-spacing: -2px;
+      line-height: 1.05;
+      max-width: 900px;
+      margin-bottom: 24px;
+    }
+    h1 .grad {
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .hero-sub {
+      font-size: clamp(16px, 2vw, 20px);
+      color: var(--muted);
+      max-width: 600px;
+      margin-bottom: 44px;
+    }
+    .hero-actions { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+    .btn-primary {
+      background: var(--accent); color: #fff; border: none; border-radius: 10px;
+      padding: 14px 32px; font-size: 16px; font-weight: 600; cursor: pointer;
+      transition: transform .15s, opacity .15s;
+    }
+    .btn-primary:hover { transform: translateY(-1px); opacity: .9; }
+    .btn-secondary {
+      background: transparent; color: var(--text);
+      border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px 32px; font-size: 16px; font-weight: 500; cursor: pointer;
+      transition: border-color .2s, background .2s;
+    }
+    .btn-secondary:hover { border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.04); }
+
+    .hero-note { margin-top: 20px; font-size: 13px; color: var(--muted); }
+    .hero-note span { color: var(--accent2); }
+
+    /* ── SECTION SHARED ── */
+    section { padding: 100px 24px; }
+    .container { max-width: 1100px; margin: 0 auto; }
+    .section-label {
+      font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
+      color: var(--accent); margin-bottom: 14px;
+    }
+    .section-title {
+      font-size: clamp(28px, 4vw, 44px); font-weight: 800;
+      letter-spacing: -1px; line-height: 1.1; margin-bottom: 16px;
+    }
+    .section-sub { font-size: 17px; color: var(--muted); max-width: 560px; }
+
+    /* ── FEATURE GRID ── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 20px;
+      margin-top: 60px;
+    }
+    .feature-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      transition: border-color .2s, transform .2s;
+    }
+    .feature-card:hover { border-color: rgba(124,106,247,0.35); transform: translateY(-2px); }
+    .feature-icon {
+      width: 44px; height: 44px; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px; margin-bottom: 18px;
+    }
+    .feature-card h3 { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+    .feature-card p { font-size: 14px; color: var(--muted); line-height: 1.6; }
+
+    /* icon bg colors */
+    .ic-purple { background: rgba(124,106,247,0.15); }
+    .ic-blue   { background: rgba(79,195,247,0.12); }
+    .ic-green  { background: rgba(52,211,153,0.12); }
+    .ic-orange { background: rgba(251,146,60,0.12); }
+    .ic-pink   { background: rgba(244,114,182,0.12); }
+    .ic-teal   { background: rgba(45,212,191,0.12); }
+
+    /* ── HIGHLIGHT STRIP ── */
+    .highlight {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .highlight-inner {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 80px;
+      align-items: center; max-width: 1100px; margin: 0 auto; padding: 100px 24px;
+    }
+    .highlight-inner.reverse { direction: rtl; }
+    .highlight-inner.reverse > * { direction: ltr; }
+    .highlight-visual {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 13px;
+      line-height: 1.8;
+      color: #cdd6f4;
+      overflow: hidden;
+    }
+    .hl-comment { color: #6c7086; }
+    .hl-keyword { color: #cba6f7; }
+    .hl-fn      { color: #89b4fa; }
+    .hl-str     { color: #a6e3a1; }
+    .hl-num     { color: #fab387; }
+    .hl-type    { color: #f38ba8; }
+
+    /* ── AGENT TYPES ── */
+    .agents-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 14px;
+      margin-top: 48px;
+    }
+    .agent-chip {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 20px;
+      display: flex; align-items: center; gap: 12px;
+      font-size: 14px; font-weight: 500;
+      transition: border-color .2s;
+    }
+    .agent-chip:hover { border-color: rgba(124,106,247,0.4); }
+    .agent-chip-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+    /* ── STATS ── */
+    .stats {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 1px; background: var(--border);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      overflow: hidden; margin-top: 60px;
+    }
+    .stat {
+      background: var(--surface); padding: 36px 28px; text-align: center;
+    }
+    .stat-num { font-size: 40px; font-weight: 800; letter-spacing: -1px; color: var(--accent3); }
+    .stat-label { font-size: 13px; color: var(--muted); margin-top: 4px; }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 48px 24px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    footer strong { color: var(--text); }
+
+    @media (max-width: 768px) {
+      nav { padding: 16px 20px; }
+      .nav-links { display: none; }
+      .highlight-inner { grid-template-columns: 1fr; gap: 40px; }
+      .highlight-inner.reverse { direction: ltr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-logo">Qwen<span>Coder</span> Mac Studio</div>
+  <ul class="nav-links">
+    <li><a href="#features">Features</a></li>
+    <li><a href="#agents">Agents</a></li>
+    <li><a href="#inference">Inference</a></li>
+    <li><a href="#workflow">Workflow</a></li>
+  </ul>
+  <button class="nav-cta">Download for Mac</button>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="badge"><span class="badge-dot"></span> Apple Silicon · Runs 100% Locally</div>
+  <h1>Local AI coding,<br><span class="grad">no cloud required.</span></h1>
+  <p class="hero-sub">
+    QwenCoder Mac Studio brings MLX-powered LLM inference, agentic tool use, and a full IDE experience to your Mac — completely offline.
+  </p>
+  <div class="hero-actions">
+    <button class="btn-primary">Download for macOS</button>
+    <button class="btn-secondary">View on GitHub</button>
+  </div>
+  <p class="hero-note">Requires <span>Apple Silicon</span> · macOS 14+ · Free &amp; open source</p>
+</section>
+
+<!-- STATS -->
+<section style="padding: 0 24px 80px;">
+  <div class="container">
+    <div class="stats">
+      <div class="stat"><div class="stat-num">100%</div><div class="stat-label">Local inference — no API keys</div></div>
+      <div class="stat"><div class="stat-num">MLX</div><div class="stat-label">Apple Silicon optimised</div></div>
+      <div class="stat"><div class="stat-num">DAG</div><div class="stat-label">Task graph orchestration</div></div>
+      <div class="stat"><div class="stat-num">∞</div><div class="stat-label">Context via compaction</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="container">
+    <p class="section-label">Everything you need</p>
+    <h2 class="section-title">A full coding environment,<br>powered by local AI.</h2>
+    <p class="section-sub">Every feature runs on your machine. Your code never leaves your Mac.</p>
+
+    <div class="features-grid">
+
+      <div class="feature-card">
+        <div class="feature-icon ic-purple">🧠</div>
+        <h3>Local MLX Inference</h3>
+        <p>Run Qwen and other LLMs directly on Apple Silicon via MLX. No API keys, no latency, no data leaving your machine.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon ic-blue">👁️</div>
+        <h3>Vision Model Support</h3>
+        <p>Analyse screenshots, diagrams, and UI mockups with MLX VLM models. Attach images directly in chat.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon ic-green">🤖</div>
+        <h3>Agentic Tool Use</h3>
+        <p>The agent reads and writes files, runs bash commands, searches your codebase, and automates the browser via Playwright.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon ic-orange">📋</div>
+        <h3>Spec-Driven Development</h3>
+        <p>Formalise features as specs: requirements → design → tasks → implementation. Iterate with the agent at each stage.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon ic-teal">🔀</div>
+        <h3>DAG Task Orchestration</h3>
+        <p>Tasks are modelled as a directed acyclic graph with branching and looping. Complex multi-step work runs automatically.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon ic-pink">🧩</div>
+        <h3>Multi-Agent Architecture</h3>
+        <p>Specialised subagents handle exploration, context gathering, code search, and implementation in parallel.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon ic-purple">💾</div>
+        <h3>Project &amp; Session Management</h3>
+        <p>Persistent conversation history, project switching, and session restore so you never lose context between sessions.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon ic-blue">🔭</div>
+        <h3>Git Integration &amp; File Watching</h3>
+        <p>Live file watching via chokidar, git diff awareness, and real-time preview keep the agent in sync with your changes.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon ic-green">📦</div>
+        <h3>Context Compaction</h3>
+        <p>Long conversations are automatically compacted by the claw-compactor, keeping the context window fresh without losing history.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon ic-orange">⚡</div>
+        <h3>Dual-Model Fast Assistant</h3>
+        <p>A lightweight fast model handles quick queries while the full model tackles complex reasoning — best of both worlds.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon ic-teal">🎯</div>
+        <h3>Adaptive Calibration</h3>
+        <p>The agent pool self-calibrates based on task performance, routing work to the most effective agent configuration.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon ic-pink">🌐</div>
+        <h3>Browser Automation</h3>
+        <p>Playwright integration lets the agent browse the web, scrape data, and interact with web UIs as part of any task.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- HIGHLIGHT: INFERENCE -->
+<div class="highlight" id="inference">
+  <div class="highlight-inner">
+    <div>
+      <p class="section-label">Local inference</p>
+      <h2 class="section-title">MLX on Apple Silicon — blazing fast, fully private.</h2>
+      <p class="section-sub" style="margin-bottom:24px;">
+        The built-in FastAPI server exposes an OpenAI-compatible <code style="color:var(--accent2);font-size:14px;">/v1/chat/completions</code> endpoint with streaming SSE. Drop in any MLX model from <code style="color:var(--accent2);font-size:14px;">~/.lmstudio/models/</code>.
+      </p>
+      <ul style="list-style:none;display:flex;flex-direction:column;gap:10px;">
+        <li style="display:flex;gap:10px;align-items:flex-start;font-size:14px;color:var(--muted);">
+          <span style="color:var(--accent);margin-top:2px;">✓</span> Streaming token generation via SSE
+        </li>
+        <li style="display:flex;gap:10px;align-items:flex-start;font-size:14px;color:var(--muted);">
+          <span style="color:var(--accent);margin-top:2px;">✓</span> Vision support with MLX VLM models
+        </li>
+        <li style="display:flex;gap:10px;align-items:flex-start;font-size:14px;color:var(--muted);">
+          <span style="color:var(--accent);margin-top:2px;">✓</span> OpenAI-compatible — works with any client
+        </li>
+        <li style="display:flex;gap:10px;align-items:flex-start;font-size:14px;color:var(--muted);">
+          <span style="color:var(--accent);margin-top:2px;">✓</span> Python 3.12 + FastAPI backend
+        </li>
+      </ul>
+    </div>
+    <div class="highlight-visual">
+      <div class="hl-comment"># FastAPI MLX inference server</div>
+      <div><span class="hl-keyword">from</span> fastapi <span class="hl-keyword">import</span> FastAPI</div>
+      <div><span class="hl-keyword">from</span> mlx_lm <span class="hl-keyword">import</span> load, generate</div>
+      <br>
+      <div>app = <span class="hl-fn">FastAPI</span>()</div>
+      <div>model, tokenizer = <span class="hl-fn">load</span>(<span class="hl-str">"~/.lmstudio/models/qwen"</span>)</div>
+      <br>
+      <div>@app.<span class="hl-fn">post</span>(<span class="hl-str">"/v1/chat/completions"</span>)</div>
+      <div><span class="hl-keyword">async def</span> <span class="hl-fn">chat</span>(req: ChatRequest):</div>
+      <div>&nbsp;&nbsp;<span class="hl-keyword">return</span> <span class="hl-fn">StreamingResponse</span>(</div>
+      <div>&nbsp;&nbsp;&nbsp;&nbsp;<span class="hl-fn">generate_stream</span>(model, req),</div>
+      <div>&nbsp;&nbsp;&nbsp;&nbsp;media_type=<span class="hl-str">"text/event-stream"</span></div>
+      <div>&nbsp;&nbsp;)</div>
+    </div>
+  </div>
+</div>
+
+<!-- AGENTS -->
+<section id="agents">
+  <div class="container">
+    <p class="section-label">Multi-agent system</p>
+    <h2 class="section-title">Specialised agents for every task.</h2>
+    <p class="section-sub">The orchestrator routes work to the right agent automatically, running them in parallel where possible.</p>
+
+    <div class="agents-grid">
+      <div class="agent-chip"><span class="agent-chip-dot" style="background:#7c6af7;"></span>Orchestrator</div>
+      <div class="agent-chip"><span class="agent-chip-dot" style="background:#4fc3f7;"></span>Explorer</div>
+      <div class="agent-chip"><span class="agent-chip-dot" style="background:#34d399;"></span>Context Gatherer</div>
+      <div class="agent-chip"><span class="agent-chip-dot" style="background:#fb923c;"></span>Code Search</div>
+      <div class="agent-chip"><span class="agent-chip-dot" style="background:#f472b6;"></span>Implementation</div>
+      <div class="agent-chip"><span class="agent-chip-dot" style="background:#2dd4bf;"></span>Fast Assistant</div>
+      <div class="agent-chip"><span class="agent-chip-dot" style="background:#a78bfa;"></span>Calibrator</div>
+      <div class="agent-chip"><span class="agent-chip-dot" style="background:#60a5fa;"></span>Memory Agent</div>
+    </div>
+  </div>
+</section>
+
+<!-- HIGHLIGHT: WORKFLOW -->
+<div class="highlight" id="workflow">
+  <div class="highlight-inner reverse">
+    <div>
+      <p class="section-label">Spec-driven workflow</p>
+      <h2 class="section-title">From idea to implementation, step by step.</h2>
+      <p class="section-sub" style="margin-bottom:24px;">
+        Specs formalise the development process so the agent always knows what to build, why, and how — with you in control at every stage.
+      </p>
+      <div style="display:flex;flex-direction:column;gap:16px;margin-top:8px;">
+        <div style="display:flex;gap:16px;align-items:flex-start;">
+          <div style="width:28px;height:28px;border-radius:50%;background:rgba(124,106,247,0.2);border:1px solid rgba(124,106,247,0.4);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--accent);flex-shrink:0;">1</div>
+          <div><strong>Requirements</strong><br><span style="font-size:14px;color:var(--muted);">Define what you want to build in plain language.</span></div>
+        </div>
+        <div style="display:flex;gap:16px;align-items:flex-start;">
+          <div style="width:28px;height:28px;border-radius:50%;background:rgba(79,195,247,0.15);border:1px solid rgba(79,195,247,0.35);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--accent2);flex-shrink:0;">2</div>
+          <div><strong>Design</strong><br><span style="font-size:14px;color:var(--muted);">The agent proposes architecture and data models.</span></div>
+        </div>
+        <div style="display:flex;gap:16px;align-items:flex-start;">
+          <div style="width:28px;height:28px;border-radius:50%;background:rgba(52,211,153,0.12);border:1px solid rgba(52,211,153,0.3);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#34d399;flex-shrink:0;">3</div>
+          <div><strong>Tasks</strong><br><span style="font-size:14px;color:var(--muted);">Work is broken into a DAG of executable tasks.</span></div>
+        </div>
+        <div style="display:flex;gap:16px;align-items:flex-start;">
+          <div style="width:28px;height:28px;border-radius:50%;background:rgba(251,146,60,0.12);border:1px solid rgba(251,146,60,0.3);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fb923c;flex-shrink:0;">4</div>
+          <div><strong>Implementation</strong><br><span style="font-size:14px;color:var(--muted);">Agents execute tasks autonomously, with your oversight.</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="highlight-visual">
+      <div class="hl-comment">// tasks.md — DAG task graph</div>
+      <br>
+      <div><span class="hl-keyword">const</span> tasks = [</div>
+      <div>&nbsp;&nbsp;{ id: <span class="hl-str">"explore"</span>, deps: [] },</div>
+      <div>&nbsp;&nbsp;{ id: <span class="hl-str">"gather-ctx"</span>, deps: [<span class="hl-str">"explore"</span>] },</div>
+      <div>&nbsp;&nbsp;{ id: <span class="hl-str">"implement"</span>, deps: [<span class="hl-str">"gather-ctx"</span>] },</div>
+      <div>&nbsp;&nbsp;{ id: <span class="hl-str">"test"</span>,      deps: [<span class="hl-str">"implement"</span>] },</div>
+      <div>];</div>
+      <br>
+      <div><span class="hl-comment">// Orchestrator resolves execution order</span></div>
+      <div><span class="hl-keyword">await</span> orchestrator.<span class="hl-fn">run</span>(tasks);</div>
+      <br>
+      <div><span class="hl-comment">// ✓ explore</span></div>
+      <div><span class="hl-comment">// ✓ gather-ctx</span></div>
+      <div><span class="hl-comment">// ✓ implement</span></div>
+      <div><span class="hl-comment">// ✓ test</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- CTA -->
+<section style="text-align:center;">
+  <div class="container">
+    <p class="section-label" style="text-align:center;">Get started</p>
+    <h2 class="section-title" style="text-align:center;margin:0 auto 16px;">Your AI coding co-pilot,<br>running on your Mac.</h2>
+    <p class="section-sub" style="margin:0 auto 40px;text-align:center;">Download QwenCoder Mac Studio and start building with local AI today.</p>
+    <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;">
+      <button class="btn-primary" style="font-size:17px;padding:16px 40px;">Download for macOS</button>
+      <button class="btn-secondary" style="font-size:17px;padding:16px 40px;">View Source</button>
+    </div>
+    <p style="margin-top:20px;font-size:13px;color:var(--muted);">Apple Silicon required · macOS 14 Sonoma or later</p>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <strong>QwenCoder Mac Studio</strong> — Local AI coding for Apple Silicon.<br>
+  <span style="margin-top:8px;display:inline-block;">Built with Electron · MLX · FastAPI · Playwright</span>
+</footer>
+
+</body>
+</html>
