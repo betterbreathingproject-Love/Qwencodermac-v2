@@ -2146,23 +2146,80 @@ async def _handle_rank_search(payload: dict) -> AssistResponse:
 
 
 async def _handle_extract_section(payload: dict) -> AssistResponse:
-    """2.9 Extract section — return the contiguous block most relevant to task context with ±20 lines."""
-    import time
+    """2.9 Extract section — use the fast model to identify and return the most relevant
+    contiguous block of a large file for the current task context.
+
+    Falls back to token-overlap heuristic if the model call fails or is unavailable.
+    """
+    import time, asyncio
     t0 = time.monotonic()
 
     file_path: str = payload.get("file_path", "")
     file_content: str = payload.get("file_content", "")
     task_context: str = payload.get("task_context", "")
 
-    try:
-        lines = file_content.splitlines()
-        if not lines:
-            elapsed_ms = int((time.monotonic() - t0) * 1000)
-            return AssistResponse(result=file_content, elapsed_ms=elapsed_ms, output_tokens=0)
+    lines = file_content.splitlines()
+    if not lines:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result=file_content, elapsed_ms=elapsed_ms, output_tokens=0)
 
+    total_lines = len(lines)
+
+    # ── Fast model path ───────────────────────────────────────────────────────
+    if _extract_model is not None and _extract_processor is not None:
+        try:
+            import mlx_lm
+
+            # Build a compact file outline: line numbers + first 80 chars per line
+            # Cap at 300 lines to keep the prompt small
+            sample_step = max(1, total_lines // 300)
+            outline_lines = []
+            for i in range(0, total_lines, sample_step):
+                outline_lines.append(f"{i+1}: {lines[i][:80]}")
+            outline = "\n".join(outline_lines)
+
+            prompt = (
+                f"You are a code navigation assistant. Given a file outline and a task, "
+                f"identify the single most relevant line number to start reading from.\n\n"
+                f"Task: {task_context[:300]}\n\n"
+                f"File: {file_path}\n"
+                f"Outline (line: content):\n{outline}\n\n"
+                f"Reply with ONLY a single integer line number (1-indexed). No explanation."
+            )
+
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: mlx_lm.generate(
+                    _extract_model, _extract_processor,
+                    prompt=prompt,
+                    max_tokens=8,
+                    verbose=False,
+                )
+            )
+
+            # Parse the line number from the response
+            import re as _re
+            match = _re.search(r'\d+', response.strip())
+            if match:
+                anchor = max(0, min(int(match.group()) - 1, total_lines - 1))
+                start = max(0, anchor - 30)
+                end = min(total_lines, anchor + 51)
+                extracted = "\n".join(lines[start:end])
+                elapsed_ms = int((time.monotonic() - t0) * 1000)
+                logger.debug(f"[extract_section] fast model → anchor line {anchor+1}, extracted {start+1}-{end} ({elapsed_ms}ms)")
+                return AssistResponse(
+                    result=f"[Lines {start+1}-{end} of {total_lines} — fast model selected this section]\n\n{extracted}",
+                    elapsed_ms=elapsed_ms,
+                    output_tokens=len(extracted) // 4,
+                )
+        except Exception as e:
+            logger.warning(f"[_handle_extract_section] fast model failed, falling back to heuristic: {e}")
+
+    # ── Heuristic fallback: token-overlap scoring ─────────────────────────────
+    try:
         context_tokens = set(re.findall(r'\w+', task_context.lower()))
 
-        # Score each line by token overlap with task context
         def _line_score(line: str) -> float:
             line_tokens = set(re.findall(r'\w+', line.lower()))
             if not line_tokens:
@@ -2170,21 +2227,20 @@ async def _handle_extract_section(payload: dict) -> AssistResponse:
             return len(line_tokens & context_tokens) / len(line_tokens)
 
         scores = [_line_score(line) for line in lines]
-
-        # Find the line with the highest score as the anchor
         best_idx = max(range(len(scores)), key=lambda i: scores[i])
-
-        # Extract ±20 lines around the best match
-        start = max(0, best_idx - 20)
-        end = min(len(lines), best_idx + 21)
+        start = max(0, best_idx - 30)
+        end = min(total_lines, best_idx + 51)
         extracted = "\n".join(lines[start:end])
 
-        output_tokens = len(extracted) // 4
         elapsed_ms = int((time.monotonic() - t0) * 1000)
-        return AssistResponse(result=extracted, elapsed_ms=elapsed_ms, output_tokens=output_tokens)
+        return AssistResponse(
+            result=f"[Lines {start+1}-{end} of {total_lines} — heuristic section extraction]\n\n{extracted}",
+            elapsed_ms=elapsed_ms,
+            output_tokens=len(extracted) // 4,
+        )
 
     except Exception as e:
-        logger.warning(f"[_handle_extract_section] failed: {e}")
+        logger.warning(f"[_handle_extract_section] heuristic failed: {e}")
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         return AssistResponse(result=None, elapsed_ms=elapsed_ms, output_tokens=0)
 

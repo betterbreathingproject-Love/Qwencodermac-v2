@@ -2362,30 +2362,51 @@ class DirectBridge {
 
         const truncateLimit = fnName === 'read_file' ? config.READ_FILE_TRUNCATE : config.TOOL_OUTPUT_TRUNCATE
         if (content && content.length > truncateLimit) {
-          const contentType = detectContentType(fnName, content)
-          let compressed = false
-          try {
-            const compResult = await compactor.compressText(pythonPath, content, contentType)
-            if (compResult.stats?.compressed) {
-              content = compResult.compressed || compResult.text || content
-              // Append compression notice
-              const pct = compResult.stats.reduction_pct ?? 0
-              const origTokens = compResult.stats.original_tokens ?? 0
-              let notice = `\n\n[compressed: ${pct}% reduction, original ${origTokens} tokens`
-              if (compResult.stats.rewind_key) {
-                notice += `, rewind key: ${compResult.stats.rewind_key} — call rewind_context with this key to retrieve the full original`
+
+          // File extract — run on raw content BEFORE compression so the fast model
+          // sees the full file and can pick the most relevant section intelligently.
+          // Only applies to read_file; other tools go straight to compression.
+          if (assistClient && fnName === 'read_file') {
+            const taskContext = messages.filter(m => m.role === 'user').pop()?.content || ''
+            if (taskContext) {
+              const section = await assistClient.assistExtractRelevantSection(fnArgs.path || '', content, taskContext)
+              if (section) {
+                content = section
+                this.send('qwen-event', { type: 'fast-assist', task: 'extract_section', label: '⚡ Fast Assistant — extracted relevant section' })
               }
-              notice += ']'
-              content += notice
-              compressed = true
-              // Emit compaction-stats event for tool result compression
-              this.send('qwen-event', { type: 'compaction-stats', data: { ...compResult.stats, source: 'tool-result', tool: fnName, contentType } })
             }
-          } catch {
-            // compressText failed — fall through to hard truncation
           }
-          if (!compressed) {
-            content = content.slice(0, truncateLimit) + '\n\n... [truncated — output was ' + (content.length / 1024).toFixed(0) + 'KB. Use more specific queries or read smaller sections.]'
+
+          // Re-check after extraction — may now be within limits
+          if (content.length > truncateLimit) {
+            const contentType = detectContentType(fnName, content)
+            let compressed = false
+            try {
+              const compResult = await compactor.compressText(pythonPath, content, contentType)
+              if (compResult.stats?.compressed) {
+                content = compResult.compressed || compResult.text || content
+                const pct = compResult.stats.reduction_pct ?? 0
+                const origTokens = compResult.stats.original_tokens ?? 0
+                let notice = `\n\n[compressed: ${pct}% reduction, original ${origTokens} tokens`
+                if (compResult.stats.rewind_key) {
+                  notice += `, rewind key: ${compResult.stats.rewind_key} — call rewind_context with this key to retrieve the full original`
+                }
+                notice += ']'
+                content += notice
+                compressed = true
+                this.send('qwen-event', { type: 'compaction-stats', data: { ...compResult.stats, source: 'tool-result', tool: fnName, contentType } })
+              }
+            } catch {
+              // compressText failed — fall through to hard truncation
+            }
+            if (!compressed) {
+              // Count total lines so the agent knows how to page through the file
+              const totalLines = content.split('\n').length
+              const shownLines = content.slice(0, truncateLimit).split('\n').length
+              content = content.slice(0, truncateLimit) +
+                `\n\n... [file truncated — showing lines 1-${shownLines} of ~${totalLines} total. ` +
+                `Call read_file with start_line=${shownLines + 1} to read the next section.]`
+            }
           }
         }
 
@@ -2436,15 +2457,6 @@ class DirectBridge {
             const taskContext = messages.filter(m => m.role === 'user').pop()?.content || ''
             const ranked = await assistClient.assistRankSearchResults(fnArgs.pattern || '', lines, taskContext)
             if (ranked) content = `[Ranked by fast model — showing 15 of ${lines.length} matches]\n\n${ranked.slice(0, 15).join('\n')}`
-          }
-        }
-
-        // File extract — extract relevant section from large files
-        if (assistClient && fnName === 'read_file' && typeof content === 'string' && content.length > assistClient.FILE_EXTRACT_THRESHOLD) {
-          const taskContext = messages.filter(m => m.role === 'user').pop()?.content || ''
-          if (taskContext) {
-            const section = await assistClient.assistExtractRelevantSection(fnArgs.path || '', content, taskContext)
-            if (section) content = `[Relevant section extracted by fast model — file: ${content.length} chars total]\n\n${section}`
           }
         }
 
