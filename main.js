@@ -1,8 +1,9 @@
 const { app, BrowserWindow, ipcMain, nativeTheme } = require('electron')
 const path = require('path')
+const os = require('os')
 const fs = require('node:fs')
 const { DirectBridge, WindowSink } = require('./direct-bridge')
-const { AgentPool } = require('./agent-pool')
+const { AgentPool, CATEGORY_KEYWORDS } = require('./agent-pool')
 const { loadSteeringDocs, formatSteeringForPrompt } = require('./steering-loader')
 
 // IPC handler modules
@@ -331,11 +332,100 @@ ipcMain.handle('steering-create', async (_, { name, description, body }) => {
   return { ok: true, path: filePath }
 })
 
+// ── IPC: Agent Roles ─────────────────────────────────────────────────────────
+const AGENT_ROLES_PATH = path.join(os.homedir(), '.qwencoder', 'agent-roles.json')
+
+const BUILTIN_ROLES = Object.entries(ROLE_OVERLAYS).map(([name, prompt]) => {
+  const icons = { explore:'🔍', 'context-gather':'📚', 'code-search':'🔎', debug:'🐛', tester:'🧪', requirements:'📋', design:'📐', implementation:'🔨', general:'⚡' }
+  const type = agentPool._types.get(name)
+  return { name, icon: icons[name] || '🤖', prompt, tools: type?.allowedTools || [], keywords: (CATEGORY_KEYWORDS[name] || []).join(', '), builtin: true }
+})
+
+function loadCustomRoles() {
+  try {
+    if (fs.existsSync(AGENT_ROLES_PATH)) return JSON.parse(fs.readFileSync(AGENT_ROLES_PATH, 'utf8'))
+  } catch (_) {}
+  return []
+}
+
+function saveCustomRoles(roles) {
+  fs.mkdirSync(path.dirname(AGENT_ROLES_PATH), { recursive: true })
+  fs.writeFileSync(AGENT_ROLES_PATH, JSON.stringify(roles, null, 2), 'utf8')
+}
+
+ipcMain.handle('agent-roles-list', async () => {
+  const custom = loadCustomRoles()
+  return { roles: [...BUILTIN_ROLES, ...custom] }
+})
+
+ipcMain.handle('agent-role-save', async (_, role) => {
+  if (!role || !role.name) return { error: 'name required' }
+  const custom = loadCustomRoles().filter(r => r.name !== role.name)
+  custom.push({ ...role, builtin: false })
+  saveCustomRoles(custom)
+  // Register/update in the live pool
+  agentPool.registerType({ name: role.name, systemPrompt: '', allowedTools: role.tools || [] })
+  // Update CATEGORY_KEYWORDS for keyword routing
+  if (role.keywords) {
+    CATEGORY_KEYWORDS[role.name] = role.keywords.split(',').map(k => k.trim()).filter(Boolean)
+  }
+  return { ok: true }
+})
+
+ipcMain.handle('agent-role-delete', async (_, name) => {
+  const custom = loadCustomRoles().filter(r => r.name !== name)
+  saveCustomRoles(custom)
+  return { ok: true }
+})
+
+ipcMain.handle('agent-role-generate', async (_, { name, description, existingPrompt }) => {
+  if (!qwenBridge) return { error: 'not ready' }
+  const allTools = ['read_file', 'write_file', 'edit_file', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch', 'browser_navigate', 'browser_screenshot', 'browser_click', 'browser_type', 'browser_get_text', 'browser_evaluate', 'browser_wait_for', 'browser_close']
+  const prompt = `You are helping configure a specialized AI coding agent role.
+
+Role name: ${name}
+Description: ${description}
+${existingPrompt ? `Existing prompt to improve:\n${existingPrompt}\n` : ''}
+
+Available tools: ${allTools.join(', ')}
+
+Generate a JSON object with exactly these fields:
+{
+  "prompt": "A focused system prompt overlay for this role (2-6 sentences). Start with 'You are in ${name.toUpperCase()} mode.' Describe the workflow, what to focus on, what NOT to do, and expected output format.",
+  "tools": ["array", "of", "tool", "names", "from", "the", "available", "list"],
+  "keywords": ["keyword1", "keyword2", "...up to 10 keywords that would trigger this role"]
+}
+
+Reply with ONLY the JSON object, no other text.`
+
+  try {
+    const http = require('http')
+    const body = JSON.stringify({ messages: [{ role: 'user', content: prompt }], max_tokens: 512, temperature: 0.3 })
+    const result = await new Promise((resolve, reject) => {
+      const req = http.request({ hostname: '127.0.0.1', port: SERVER_PORT, path: '/v1/chat/completions', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, (res) => {
+        let data = ''
+        res.on('data', c => data += c)
+        res.on('end', () => { try { resolve(JSON.parse(data)) } catch { reject(new Error(data)) } })
+      })
+      req.on('error', reject)
+      req.setTimeout(30000, () => { req.destroy(); reject(new Error('timeout')) })
+      req.write(body)
+      req.end()
+    })
+    const text = result.choices?.[0]?.message?.content || ''
+    const jsonMatch = text.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) return { error: 'Model did not return valid JSON' }
+    const generated = JSON.parse(jsonMatch[0])
+    return { ok: true, prompt: generated.prompt || '', tools: generated.tools || [], keywords: Array.isArray(generated.keywords) ? generated.keywords.join(', ') : '' }
+  } catch (err) {
+    return { error: err.message }
+  }
+})
+
 // ── background task events ────────────────────────────────────────────────────
 agentPool.on('bg-task-event', (evt) => {
   mainWindow?.webContents.send('bg-task-event', evt)
 })
-
 // ── window ────────────────────────────────────────────────────────────────────
 function createWindow() {
   mainWindow = new BrowserWindow({

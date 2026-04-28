@@ -30,6 +30,12 @@ contextBridge.exposeInMainWorld('app', {
   steeringList:   ()        => ipcRenderer.invoke('steering-list'),
   steeringCreate: (p)       => ipcRenderer.invoke('steering-create', p),
 
+  // agent roles
+  agentRolesList:   ()      => ipcRenderer.invoke('agent-roles-list'),
+  agentRoleSave:    (r)     => ipcRenderer.invoke('agent-role-save', r),
+  agentRoleDelete:  (n)     => ipcRenderer.invoke('agent-role-delete', n),
+  agentRoleGenerate:(p)     => ipcRenderer.invoke('agent-role-generate', p),
+
   // filesystem
   openFolder:     ()        => ipcRenderer.invoke('open-folder'),
   readDir:        (p)       => ipcRenderer.invoke('read-dir', p),

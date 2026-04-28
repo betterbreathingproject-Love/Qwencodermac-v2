@@ -355,6 +355,7 @@
         <button class="ed-tab" data-tab="vision" onclick="switchMainTab('vision',this)">👁 Vision</button>
         <button class="ed-tab" data-tab="tools" onclick="switchMainTab('tools',this)">🔧 Tools</button>
         <button class="ed-tab" data-tab="calibration" onclick="switchMainTab('calibration',this)">📊 Calibration</button>
+        <button class="ed-tab" data-tab="agents" onclick="switchMainTab('agents',this)">🤖 Agents</button>
       </div>
 
       <!-- AGENT TAB -->
@@ -545,6 +546,56 @@
         </div>
       </div>
 
+      <!-- AGENTS TAB -->
+      <div class="main-panel" id="mt-agents">
+        <div class="agents-layout">
+          <div class="agents-header">
+            <span class="agents-title">🤖 Agent Roles</span>
+            <span class="agents-subtitle">Configure specialized agents — each gets a focused prompt and tool set</span>
+          </div>
+          <div class="agents-body">
+            <div class="agents-list-col">
+              <div class="agents-list" id="agentRoleList"></div>
+              <button class="btn-sm" style="margin:8px;width:calc(100% - 16px)" onclick="agentRoleNew()">＋ New Role</button>
+            </div>
+            <div class="agents-editor-col" id="agentRoleEditor" style="display:none">
+              <div class="agents-editor-header">
+                <span id="agentRoleEditorTitle" style="font-size:12px;font-weight:600;color:var(--text)">New Role</span>
+                <div style="display:flex;gap:4px">
+                  <button class="btn-sm" onclick="agentRoleGenerate()" id="agentGenerateBtn" title="Generate prompt and tools with AI">✨ Generate</button>
+                  <button class="btn-sm" onclick="agentRoleSave()" style="background:var(--accent);color:#fff">💾 Save</button>
+                  <button class="btn-sm" onclick="agentRoleDelete()" id="agentDeleteBtn" style="background:var(--red);color:#fff;display:none">🗑 Delete</button>
+                </div>
+              </div>
+              <div class="agents-form">
+                <div class="agents-field">
+                  <label class="agents-label">Icon</label>
+                  <input id="agentRoleIcon" class="cs-input" style="width:56px;text-align:center;font-size:18px" placeholder="🤖" maxlength="4">
+                  <label class="agents-label" style="margin-left:8px">Name</label>
+                  <input id="agentRoleName" class="cs-input" placeholder="e.g. security-auditor" style="flex:1">
+                </div>
+                <div class="agents-field">
+                  <label class="agents-label">Description</label>
+                  <input id="agentRoleDesc" class="cs-input" placeholder="What does this agent do? Used by AI generation." style="flex:1">
+                </div>
+                <div class="agents-field" style="align-items:flex-start">
+                  <label class="agents-label" style="padding-top:4px">Keywords</label>
+                  <textarea id="agentRoleKeywords" class="cs-input" rows="2" placeholder="audit, security, vulnerability, owasp" style="flex:1;resize:vertical;font-family:monospace;font-size:11px"></textarea>
+                </div>
+                <div class="agents-field" style="align-items:flex-start">
+                  <label class="agents-label" style="padding-top:4px">Tools</label>
+                  <div id="agentRoleToolsGrid" class="agents-tools-grid" style="flex:1"></div>
+                </div>
+                <div class="agents-field" style="align-items:flex-start">
+                  <label class="agents-label" style="padding-top:4px">Prompt</label>
+                  <textarea id="agentRolePrompt" class="cs-input" rows="14" placeholder="System prompt overlay for this role..." style="flex:1;resize:vertical;font-family:monospace;font-size:11px;line-height:1.5"></textarea>
+                </div>
+              </div>
+              <div id="agentGenerateStatus" style="font-size:10px;color:var(--muted);padding:4px 8px;display:none"></div>
+            </div>
+          </div>
+        </div>
+      </div>
 
     </div>
   </div>

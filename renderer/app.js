@@ -101,6 +101,7 @@ function switchMainTab(name, btn) {
   document.querySelectorAll('.main-panel').forEach(p => p.classList.remove('active'))
   btn.classList.add('active')
   document.getElementById('mt-'+name).classList.add('active')
+  if (name === 'agents') loadAgentRoles()
 }
 
 // ── permission mode toggle ────────────────────────────────────────────────────
@@ -4864,3 +4865,149 @@ function populateExtractionModelList(models) {
   _extractionModelList = smallModels.length > 0 ? smallModels : models
   _renderExtractionModelSection()
 }
+
+// ── Agent Roles Tab ───────────────────────────────────────────────────────────
+
+const ALL_TOOLS = [
+  'read_file', 'write_file', 'edit_file', 'list_dir', 'bash', 'search_files',
+  'web_search', 'web_fetch',
+  'browser_navigate', 'browser_screenshot', 'browser_click', 'browser_type',
+  'browser_get_text', 'browser_get_html', 'browser_evaluate', 'browser_wait_for',
+  'browser_select_option', 'browser_close',
+]
+
+let _agentRoles = []
+let _selectedRoleName = null
+let _isNewRole = false
+
+async function loadAgentRoles() {
+  if (!window.app?.agentRolesList) return
+  const res = await window.app.agentRolesList()
+  _agentRoles = res.roles || []
+  renderAgentRoleList()
+}
+
+function renderAgentRoleList() {
+  const list = document.getElementById('agentRoleList')
+  if (!list) return
+  list.innerHTML = ''
+  for (const role of _agentRoles) {
+    const card = document.createElement('div')
+    card.className = 'agent-role-card' + (role.builtin ? ' builtin' : '') + (role.name === _selectedRoleName ? ' active' : '')
+    card.innerHTML = `<span class="agent-role-icon">${role.icon || '🤖'}</span><div class="agent-role-info"><div class="agent-role-name">${role.name}</div><div class="agent-role-tag">${role.builtin ? 'built-in' : 'custom'}</div></div>`
+    card.onclick = () => agentRoleSelect(role.name)
+    list.appendChild(card)
+  }
+}
+
+function agentRoleSelect(name) {
+  _selectedRoleName = name
+  _isNewRole = false
+  const role = _agentRoles.find(r => r.name === name)
+  if (!role) return
+  renderAgentRoleList()
+  const editor = document.getElementById('agentRoleEditor')
+  editor.style.display = 'flex'
+  editor.style.flexDirection = 'column'
+  document.getElementById('agentRoleEditorTitle').textContent = `${role.icon || '🤖'} ${role.name}`
+  document.getElementById('agentRoleIcon').value = role.icon || ''
+  document.getElementById('agentRoleName').value = role.name
+  document.getElementById('agentRoleDesc').value = role.description || ''
+  document.getElementById('agentRoleKeywords').value = role.keywords || ''
+  document.getElementById('agentRolePrompt').value = role.prompt || ''
+  document.getElementById('agentDeleteBtn').style.display = role.builtin ? 'none' : ''
+  renderToolsGrid(role.tools || [])
+}
+
+function agentRoleNew() {
+  _selectedRoleName = null
+  _isNewRole = true
+  renderAgentRoleList()
+  const editor = document.getElementById('agentRoleEditor')
+  editor.style.display = 'flex'
+  editor.style.flexDirection = 'column'
+  document.getElementById('agentRoleEditorTitle').textContent = 'New Role'
+  document.getElementById('agentRoleIcon').value = '🤖'
+  document.getElementById('agentRoleName').value = ''
+  document.getElementById('agentRoleDesc').value = ''
+  document.getElementById('agentRoleKeywords').value = ''
+  document.getElementById('agentRolePrompt').value = ''
+  document.getElementById('agentDeleteBtn').style.display = 'none'
+  renderToolsGrid([])
+}
+
+function renderToolsGrid(selectedTools) {
+  const grid = document.getElementById('agentRoleToolsGrid')
+  if (!grid) return
+  grid.innerHTML = ''
+  for (const tool of ALL_TOOLS) {
+    const chip = document.createElement('span')
+    chip.className = 'agent-tool-chip' + (selectedTools.includes(tool) ? ' selected' : '')
+    chip.textContent = tool
+    chip.onclick = () => chip.classList.toggle('selected')
+    grid.appendChild(chip)
+  }
+}
+
+function getSelectedTools() {
+  return [...document.querySelectorAll('#agentRoleToolsGrid .agent-tool-chip.selected')].map(c => c.textContent)
+}
+
+async function agentRoleSave() {
+  const name = document.getElementById('agentRoleName').value.trim()
+  if (!name) { alert('Role name is required'); return }
+  const role = {
+    name,
+    icon: document.getElementById('agentRoleIcon').value.trim() || '🤖',
+    description: document.getElementById('agentRoleDesc').value.trim(),
+    keywords: document.getElementById('agentRoleKeywords').value.trim(),
+    prompt: document.getElementById('agentRolePrompt').value.trim(),
+    tools: getSelectedTools(),
+    builtin: false,
+  }
+  const res = await window.app.agentRoleSave(role)
+  if (res.error) { alert('Save failed: ' + res.error); return }
+  _selectedRoleName = name
+  await loadAgentRoles()
+  agentRoleSelect(name)
+}
+
+async function agentRoleDelete() {
+  if (!_selectedRoleName) return
+  if (!confirm(`Delete role "${_selectedRoleName}"?`)) return
+  await window.app.agentRoleDelete(_selectedRoleName)
+  _selectedRoleName = null
+  document.getElementById('agentRoleEditor').style.display = 'none'
+  await loadAgentRoles()
+}
+
+async function agentRoleGenerate() {
+  const name = document.getElementById('agentRoleName').value.trim()
+  const description = document.getElementById('agentRoleDesc').value.trim()
+  if (!name && !description) { alert('Enter a name and description first'); return }
+  const btn = document.getElementById('agentGenerateBtn')
+  const status = document.getElementById('agentGenerateStatus')
+  btn.disabled = true
+  btn.textContent = '⏳ Generating...'
+  status.style.display = 'block'
+  status.textContent = 'Asking the model to generate prompt and tools...'
+  try {
+    const res = await window.app.agentRoleGenerate({
+      name: name || 'custom',
+      description,
+      existingPrompt: document.getElementById('agentRolePrompt').value.trim(),
+    })
+    if (res.error) { status.textContent = '❌ ' + res.error; return }
+    if (res.prompt) document.getElementById('agentRolePrompt').value = res.prompt
+    if (res.keywords) document.getElementById('agentRoleKeywords').value = res.keywords
+    if (res.tools) renderToolsGrid(res.tools)
+    status.textContent = '✅ Generated — review and save'
+  } catch (err) {
+    status.textContent = '❌ ' + err.message
+  } finally {
+    btn.disabled = false
+    btn.textContent = '✨ Generate'
+  }
+}
+
+// Load roles when the Agents tab is opened — hooked into switchMainTab above
