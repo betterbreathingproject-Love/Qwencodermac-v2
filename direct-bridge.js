@@ -2112,6 +2112,11 @@ class DirectBridge {
         if (_inferredRole && _inferredRole !== this._agentRole) {
           this._agentRole = _inferredRole
           this.send('qwen-event', { type: 'agent-type', agentType: _inferredRole })
+          // Rebuild and update the system prompt so the model gets the correct role preamble
+          // for the remainder of this session — not just the badge.
+          const updatedSystemPrompt = this._buildSystemPrompt(cwd, permissionMode)
+          const sysMsg = messages.find(m => m.role === 'system')
+          if (sysMsg) sysMsg.content = updatedSystemPrompt
         }
 
         let fnArgs = {}
