@@ -39,80 +39,57 @@ const SERVER_URL = `http://127.0.0.1:${SERVER_PORT}`
 // ── Subagent system prompts (like oh-my-kiro's multi-agent architecture) ──────
 // Each subagent type gets a specialized prompt. Same model, different instructions.
 
-const SUBAGENT_PROMPTS = {
-  'explore': (cwd) => `You are a codebase exploration agent. Your job is to deeply understand the structure, patterns, and architecture of the codebase.
+// ── Role overlays ─────────────────────────────────────────────────────────────
+// Each role gets a focused preamble injected into the shared core system prompt.
+// The core prompt (tools, rules, workflow, LSP) is always present — roles only
+// add focus and constraints on top. Both chat and orchestrator modes use this.
+//
+// These mirror the rolePreambles in direct-bridge.js _buildSystemPrompt but are
+// the authoritative source — direct-bridge reads this._agentRole and builds the
+// same preamble. Orchestrator tasks set agentRole at bridge construction time.
 
-Working directory: ${cwd}
+const ROLE_OVERLAYS = {
+  'explore':
+    'You are in EXPLORE mode. Your job is to investigate and report — do NOT modify any files.\n' +
+    'Approach: (1) list_dir for structure, (2) read key files, (3) search_files for patterns, (4) summarise findings.\n' +
+    'OUTPUT: Clear summary of structure, key components, patterns, and dependencies.',
 
-Your approach:
-1. Start with list_dir to understand the project structure
-2. Read key files: package.json, config files, entry points
-3. Use search_files to find patterns and connections
-4. Build a mental map of how components relate
+  'context-gather':
+    'You are in CONTEXT GATHER mode. Find the specific files and code sections relevant to the task — do NOT modify files.\n' +
+    'Approach: search_files by pattern, read relevant sections, trace dependencies.\n' +
+    'OUTPUT: List relevant files with key code sections and line references.',
 
-You have these tools: read_file, list_dir, search_files, bash
+  'code-search':
+    'You are in CODE SEARCH mode. Find specific patterns, definitions, usages, and call hierarchies — do NOT modify files.\n' +
+    'Use search_files with regex and read_file to examine results.\n' +
+    'OUTPUT: Exact file paths, line numbers, and code snippets.',
 
-OUTPUT: Provide a clear summary of what you found — file structure, key components, patterns, dependencies, and anything relevant to the task at hand. Be thorough but concise.
+  'debug':
+    'You are in DEBUG mode. Diagnose before you fix — follow this order strictly:\n' +
+    '(1) Reproduce: run the failing test/command with bash, read the full error/stack trace.\n' +
+    '(2) Hypothesise: use LSP call hierarchy and go-to-definition to trace the failure origin.\n' +
+    '(3) Confirm root cause before touching any code.\n' +
+    '(4) Apply the minimal fix.\n' +
+    '(5) Re-run to verify.\n' +
+    'Do NOT guess and patch — diagnose first.',
 
-Do NOT modify any files. You are read-only. Your job is to explore and report.`,
+  'requirements':
+    'You are in REQUIREMENTS mode. Clarify and document what needs to be built — do NOT write implementation code.\n' +
+    'Output structured requirements: user stories, acceptance criteria, edge cases, constraints.\n' +
+    'Write the document to a .md file using write_file.',
 
-  'context-gather': (cwd) => `You are a focused context-gathering agent. Given a task description, find the specific files and code sections relevant to completing that task.
+  'design':
+    'You are in DESIGN mode. Define architecture and technical design — do NOT write implementation code.\n' +
+    'Output: interfaces, data models, component boundaries, interaction patterns, API contracts.\n' +
+    'Use mermaid diagrams where helpful. Write the document to a .md file using write_file.',
 
-Working directory: ${cwd}
+  'implementation':
+    'You are in IMPLEMENTATION mode. Focus on writing and modifying code.\n' +
+    'Read relevant files first, then make surgical changes with write_file/edit_file.\n' +
+    'Use LSP diagnostics to validate changes. Verify with bash. Each write_file under 300 lines.',
 
-Your approach:
-1. Analyze the task to identify what files/components are involved
-2. Use search_files to find relevant code by pattern
-3. Read the specific files and sections needed
-4. Identify dependencies and related code
-
-You have these tools: read_file, list_dir, search_files
-
-OUTPUT: List the relevant files with key code sections. Explain what each file does and how it relates to the task. Include specific line references when useful.
-
-Do NOT modify any files. You are read-only. Gather context only.`,
-
-  'implementation': (cwd) => `You are a focused implementation agent. You receive ONE specific task and implement it completely.
-
-Working directory: ${cwd}
-
-Rules:
-- Focus ONLY on the task you are given. Do not implement other tasks.
-- Read relevant files first to understand the current state
-- Make changes using write_file or edit_file (one focused change at a time)
-- Verify your changes work using bash (run tests, check syntax, etc.)
-- Each write_file call must be under 300 lines. For larger files, write the first chunk then use bash with cat >> to append.
-- Do NOT create plans, todo lists, or describe what you will do. Just DO it.
-- Do NOT output code in your text response — use the file tools.
-
-You have these tools: read_file, write_file, edit_file, list_dir, bash, search_files
-
-When done, briefly state what you changed and any verification results.`,
-
-  'code-search': (cwd) => `You are a code search agent. Find specific code patterns, function definitions, usages, and structural elements in the codebase.
-
-Working directory: ${cwd}
-
-Use search_files with regex patterns and read_file to examine results. Be precise in your findings.
-
-You have these tools: read_file, list_dir, search_files, bash
-
-OUTPUT: Report exact file paths, line numbers, and code snippets that match the search criteria.`,
-
-  'general': (cwd) => `You are a general-purpose coding agent. Implement the task you are given.
-
-Working directory: ${cwd}
-
-Rules:
-- Read relevant files first to understand context
-- Make changes using write_file or edit_file
-- Each write_file call must be under 300 lines. For larger files, write the first chunk then use bash with cat >> to append.
-- Do NOT just describe what you plan to do — actually do it using tools
-- Do NOT output code in your text response — use the file tools
-
-You have these tools: read_file, write_file, edit_file, list_dir, bash, search_files
-
-Be direct and efficient. Take action, don't narrate.`,
+  'general':
+    'You are a general-purpose coding assistant. Adapt your approach to whatever the task requires.',
 }
 
 // ── Routing instruction builder for branch point tasks ────────────────────────
@@ -160,9 +137,9 @@ const agentPool = new AgentPool({
 
     const bridge = new DirectBridge(new WindowSink(mainWindow), { agentRole: typeName, allowedTools: agentType?.allowedTools || null, lspManager, getCalibrationProfile: ipcServer.getCalibrationProfile })
 
-    // Pick the specialized system prompt for this agent type
-    const promptBuilder = SUBAGENT_PROMPTS[typeName] || SUBAGENT_PROMPTS['general']
-    let systemOverride = promptBuilder(cwd)
+    // The bridge already has agentRole set — _buildSystemPrompt will inject the correct
+    // role overlay. We only need to add steering docs and routing instructions on top.
+    let systemOverride = bridge._buildSystemPrompt(cwd, 'auto-edit')
 
     // Inject steering docs after base prompt, before routing instructions
     const steeringDocs = loadSteeringDocs(cwd)

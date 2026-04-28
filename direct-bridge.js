@@ -2105,18 +2105,12 @@ class DirectBridge {
 
         const fnName = tc.function.name
 
-        // Dynamically update agent role badge based on what tool is being called.
-        // This reflects the agent's actual current activity, not just the initial routing.
+        // Update badge when agent shifts to writing code
         const _writeTools = new Set(['write_file', 'edit_file'])
         const _inferredRole = _writeTools.has(fnName) ? 'implementation' : null
         if (_inferredRole && _inferredRole !== this._agentRole) {
           this._agentRole = _inferredRole
           this.send('qwen-event', { type: 'agent-type', agentType: _inferredRole })
-          // Rebuild and update the system prompt so the model gets the correct role preamble
-          // for the remainder of this session — not just the badge.
-          const updatedSystemPrompt = this._buildSystemPrompt(cwd, permissionMode)
-          const sysMsg = messages.find(m => m.role === 'system')
-          if (sysMsg) sysMsg.content = updatedSystemPrompt
         }
 
         let fnArgs = {}
@@ -2849,21 +2843,49 @@ class DirectBridge {
   _buildSystemPrompt(cwd, permissionMode) {
     const autoEdit = permissionMode === 'auto-edit'
 
-    // Role-specific focus preamble
+    // Role-specific focus preamble — authoritative source, mirrors ROLE_OVERLAYS in main.js
     const rolePreambles = {
-      'explore': 'You are in EXPLORE mode. Focus on understanding the codebase — read files, list directories, search for patterns, and use LSP to navigate symbols, definitions, and references. Do NOT modify any files unless explicitly asked. Your job is to investigate and report.',
-      'context-gather': 'You are in CONTEXT GATHER mode. Focus on finding the specific files and code sections relevant to the user\'s question. Use LSP to trace definitions, references, and type information. Provide focused context, not broad overviews.',
-      'code-search': 'You are in CODE SEARCH mode. Focus on finding specific code patterns, function definitions, usages, and call hierarchies. Use LSP workspace symbol search and call hierarchy tools. Report exact file paths, line numbers, and code snippets.',
-      'implementation': 'You are in IMPLEMENTATION mode. Focus on writing and modifying code. Use LSP diagnostics to validate your changes, check definitions before refactoring, and apply code actions when available. Be surgical and verify your work.',
-      'debug': 'You are in DEBUG mode. Your job is to diagnose before you fix. Follow this order: (1) reproduce the issue — run the failing test or command with bash, read the full error/stack trace; (2) form a hypothesis — use LSP call hierarchy and go-to-definition to trace where the failure originates; (3) confirm the root cause before touching any code; (4) apply the minimal fix; (5) re-run to verify. Do NOT guess and patch — diagnose first.',
-      'requirements': 'You are in REQUIREMENTS mode. Focus on clarifying and documenting what needs to be built. Identify ambiguities, define acceptance criteria, and write clear, testable requirements. Do NOT write implementation code — your output should be structured requirements documents.',
-      'design': 'You are in DESIGN mode. Focus on architecture and technical design. Define interfaces, data models, component boundaries, and interaction patterns. Produce design documents, diagrams (as text/mermaid), and API contracts. Do NOT write implementation code — your output should guide the implementation phase.',
-      'general': 'You are a general-purpose coding assistant. You can read, write, search, and execute code. Adapt your approach to whatever the task requires.',
+      'explore':
+        'You are in EXPLORE mode. Your job is to investigate and report — do NOT modify any files.\n' +
+        'Approach: (1) list_dir for structure, (2) read key files, (3) search_files for patterns, (4) summarise findings.\n' +
+        'OUTPUT: Clear summary of structure, key components, patterns, and dependencies.',
+      'context-gather':
+        'You are in CONTEXT GATHER mode. Find the specific files and code sections relevant to the task — do NOT modify files.\n' +
+        'Approach: search_files by pattern, read relevant sections, trace dependencies.\n' +
+        'OUTPUT: List relevant files with key code sections and line references.',
+      'code-search':
+        'You are in CODE SEARCH mode. Find specific patterns, definitions, usages, and call hierarchies — do NOT modify files.\n' +
+        'Use search_files with regex and read_file to examine results.\n' +
+        'OUTPUT: Exact file paths, line numbers, and code snippets.',
+      'debug':
+        'You are in DEBUG mode. Diagnose before you fix — follow this order strictly:\n' +
+        '(1) Reproduce: run the failing test/command with bash, read the full error/stack trace.\n' +
+        '(2) Hypothesise: use LSP call hierarchy and go-to-definition to trace the failure origin.\n' +
+        '(3) Confirm root cause before touching any code.\n' +
+        '(4) Apply the minimal fix.\n' +
+        '(5) Re-run to verify.\n' +
+        'Do NOT guess and patch — diagnose first.',
+      'requirements':
+        'You are in REQUIREMENTS mode. Clarify and document what needs to be built — do NOT write implementation code.\n' +
+        'Output structured requirements: user stories, acceptance criteria, edge cases, constraints.\n' +
+        'Write the document to a .md file using write_file.',
+      'design':
+        'You are in DESIGN mode. Define architecture and technical design — do NOT write implementation code.\n' +
+        'Output: interfaces, data models, component boundaries, interaction patterns, API contracts.\n' +
+        'Use mermaid diagrams where helpful. Write the document to a .md file using write_file.',
+      'implementation':
+        'You are in IMPLEMENTATION mode. Focus on writing and modifying code.\n' +
+        'Read relevant files first, then make surgical changes with write_file/edit_file.\n' +
+        'Use LSP diagnostics to validate changes. Verify with bash. Each write_file under 300 lines.',
+      'general':
+        'You are a general-purpose coding assistant. Adapt your approach to whatever the task requires.',
     }
-    const rolePreamble = rolePreambles[this._agentRole] || ''
+    const rolePreamble = rolePreambles[this._agentRole] || rolePreambles['general']
 
     return `You are a powerful coding assistant. You help users write, edit, debug, and understand code.
-${rolePreamble ? '\n' + rolePreamble + '\n' : ''}
+
+## Role
+${rolePreamble}
 
 Working directory: ${cwd}
 
