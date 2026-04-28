@@ -29,6 +29,13 @@ try {
   // memory-client.js not available — memory features disabled
 }
 
+// Assist client — gracefully degrades if assist backend is unavailable
+let assistClient = null
+try {
+  assistClient = require('./assist-client.js')
+} catch (_) {}
+
+
 // ── Python path resolution (reuse pattern from main/ipc-server.js) ────────────
 function _findPythonPath() {
   for (const p of [

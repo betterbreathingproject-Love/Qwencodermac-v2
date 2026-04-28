@@ -60,10 +60,10 @@ Implement the dual-model fast assistant by adding a `POST /memory/assist` endpoi
   - Set it to `True` when `_extract_model is not None` in the `get_memory_status` handler
   - _Requirements: 10.1_
 
-- [-] 4. Checkpoint — Ensure all Python tests pass
+- [x] 4. Checkpoint — Ensure all Python tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [~] 5. Create `assist-client.js`
+- [x] 5. Create `assist-client.js`
   - Create `assist-client.js` as a CommonJS module (`'use strict'`, `require`/`module.exports`)
   - Define all seven exported constants at the top: `FETCH_SUMMARIZE_THRESHOLD = 4000`, `VISION_MAX_CHARS = 2000`, `GIT_SUMMARIZE_THRESHOLD = 2000`, `SEARCH_RANK_THRESHOLD = 15`, `FILE_EXTRACT_THRESHOLD = 8000`, `TODO_BOOTSTRAP_ENABLED = true`, `TODO_WATCH_ENABLED = true`
   - Implement the internal `_assistRequest(taskType, payload, timeoutMs)` helper using Node.js built-in `http`: POST to `http://127.0.0.1:8090/memory/assist`, return `null` on HTTP 503 with `degraded: true` (no warning), log a single warning line on any other error, apply per-function socket timeouts
@@ -87,7 +87,7 @@ Implement the dual-model fast assistant by adding a `POST /memory/assist` endpoi
     - Use `{ numRuns: 150 }` for all properties
     - **Validates: Requirements 2.3, 6.1, 6.7, 8.1, 8.5, 11.7, 17.4**
 
-- [~] 6. Wire `assist-client.js` into `direct-bridge.js` — lazy load and state tracking
+- [-] 6. Wire `assist-client.js` into `direct-bridge.js` — lazy load and state tracking
   - Add lazy-require block for `assist-client.js` at the top of `direct-bridge.js` (same pattern as `memory-client.js`)
   - Add `_lastTodos`, `_bootstrapDone`, and `lastTextResponses` state variables inside `_agentLoop()` (or equivalent scope)
   - Add `VALIDATED_TOOLS` constant: `new Set(['edit_file', 'write_file', 'bash', 'read_file'])`

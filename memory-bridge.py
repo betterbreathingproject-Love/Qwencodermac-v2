@@ -1729,17 +1729,17 @@ _VALID_ASSIST_TASK_TYPES = frozenset({
 VALID_AGENT_TYPES = ["explore", "context-gather", "code-search", "requirements", "design", "implementation", "general"]
 
 ROUTE_TASK_PROMPT = (
-    "You are an orchestrator. Given a task title and optional description, "
-    "choose the single best agent type from this list:\n"
-    "- explore: understand/analyze/audit existing code or structure\n"
-    "- context-gather: find relevant files and dependencies\n"
-    "- code-search: search/grep/locate symbols or usages\n"
-    "- requirements: define or refine requirements/specs\n"
-    "- design: architecture, schema, interface, or API design\n"
-    "- implementation: write, edit, fix, build, upgrade, migrate, configure, install, render, parse, generate, register, initialize, or any hands-on coding task\n"
-    "- general: anything that doesn't fit the above\n\n"
-    "Respond with ONLY the agent type name, nothing else.\n\n"
-    "Task: {task}\n\nAgent type:"
+    "Classify this task into exactly one category. Reply with only the category name.\n\n"
+    "Categories: explore, context-gather, code-search, requirements, design, implementation, general\n\n"
+    "Rules:\n"
+    "- implementation: write, edit, fix, build, upgrade, migrate, install, create, add, update, render, parse\n"
+    "- explore: understand, analyze, audit, review existing code\n"
+    "- context-gather: find relevant files, dependencies\n"
+    "- code-search: search, grep, locate symbols\n"
+    "- requirements: define specs, user stories\n"
+    "- design: architecture, schema, API design\n"
+    "- general: anything else\n\n"
+    "Task: {task}\n\nCategory:"
 )
 
 
@@ -2267,8 +2267,14 @@ async def _handle_route_task(payload: dict) -> AssistResponse:
                 max_tokens=10, verbose=False
             )
         )
-        agent_type = response.strip().lower().split()[0] if response.strip() else "general"
-        if agent_type not in VALID_AGENT_TYPES:
+        agent_type = "general"
+        response_lower = response.strip().lower()
+        logger.warning(f"[assist/route_task] raw model output: {response_lower!r}")
+        # Search for any valid type anywhere in the response
+        for candidate in VALID_AGENT_TYPES:
+            if candidate in response_lower:
+                agent_type = candidate
+                break
             agent_type = "general"
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         logger.debug(f"[assist/route_task] {task_text[:60]!r} → {agent_type} ({elapsed_ms}ms)")
