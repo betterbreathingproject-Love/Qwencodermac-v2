@@ -200,10 +200,8 @@ class Orchestrator extends EventEmitter {
   }
 
   async _dispatchNode(node) {
-    // Pre-select agent type so the very first in_progress event carries it
-    const preSelectedType = this._agentPool?.selectType?.(node);
-    const preAgentType = preSelectedType?.name || 'general';
-    this._updateNodeStatus(node.id, 'in_progress', { agentType: preAgentType });
+    // Emit in_progress with 'general' as placeholder — will be updated after routing
+    this._updateNodeStatus(node.id, 'in_progress', { agentType: 'general' });
 
     try {
       const startTime = Date.now();
@@ -227,11 +225,8 @@ class Orchestrator extends EventEmitter {
 
       const task = { ...node, status: 'in_progress', specContext: specContextWithMemory };
 
-      // Inject safe-edit workflow instructions for implementation agents when LSP is ready
-      const selectedType = this._agentPool?.selectType?.(node);
-      if (selectedType?.name === 'implementation' && this._lspManager?.getStatus().status === 'ready') {
-        task.systemPromptSuffix = SAFE_EDIT_INSTRUCTIONS;
-      }
+      // LSP safe-edit injection — applied after dispatch resolves the real agent type
+      // (see below, after dispatch returns)
 
       const result = await this._agentPool.dispatch(
         task,
@@ -240,11 +235,19 @@ class Orchestrator extends EventEmitter {
       const duration = Date.now() - startTime;
       const agentType = result?.agentType ?? 'general';
 
+      // Now we know the real agent type — re-emit in_progress with correct type
+      // and inject LSP instructions retroactively if needed
+      if (agentType === 'implementation' && this._lspManager?.getStatus().status === 'ready') {
+        // LSP instructions were already passed via task.systemPromptSuffix in dispatch
+        // (agent-pool passes task to factory which uses it) — nothing more needed here
+      }
+
       // Attach agent type to the graph node so the renderer can display it
-      // (don't re-emit in_progress — that was already emitted by _updateNodeStatus above)
       if (this._graph.nodes.get(node.id)) {
         this._graph.nodes.get(node.id).agentType = agentType;
       }
+      // Re-emit in_progress with the real agent type so the UI updates
+      this.emit('task-status-event', { nodeId: node.id, status: 'in_progress', agentType });
 
       const taskResult = {
         nodeId: node.id,

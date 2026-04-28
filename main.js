@@ -147,9 +147,12 @@ ${taskList}
 {"route": "${exampleId}", "reason": "Condition X is met, proceeding with this option"}`
 }
 
+const { SAFE_EDIT_INSTRUCTIONS } = require('./orchestrator');
+
 const agentPool = new AgentPool({
   maxConcurrency: 1,
   getCalibrationProfile: ipcServer.getCalibrationProfile,
+  safeEditInstructions: SAFE_EDIT_INSTRUCTIONS,
   agentFactory: (task, agentType, context) => {
     const typeName = agentType?.name || 'general'
     const cwd = task.cwd || currentProject || process.cwd()

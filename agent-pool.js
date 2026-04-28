@@ -45,6 +45,7 @@ class AgentPool extends EventEmitter {
     this._agentFactory = options.agentFactory || null;
     this._getLspStatus = options.getLspStatus || null;
     this._getCalibrationProfile = options.getCalibrationProfile || null;
+    this._safeEditInstructions = options.safeEditInstructions || null;
 
     // Subagent type registry: Map<name, SubagentType>
     this._types = new Map();
@@ -224,6 +225,12 @@ class AgentPool extends EventEmitter {
     const timeout = agentType?.timeout ?? profile?.poolTimeout ?? this._defaultTimeout;
     const taskId = task.id || crypto.randomUUID();
     const agentTypeName = agentType?.name || 'general';
+
+    // Inject LSP safe-edit instructions when routed to implementation and LSP is ready
+    const lspStatus = typeof this._getLspStatus === 'function' ? this._getLspStatus() : null;
+    if (agentTypeName === 'implementation' && lspStatus === 'ready' && this._safeEditInstructions) {
+      task = { ...task, systemPromptSuffix: this._safeEditInstructions };
+    }
 
     // Emit agent-type-selected immediately so the UI can show which agent
     // is handling this task before the (potentially long) execution starts.
