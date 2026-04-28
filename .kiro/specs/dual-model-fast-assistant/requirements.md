@@ -9,6 +9,12 @@ Three capabilities are introduced:
 1. **Vision & screenshot offload** — image analysis is routed to the small model, producing a text description injected into the primary model's context, saving 10–15 seconds per image on a 30B primary model.
 2. **Proactive todo list generation** — the small model generates the initial todo list from the user's prompt in parallel while the primary model warms up, and subsequently infers todo status updates from tool results without requiring an explicit `update_todos` call from the primary model.
 3. **Web fetch summarization** — when `web_fetch` returns large HTML/text content, the small model summarizes it before it reaches the primary model, reducing context window usage.
+4. **Tool argument pre-validation** — before executing a tool call, the small model checks for likely failures (wrong `old_string`, broken bash commands) and rejects bad calls before they waste a round-trip.
+5. **Tool error diagnosis** — when a tool fails, the small model produces a one-sentence root cause diagnosis injected into the error message so the primary model immediately knows what to fix.
+6. **Git output summarization** — large `git status`, `git log`, and `git diff` outputs are summarized to key facts before reaching the primary model.
+7. **Search result ranking** — when `search_files` returns more than 15 matches, the small model ranks them by relevance to the current task and passes only the top 15.
+8. **Large file pre-processing** — when `read_file` returns a file over 8000 characters, the small model extracts the section most relevant to the current task.
+9. **Repetition detection** — the small model watches recent assistant responses for semantic loops and planning cycles, triggering corrective action faster than the existing string-matching heuristics.
 
 All three capabilities gracefully degrade to current behavior when no extraction model is loaded. The primary model's behavior is unchanged — it still sees the same context, just with pre-processed content substituted in.
 
@@ -23,9 +29,15 @@ All three capabilities gracefully degrade to current behavior when no extraction
 - **Todo_Bootstrap**: The capability that generates the initial todo list from the user's prompt using the Extraction_Model before the Primary_Model's first token.
 - **Todo_Watcher**: The sub-capability of Todo_Bootstrap that infers todo status updates from tool results using the Extraction_Model.
 - **Fetch_Summarizer**: The capability that summarizes large `web_fetch` results using the Extraction_Model before they are added to the Primary_Model's context.
-- **Assist_Task**: A single unit of work dispatched to the Assist_Endpoint. Has a `task_type` field: `"vision"`, `"todo_bootstrap"`, `"todo_watch"`, or `"fetch_summarize"`.
-- **Degraded_Mode**: The operating mode when no Extraction_Model is loaded. All three capabilities fall back to current behavior silently.
+- **Assist_Task**: A single unit of work dispatched to the Assist_Endpoint. Has a `task_type` field: `"vision"`, `"todo_bootstrap"`, `"todo_watch"`, `"fetch_summarize"`, `"tool_validate"`, `"error_diagnose"`, `"git_summarize"`, `"rank_search"`, `"extract_section"`, or `"detect_repetition"`.
+- **Degraded_Mode**: The operating mode when no Extraction_Model is loaded. All capabilities fall back to current behavior silently.
 - **MLX_Serialization**: The constraint that MLX serializes all GPU operations on Apple Silicon. The Extraction_Model and Primary_Model share the Metal GPU and cannot run truly simultaneously; assist tasks run in the gaps between Primary_Model inference turns.
+- **Tool_Validator**: The capability that pre-validates tool arguments using the Extraction_Model before execution.
+- **Error_Diagnostician**: The capability that produces a one-sentence root cause diagnosis when a tool call fails.
+- **Git_Summarizer**: The capability that summarizes large git command outputs before they reach the Primary_Model.
+- **Search_Ranker**: The capability that ranks `search_files` results by relevance to the current task.
+- **File_Extractor**: The capability that extracts the relevant section of a large file before it reaches the Primary_Model.
+- **Repetition_Detector**: The capability that detects semantic loops and planning cycles in the Primary_Model's recent responses.
 
 ---
 
@@ -178,3 +190,110 @@ All three capabilities gracefully degrade to current behavior when no extraction
 4. THE fetch summarization threshold (default 4000 characters) SHALL be defined as a named constant `FETCH_SUMMARIZE_THRESHOLD` in the Assist_Client module.
 5. THE vision description maximum length (default 2000 characters) SHALL be defined as a named constant `VISION_MAX_CHARS` in the Assist_Client module.
 6. THE todo bootstrap and todo watch capabilities SHALL each be independently disableable via boolean constants `TODO_BOOTSTRAP_ENABLED` and `TODO_WATCH_ENABLED` in the Assist_Client module, defaulting to `true`.
+
+---
+
+### Requirement 11: Tool Argument Pre-Validation
+
+**User Story:** As a user of QwenCoder Mac Studio, I want the fast model to catch bad tool arguments before they're executed so that the agent doesn't waste a full round-trip discovering a tool call was malformed.
+
+#### Acceptance Criteria
+
+1. BEFORE executing any tool call, THE Agent_Loop SHALL call `assistValidateTool(toolName, toolArgs, recentContext)` in a blocking manner (awaited) when the Extraction_Model is loaded.
+2. THE Assist_Endpoint's `tool_validate` handler SHALL check tool-specific preconditions: for `edit_file` it SHALL verify the `old_string` is likely present in the file given recent context; for `bash` it SHALL flag obviously broken commands (unclosed quotes, missing required flags); for `write_file` it SHALL verify the `path` field is non-empty and the `content` field is present.
+3. WHEN `assistValidateTool()` returns `{ valid: false, reason: string }`, THE Agent_Loop SHALL NOT execute the tool and SHALL instead inject a system message containing the reason, then re-prompt the Primary_Model to correct the call.
+4. WHEN `assistValidateTool()` returns `{ valid: true }` or `null` (Degraded_Mode or error), THE Agent_Loop SHALL execute the tool normally.
+5. THE `assistValidateTool()` call SHALL complete within 10 seconds; if it times out, THE Agent_Loop SHALL proceed with tool execution as if the result were `null`.
+6. THE Assist_Client SHALL expose `assistValidateTool(toolName, toolArgs, recentContext)` as an async function returning `{ valid: boolean, reason?: string } | null`.
+7. THE validation SHALL only apply to tools with high failure rates: `edit_file`, `write_file`, `bash`, and `read_file`. All other tools SHALL be executed without validation.
+
+---
+
+### Requirement 12: Tool Error Diagnosis
+
+**User Story:** As a user of QwenCoder Mac Studio, I want the fast model to diagnose tool errors immediately so that the primary model understands what went wrong without having to reason through raw error text.
+
+#### Acceptance Criteria
+
+1. WHEN a tool call returns an error result (`result.error` is truthy), THE Agent_Loop SHALL call `assistDiagnoseError(toolName, toolArgs, errorMessage, recentContext)` before appending the tool result to the conversation.
+2. WHEN `assistDiagnoseError()` returns a non-null diagnosis string, THE Agent_Loop SHALL prepend it to the tool error content in the format: `[Fast model diagnosis: {diagnosis}]\n\n{originalError}`.
+3. WHEN `assistDiagnoseError()` returns `null` (Degraded_Mode or error), THE Agent_Loop SHALL append the original error unchanged.
+4. THE Assist_Endpoint's `error_diagnose` handler SHALL produce a single sentence (≤ 100 tokens) identifying the root cause and suggesting the most likely fix (e.g. "The old_string was not found — the file may have been modified. Re-read the file before retrying edit_file.").
+5. THE `assistDiagnoseError()` call SHALL be awaited before the tool result is appended to the conversation, so the Primary_Model sees the diagnosis in the same message.
+6. THE `assistDiagnoseError()` call SHALL complete within 15 seconds; if it times out, THE Agent_Loop SHALL append the original error unchanged.
+7. THE Assist_Client SHALL expose `assistDiagnoseError(toolName, toolArgs, errorMessage, recentContext)` as an async function returning `string | null`.
+
+---
+
+### Requirement 13: Git Diff & Log Summarization
+
+**User Story:** As a user of QwenCoder Mac Studio, I want large git status and log outputs summarized before they reach the primary model so that the context window is not wasted on verbose git output.
+
+#### Acceptance Criteria
+
+1. WHEN the `bash` tool executes a command matching `git status`, `git log`, `git diff`, or `git show` and the result exceeds 2000 characters, THE Agent_Loop SHALL call `assistGitSummarize(command, rawOutput)` before appending the result to the conversation.
+2. WHEN `assistGitSummarize()` returns a non-null summary string, THE Agent_Loop SHALL replace the raw git output with: `[Git summary by fast model — original: {charCount} chars]\n\n{summary}`.
+3. WHEN `assistGitSummarize()` returns `null` (Degraded_Mode or error), THE Agent_Loop SHALL use the original git output unchanged.
+4. THE Assist_Endpoint's `git_summarize` handler SHALL produce a summary that preserves: branch name, number of files changed, file names, commit hashes (short form), commit messages, and any merge conflicts or untracked files.
+5. THE git summarization threshold of 2000 characters SHALL be defined as a named constant `GIT_SUMMARIZE_THRESHOLD` in the Assist_Client module.
+6. THE Assist_Client SHALL expose `assistGitSummarize(command, rawOutput)` as an async function returning `string | null`.
+
+---
+
+### Requirement 14: Search Result Ranking
+
+**User Story:** As a user of QwenCoder Mac Studio, I want the fast model to rank grep search results by relevance so that the primary model only sees the most useful matches rather than all 50.
+
+#### Acceptance Criteria
+
+1. WHEN the `search_files` tool returns more than 15 results, THE Agent_Loop SHALL call `assistRankSearchResults(pattern, results, taskContext)` before appending the tool result to the conversation.
+2. WHEN `assistRankSearchResults()` returns a non-null ranked array, THE Agent_Loop SHALL replace the raw search output with the top 15 results from the ranked array, prefixed with `[Ranked by fast model — showing 15 of {total} matches]\n\n`.
+3. WHEN `assistRankSearchResults()` returns `null` (Degraded_Mode or error), THE Agent_Loop SHALL use the original search output unchanged.
+4. THE Assist_Endpoint's `rank_search` handler SHALL rank results by: exact match to the task context (highest), proximity to recently modified files (medium), and match frequency (lowest).
+5. THE search ranking threshold of 15 results SHALL be defined as a named constant `SEARCH_RANK_THRESHOLD` in the Assist_Client module.
+6. THE Assist_Client SHALL expose `assistRankSearchResults(pattern, results, taskContext)` as an async function returning `string[] | null`.
+
+---
+
+### Requirement 15: Large File Pre-Processing
+
+**User Story:** As a user of QwenCoder Mac Studio, I want the fast model to extract the relevant section of a large file before it reaches the primary model so that the context window is used for the code that matters.
+
+#### Acceptance Criteria
+
+1. WHEN the `read_file` tool returns a result exceeding 8000 characters AND the Agent_Loop has a current task context (the most recent user message or todo item), THE Agent_Loop SHALL call `assistExtractRelevantSection(filePath, fileContent, taskContext)` before appending the result to the conversation.
+2. WHEN `assistExtractRelevantSection()` returns a non-null extracted section string, THE Agent_Loop SHALL replace the full file content with: `[Relevant section extracted by fast model — file: {charCount} chars total]\n\n{extractedSection}`.
+3. WHEN `assistExtractRelevantSection()` returns `null` (Degraded_Mode or error), THE Agent_Loop SHALL use the original file content unchanged (subject to existing truncation limits).
+4. THE Assist_Endpoint's `extract_section` handler SHALL return the contiguous block of code most relevant to the task context, including ±20 lines of surrounding context.
+5. THE file pre-processing threshold of 8000 characters SHALL be defined as a named constant `FILE_EXTRACT_THRESHOLD` in the Assist_Client module.
+6. THE Assist_Client SHALL expose `assistExtractRelevantSection(filePath, fileContent, taskContext)` as an async function returning `string | null`.
+7. THE `assistExtractRelevantSection()` call SHALL complete within 20 seconds; if it times out, THE Agent_Loop SHALL use the original file content unchanged.
+
+---
+
+### Requirement 16: Repetition Detection
+
+**User Story:** As a user of QwenCoder Mac Studio, I want the fast model to detect when the primary model is stuck in a loop so that corrective action is taken faster and more accurately than the current string-matching heuristics.
+
+#### Acceptance Criteria
+
+1. AFTER each Primary_Model text response (non-tool-call turn), THE Agent_Loop SHALL call `assistDetectRepetition(recentResponses)` where `recentResponses` is the last 3 assistant text responses, in a fire-and-forget manner.
+2. WHEN `assistDetectRepetition()` returns `{ repeating: true, reason: string }`, THE Agent_Loop SHALL inject a system message containing the reason and trigger the existing loop-breaking logic (context reset and forced tool use).
+3. WHEN `assistDetectRepetition()` returns `{ repeating: false }` or `null` (Degraded_Mode or error), THE Agent_Loop SHALL continue normally.
+4. THE Assist_Endpoint's `detect_repetition` handler SHALL identify repetition patterns including: semantic similarity (same intent expressed differently), planning loops (repeated "I will..." without action), and tool retry loops (same tool called with identical arguments).
+5. THE existing string-matching repetition detection in `direct-bridge.js` SHALL remain active as a fallback when the Extraction_Model is not loaded or when `assistDetectRepetition()` returns `null`.
+6. THE Assist_Client SHALL expose `assistDetectRepetition(recentResponses)` as an async function returning `{ repeating: boolean, reason?: string } | null`.
+7. THE `assistDetectRepetition()` call SHALL be fire-and-forget — the Agent_Loop SHALL NOT await its result before proceeding.
+
+---
+
+### Requirement 17: Updated Assist Endpoint Task Types
+
+**User Story:** As a developer maintaining QwenCoder Mac Studio, I want the Assist_Endpoint to support all task types introduced in Requirements 11–16 so that the backend handles all offloaded capabilities through a single endpoint.
+
+#### Acceptance Criteria
+
+1. THE Assist_Endpoint's accepted `task_type` values SHALL be extended to include: `"tool_validate"`, `"error_diagnose"`, `"git_summarize"`, `"rank_search"`, `"extract_section"`, and `"detect_repetition"`.
+2. THE Assist_Client module SHALL be extended with the functions defined in Requirements 11–16: `assistValidateTool`, `assistDiagnoseError`, `assistGitSummarize`, `assistRankSearchResults`, `assistExtractRelevantSection`, and `assistDetectRepetition`.
+3. THE `FETCH_SUMMARIZE_THRESHOLD`, `VISION_MAX_CHARS`, `TODO_BOOTSTRAP_ENABLED`, `TODO_WATCH_ENABLED`, `GIT_SUMMARIZE_THRESHOLD`, `SEARCH_RANK_THRESHOLD`, and `FILE_EXTRACT_THRESHOLD` constants SHALL all be defined at the top of the Assist_Client module for easy tuning.
+4. ALL new capabilities (Requirements 11–16) SHALL degrade gracefully per Requirement 8 — returning `null` or safe defaults when the Extraction_Model is not loaded.
