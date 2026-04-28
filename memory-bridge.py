@@ -1726,7 +1726,7 @@ _VALID_ASSIST_TASK_TYPES = frozenset({
 })
 
 # Legacy route_task support (kept for backward compatibility)
-VALID_AGENT_TYPES = ["explore", "context-gather", "code-search", "requirements", "design", "debug", "implementation", "general"]
+VALID_AGENT_TYPES = ["debug", "explore", "context-gather", "code-search", "requirements", "design", "implementation", "general"]
 
 ROUTE_TASK_PROMPT = (
     "Classify this task into exactly one category. Reply with only the category name.\n\n"
@@ -2271,12 +2271,11 @@ async def _handle_route_task(payload: dict) -> AssistResponse:
         agent_type = "general"
         response_lower = response.strip().lower()
         logger.debug(f"[assist/route_task] raw model output: {response_lower!r}")
-        # Search for any valid type anywhere in the response
+        # Search for any valid type anywhere in the response — first match wins
         for candidate in VALID_AGENT_TYPES:
             if candidate in response_lower:
                 agent_type = candidate
                 break
-            agent_type = "general"
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         logger.debug(f"[assist/route_task] {task_text[:60]!r} → {agent_type} ({elapsed_ms}ms)")
         return AssistResponse(result_data={"agent_type": agent_type}, elapsed_ms=elapsed_ms, output_tokens=len(response.split()))
