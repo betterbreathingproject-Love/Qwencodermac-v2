@@ -36,7 +36,7 @@ This plan implements taosmd as a persistent memory layer for QwenCoder Mac Studi
     - **Property 16: Secret filtering on ingest**
     - Test that text containing API keys, bearer tokens, AWS credentials has secrets replaced with `[REDACTED]` and original values are absent
     - File: `test/memory-bridge.property.test.js`
-    - **Validates: Requirements 15.1, 15.2, 15.4**
+    - **Validates: Requirements 17.1, 17.2, 17.4**
 
 - [ ] 2. Implement Knowledge Graph API endpoints
   - [ ] 2.1 Implement `POST /memory/kg/triples` endpoint
@@ -92,7 +92,7 @@ This plan implements taosmd as a persistent memory layer for QwenCoder Mac Studi
     - Add: embed text using ONNX MiniLM, apply secret filtering before embedding, store via VectorMemory.add()
     - Search: accept query, top_k (default 10), hybrid flag (default true); combine semantic cosine similarity with keyword overlap boosting when hybrid=true
     - Return HTTP 503 if ONNX model not found
-    - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 15.4_
+    - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 17.4_
 
   - [ ] 4.2 Implement `POST /memory/retrieve` unified retrieval endpoint
     - Accept query, optional agent_name, top_k (default 10), mode ("fast" or "thorough", default "fast")
