@@ -77,12 +77,25 @@ function startServer(port, appDir, mainWindow) {
 function stopServer() {
   _serverStopping = true
   if (serverProcess) {
-    try { serverProcess.kill('SIGTERM') } catch {}
-    // Force kill after 2s if still alive
     const proc = serverProcess
-    setTimeout(() => { try { proc.kill('SIGKILL') } catch {} }, 2000)
     serverProcess = null
+    try { proc.kill('SIGTERM') } catch {}
+    // Force kill after 2s if still alive
+    setTimeout(() => { try { proc.kill('SIGKILL') } catch {} }, 2000)
   }
+}
+
+/**
+ * Restart the server (stop then start). Resets the _serverStopping flag
+ * so auto-restart logic works correctly after the new process is spawned.
+ */
+function restartServer(port, appDir, mainWindow) {
+  stopServer()
+  // Give the old process time to release the port before starting fresh
+  setTimeout(() => {
+    _serverStopping = false
+    startServer(port, appDir, mainWindow)
+  }, 1500)
 }
 
 /**
@@ -195,6 +208,12 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
 
   ipcMain.handle('server-stop', () => { stopServer(); return { ok: true } })
 
+  ipcMain.handle('server-restart', async () => {
+    restartServer(serverPort(), appDir, getMainWindow())
+    const ok = await waitForServer(serverUrl())
+    return { ok }
+  })
+
   ipcMain.handle('server-status', async () => {
     return new Promise(r => {
       const req = http.get(`${serverUrl()}/admin/status`, res => {
@@ -242,4 +261,4 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
   ipcMain.handle('get-server-url', () => serverUrl())
 }
 
-module.exports = { register, startServer, stopServer, waitForServer, killStaleServer, findPython, runCalibration, getCalibrationProfile, isCalibrating, clearCalibration }
+module.exports = { register, startServer, stopServer, restartServer, waitForServer, killStaleServer, findPython, runCalibration, getCalibrationProfile, isCalibrating, clearCalibration }
