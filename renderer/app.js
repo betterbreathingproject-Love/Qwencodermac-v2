@@ -3926,6 +3926,8 @@ function _calcTks(tokens, startTime) {
 }
 
 // ── unified agent stats bar (above text input) ───────────────────────────────
+let _agentStartTimestamp = null // tracks when the current agent run started
+
 function updateAgentStatsBar(opts = {}) {
   const bar = document.getElementById('agentStats')
   if (!bar) return
@@ -3935,9 +3937,13 @@ function updateAgentStatsBar(opts = {}) {
   // Always show the stats bar when agent is active
   if (state === 'idle' && !inputTokens && !outputTokens) {
     bar.style.display = 'none'
+    _agentStartTimestamp = null
     return
   }
   bar.style.display = 'flex'
+
+  // Track when agent started
+  if (state === 'initializing') _agentStartTimestamp = Date.now()
 
   // State indicator chip
   const stateMap = {
@@ -3982,6 +3988,19 @@ function updateAgentStatsBar(opts = {}) {
   const tksDisplay = tks != null && tks !== '—' ? ' · ' + tks + ' tk/s' : ''
   html += `<div class="stat-chip accent"><span class="stat-label">Output</span><span class="stat-val">${outputTokens || 0} tok${tksDisplay}</span></div>`
 
+  // ── Total Context chip with usage bar ──────────────────────────────────────
+  const totalTokens = (inputTokens || 0) + (outputTokens || 0)
+  if (totalTokens > 0) {
+    // Determine context window from calibration profile or fallback to 84K default
+    const ctxWindow = (_calibrationProfile && _calibrationProfile.metrics && _calibrationProfile.metrics.context_window)
+      ? _calibrationProfile.metrics.context_window
+      : 84000
+    const ctxPct = Math.min(100, Math.round((totalTokens / ctxWindow) * 100))
+    const ctxCls = ctxPct >= 85 ? 'ctx-danger' : ctxPct >= 60 ? 'ctx-warn' : 'ctx-ok'
+    const ctxTooltip = `${totalTokens.toLocaleString()} / ${ctxWindow.toLocaleString()} tokens (${ctxPct}% used)`
+    html += `<div class="stat-chip context-chip ${ctxCls}" title="${ctxTooltip}"><span class="stat-label">Context</span><span class="stat-val">${_formatTokenCount(totalTokens)} / ${_formatTokenCount(ctxWindow)}</span><div class="progress-mini"><div class="progress-mini-fill" style="width:${ctxPct}%"></div></div></div>`
+  }
+
   // Tool count if available
   if (toolCount != null && toolCount > 0) {
     html += `<div class="stat-chip"><span class="stat-label">Tools</span><span class="stat-val">🔧 ${toolCount}</span></div>`
@@ -3990,6 +4009,12 @@ function updateAgentStatsBar(opts = {}) {
   // Peak memory if available
   if (peakMemory != null) {
     html += `<div class="stat-chip"><span class="stat-label">Peak VRAM</span><span class="stat-val">${peakMemory} GB</span></div>`
+  }
+
+  // Elapsed time chip
+  if (_agentStartTimestamp) {
+    const elapsed = Date.now() - _agentStartTimestamp
+    html += `<div class="stat-chip"><span class="stat-label">Elapsed</span><span class="stat-val">${_formatElapsed(elapsed)}</span></div>`
   }
 
   // Compaction stats chip
@@ -4011,6 +4036,25 @@ function updateAgentStatsBar(opts = {}) {
   }
 
   bar.innerHTML = html
+}
+
+// Format token count for compact display (e.g. 84000 → "84K")
+function _formatTokenCount(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
+  if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'K'
+  return String(n)
+}
+
+// Format elapsed milliseconds as human-readable duration
+function _formatElapsed(ms) {
+  const secs = Math.floor(ms / 1000)
+  if (secs < 60) return secs + 's'
+  const mins = Math.floor(secs / 60)
+  const remSecs = secs % 60
+  if (mins < 60) return mins + 'm ' + (remSecs > 0 ? remSecs + 's' : '')
+  const hrs = Math.floor(mins / 60)
+  const remMins = mins % 60
+  return hrs + 'h ' + remMins + 'm'
 }
 
 // ── persistent bottom status bar — REMOVED ───────────────────────────────────
