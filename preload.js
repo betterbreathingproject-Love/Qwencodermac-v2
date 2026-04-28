@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('app', {
   // server
   serverStart:    ()        => ipcRenderer.invoke('server-start'),
   serverStop:     ()        => ipcRenderer.invoke('server-stop'),
+  serverRestart:  ()        => ipcRenderer.invoke('server-restart'),
   serverStatus:   ()        => ipcRenderer.invoke('server-status'),
   loadModel:      (p)       => ipcRenderer.invoke('load-model', p),
   chat:           (p)       => ipcRenderer.invoke('chat', p),
