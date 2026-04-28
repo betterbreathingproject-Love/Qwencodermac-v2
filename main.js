@@ -252,13 +252,31 @@ ipcLsp.register(ipcMain, ctx)
 ipcCalibration.register(ipcMain, { getCalibrationProfile: ipcServer.getCalibrationProfile, isCalibrating: ipcServer.isCalibrating })
 
 // ── IPC: Qwen Code agent ─────────────────────────────────────────────────────
+// Memory client for small-model routing (gracefully degrades if unavailable)
+let _memoryClientForRouting = null
+try { _memoryClientForRouting = require('./memory-client.js') } catch (_) {}
+
 ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, model, images, conversationHistory, samplingParams, taskGraphPath }) => {
   if (!qwenBridge) return { error: 'not ready' }
   if (typeof prompt !== 'string' || !prompt.trim()) return { error: 'prompt is required' }
-  // Apply user-selected agent role (controls LSP tool set and system prompt)
-  if (agentRole && agentRole !== qwenBridge._agentRole) {
-    qwenBridge._agentRole = agentRole
+
+  // Use small model to pick the best agent role for this prompt (if no explicit role given)
+  let resolvedRole = agentRole || 'general'
+  if (!agentRole && _memoryClientForRouting?.assistRouteTask) {
+    try {
+      const routed = await _memoryClientForRouting.assistRouteTask(prompt.slice(0, 200))
+      if (routed) resolvedRole = routed
+    } catch (_) { /* degrade silently */ }
   }
+
+  // Apply resolved agent role
+  if (resolvedRole !== qwenBridge._agentRole) {
+    qwenBridge._agentRole = resolvedRole
+  }
+
+  // Emit agent-type event so the renderer can show which role was selected
+  mainWindow?.webContents.send('qwen-event', { type: 'agent-type', agentType: resolvedRole })
+
   qwenBridge.run({ prompt, cwd: cwd || currentProject, permissionMode, model, images, conversationHistory, samplingParams, taskGraphPath }).catch(() => {})
   return { ok: true }
 })

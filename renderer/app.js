@@ -1085,6 +1085,9 @@ async function sendAgentMode(prompt, opts = {}) {
   window.app.onQwenEvent(ev => {
     if (agentFinished && ev.type !== 'session-end') return
     switch(ev.type) {
+      case 'agent-type':
+        if (ev.agentType && ev.agentType !== 'general') _currentAgentType = ev.agentType
+        break
       case 'session-start':
         setActivity('🤖 Agent running in ' + esc(ev.cwd||'.') + ' <span class="activity-dot">●</span>')
         startPromptProgress()
@@ -1514,6 +1517,9 @@ async function sendAgentMode(prompt, opts = {}) {
 
           window.app.onQwenEvent(ev => {
             switch (ev.type) {
+              case 'agent-type':
+                if (ev.agentType && ev.agentType !== 'general') _currentAgentType = ev.agentType
+                break
               case 'session-start': {
                 // Find the current in-progress task from the todo panel or task graph
                 const activeTask = currentTodos.find(t => t.status === 'in_progress')
@@ -3198,6 +3204,13 @@ async function _launchOrchestrator(tasksPath, taskCount) {
 
   window.app.onQwenEvent(ev => {
     switch (ev.type) {
+      case 'agent-type': {
+        // Small model routed this prompt — set agent type before session-start fires
+        if (ev.agentType && ev.agentType !== 'general') {
+          _currentAgentType = ev.agentType
+        }
+        break
+      }
       case 'session-start': {
         const activeTask = currentTodos.find(t => t.status === 'in_progress')
         const agentType = _currentAgentType
