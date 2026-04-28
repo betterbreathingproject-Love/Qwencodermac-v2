@@ -276,6 +276,10 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .msg-text p, .msg-text br + br { margin: 0; }
 .msg-text > br:first-child { display: none; }
 
+/* Fast model instant reply — shown before the main agent starts */
+.fast-reply { display: block; color: #a78bfa; font-size: 12.5px; font-style: italic; opacity: 0.85; margin-bottom: 6px; }
+.fast-reply::before { content: '⚡ '; font-style: normal; }
+
 /* preview button in chat */
 .btn-preview-chat { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; padding: 8px 16px; background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.3); color: #34d399; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
 .btn-preview-chat:hover { background: rgba(52,211,153,0.2); border-color: rgba(52,211,153,0.5); }

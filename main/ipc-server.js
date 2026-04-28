@@ -277,6 +277,19 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
 
   ipcMain.handle('get-server-url', () => serverUrl())
 
+  // ── Fast model chat reply ─────────────────────────────────────────────────
+  ipcMain.handle('assist-chat-reply', async (event, userMessage, agentRole) => {
+    try {
+      const memClient = require('../memory-client.js')
+      const result = await memClient._httpRequest('POST', '/memory/assist', {
+        task_type: 'chat_reply',
+        payload: { user_message: userMessage || '', agent_role: agentRole || 'general' }
+      }, 12000)
+      if (!result || result.degraded) return null
+      return result.result || null
+    } catch (_) { return null }
+  })
+
   // ── Memory extraction model IPC handlers ─────────────────────────────────
   ipcMain.handle('memory-extractor-load', async (event, modelPath) => {
     try {

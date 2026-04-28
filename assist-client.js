@@ -251,6 +251,20 @@ async function assistDetectRepetition(recentResponses) {
 // Exports
 // ---------------------------------------------------------------------------
 
+/**
+ * Generate a short instant acknowledgement from the fast model before the
+ * main agent starts its tool loop. Gives the user immediate feedback.
+ * @param {string} userMessage
+ * @param {string} agentRole
+ * @returns {Promise<string|null>}
+ */
+async function assistChatReply(userMessage, agentRole) {
+  try {
+    const res = await _assistRequest('chat_reply', { user_message: userMessage, agent_role: agentRole }, 12000)
+    return (res && typeof res.result === 'string' && res.result.length > 0) ? res.result : null
+  } catch (_) { return null }
+}
+
 module.exports = {
   // Functions
   assistVision,
@@ -263,6 +277,7 @@ module.exports = {
   assistRankSearchResults,
   assistExtractRelevantSection,
   assistDetectRepetition,
+  assistChatReply,
   // Constants
   FETCH_SUMMARIZE_THRESHOLD,
   VISION_MAX_CHARS,

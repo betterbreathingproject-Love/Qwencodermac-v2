@@ -1723,6 +1723,7 @@ _VALID_ASSIST_TASK_TYPES = frozenset({
     "extract_section",
     "detect_repetition",
     "route_task",
+    "chat_reply",
 })
 
 # Legacy route_task support (kept for backward compatibility)
@@ -2342,6 +2343,63 @@ async def _handle_route_task(payload: dict) -> AssistResponse:
         return AssistResponse(result_data={"agent_type": "general"}, elapsed_ms=elapsed_ms, output_tokens=0)
 
 
+async def _handle_chat_reply(payload: dict) -> AssistResponse:
+    """2.11 Chat reply — generate a short, friendly acknowledgement before the main agent starts.
+
+    Uses the fast 0.8B model to immediately respond to the user's message with
+    1-2 sentences: what it understood + what it's about to do. This gives the
+    user instant feedback while the 35B model loads the context and starts its
+    tool loop.
+    """
+    import time, asyncio
+    t0 = time.monotonic()
+
+    user_message: str = payload.get("user_message", "")
+    agent_role: str = payload.get("agent_role", "general")
+
+    if not user_message or _extract_model is None or _extract_processor is None:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result=None, elapsed_ms=elapsed_ms, output_tokens=0)
+
+    try:
+        import mlx_lm
+
+        prompt = (
+            f"You are a helpful coding assistant giving a brief acknowledgement. "
+            f"The user just sent a message and the main agent is about to start working. "
+            f"Reply in 1-2 short sentences: confirm what you understood and what will happen next. "
+            f"Be direct and friendly. No markdown, no lists, no code blocks.\n\n"
+            f"User: {user_message[:400]}\n\n"
+            f"Brief acknowledgement:"
+        )
+
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: mlx_lm.generate(
+                _extract_model, _extract_processor,
+                prompt=prompt,
+                max_tokens=80,
+                verbose=False,
+            )
+        )
+
+        reply = response.strip()
+        # Strip any accidental role prefixes the model might add
+        for prefix in ("Brief acknowledgement:", "Assistant:", "AI:", "Response:"):
+            if reply.startswith(prefix):
+                reply = reply[len(prefix):].strip()
+
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        logger.debug(f"[chat_reply] {elapsed_ms}ms: {reply[:80]!r}")
+        return AssistResponse(result=reply if reply else None, elapsed_ms=elapsed_ms, output_tokens=len(reply.split()))
+
+    except Exception as e:
+        logger.warning(f"[_handle_chat_reply] failed: {e}")
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result=None, elapsed_ms=elapsed_ms, output_tokens=0)
+
+
 _ASSIST_HANDLERS = {
     "vision": _handle_vision,
     "todo_bootstrap": _handle_todo_bootstrap,
@@ -2354,6 +2412,7 @@ _ASSIST_HANDLERS = {
     "extract_section": _handle_extract_section,
     "detect_repetition": _handle_detect_repetition,
     "route_task": _handle_route_task,
+    "chat_reply": _handle_chat_reply,
 }
 
 

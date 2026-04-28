@@ -161,6 +161,7 @@ contextBridge.exposeInMainWorld('app', {
   loadExtractionModel:  (modelPath) => ipcRenderer.invoke('memory-extractor-load', modelPath),
   unloadExtractionModel:()          => ipcRenderer.invoke('memory-extractor-unload'),
   getMemoryStatus:      ()          => ipcRenderer.invoke('memory-status'),
+  assistChatReply:      (msg, role) => ipcRenderer.invoke('assist-chat-reply', msg, role),
 
   // Mini App
   miniappStart:      ()     => ipcRenderer.invoke('miniapp-start'),

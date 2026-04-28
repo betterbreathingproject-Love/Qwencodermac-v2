@@ -1010,6 +1010,17 @@ async function sendAgentMode(prompt, opts = {}) {
   </div>`)
   scrollOutput()
 
+  // Fast model instant acknowledgement — fire immediately, don't await the agent
+  // Shows a short reply from the 0.8B while the 35B loads context and starts its loop
+  window.app.assistChatReply(prompt, agentRole || 'general').then(reply => {
+    if (!reply) return
+    const textEl = document.getElementById(respId + '-text')
+    if (textEl && !textEl.textContent) {
+      textEl.innerHTML = `<span class="fast-reply">${esc(reply)}</span>`
+      scrollOutput()
+    }
+  }).catch(() => {})
+
   let lastText = '', lastThinking = '', tokenCount = 0, startTime = null
   let agentFinished = false
   let lastToolName = ''
@@ -1072,6 +1083,9 @@ async function sendAgentMode(prompt, opts = {}) {
       _mdRenderTimer = null
       if (_mdDirty) {
         _mdDirty = false
+        // Clear the fast-reply placeholder once real text starts streaming
+        const textEl = document.getElementById(respId+'-text')
+        if (textEl?.querySelector('.fast-reply')) textEl.innerHTML = ''
         document.getElementById(respId+'-text').innerHTML = renderMd(lastText, true) + '<span class="cursor">▌</span>'
         scrollOutput()
       }
