@@ -1168,6 +1168,23 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         // Block obviously dangerous commands
         const dangerous = /\b(rm\s+-rf\s+\/|mkfs|dd\s+if=|:(){ :|fork\s*bomb)\b/i
         if (dangerous.test(args.command)) return { error: 'Command blocked for safety' }
+
+        // Detect background commands (trailing & or nohup) — these never exit so we
+        // run them detached and return immediately with a status message.
+        const isBackground = /(?:^|;|\|)\s*(?:nohup\s+)?.+\s*&\s*$/.test(args.command.trim())
+        if (isBackground) {
+          // Strip the trailing & and run detached so the agent loop doesn't hang
+          const cmd = args.command.trim().replace(/&\s*$/, '').trim()
+          const { spawn: spawnBg } = require('child_process')
+          const bgProc = spawnBg('bash', ['-c', cmd], {
+            cwd,
+            env: { ...process.env },
+            stdio: 'ignore',
+            detached: true,
+          })
+          bgProc.unref()
+          return { result: `Background process started (PID ${bgProc.pid}): ${cmd.slice(0, 100)}` }
+        }
         return new Promise((resolve) => {
           let stdout = ''
           let stderr = ''

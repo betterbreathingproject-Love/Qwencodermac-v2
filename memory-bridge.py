@@ -2361,3 +2361,112 @@ async def assist(req: AssistRequest):
     except Exception as e:
         logger.error(f"[assist/{req.task_type}] failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Assist Endpoint (fast assistant / orchestrator routing) ───────────────────
+
+class AssistRequest(BaseModel):
+    task_type: str
+    payload: dict
+    timeout_ms: Optional[int] = 60000
+
+
+@router.post("/assist")
+async def assist(req: AssistRequest):
+    """Lightweight assist endpoint for the dual-model fast assistant.
+
+    Routes task_type to the appropriate handler using the extraction model.
+    Returns HTTP 503 with {"degraded": true} when no extraction model is loaded.
+    Currently implements: route_task (orchestrator agent type selection).
+    """
+    if _extract_model is None or _extract_processor is None:
+        return {"degraded": True, "reason": "no extraction model loaded"}
+
+    VALID_TASK_TYPES = {
+        "route_task", "vision", "todo_bootstrap", "todo_watch", "fetch_summarize",
+        "tool_validate", "error_diagnose", "git_summarize", "rank_search",
+        "extract_section", "detect_repetition",
+    }
+
+    if req.task_type not in VALID_TASK_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unknown task_type: {req.task_type!r}")
+
+    import asyncio as _asyncio_assist
+    try:
+        result = await _asyncio_assist.wait_for(
+            _assist_with_semaphore(req.task_type, req.payload),
+            timeout=req.timeout_ms / 1000.0,
+        )
+        return result
+    except _asyncio_assist.TimeoutError:
+        raise HTTPException(status_code=504, detail=f"Assist task timed out after {req.timeout_ms}ms")
+    except Exception as e:
+        logger.error(f"Assist task {req.task_type!r} failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _assist_with_semaphore(task_type: str, payload: dict) -> dict:
+    """Run an assist handler under the extraction semaphore."""
+    import time
+    start = time.monotonic()
+
+    async with _get_extraction_semaphore():
+        if task_type == "route_task":
+            result_data, output_tokens = await _handle_route_task(payload)
+        else:
+            # Placeholder for future handlers — return degraded for unimplemented types
+            return {"degraded": True, "reason": f"handler not yet implemented: {task_type}"}
+
+    elapsed_ms = int((time.monotonic() - start) * 1000)
+    logger.debug(f"[assist] task_type={task_type} elapsed={elapsed_ms}ms tokens={output_tokens}")
+    return {
+        "result": None,
+        "result_data": result_data,
+        "elapsed_ms": elapsed_ms,
+        "output_tokens": output_tokens,
+    }
+
+
+async def _handle_route_task(payload: dict):
+    """Use the extraction model to classify a task and return the best agent type.
+
+    Returns (result_data, output_tokens) where result_data = {"agent_type": str}.
+    Falls back to "general" on any parse failure.
+    """
+    task_text = payload.get("task", "")
+    if not task_text:
+        return {"agent_type": "general"}, 0
+
+    VALID_AGENT_TYPES = {"explore", "context-gather", "code-search", "implementation", "general", "requirements", "design"}
+
+    prompt = (
+        f"You are a task router. Given a task description, output ONLY the single best agent type "
+        f"from this list: explore, context-gather, code-search, implementation, general.\n\n"
+        f"Rules:\n"
+        f"- explore: read-only investigation, understanding code, auditing, reviewing\n"
+        f"- context-gather: finding relevant files, dependencies, related code\n"
+        f"- code-search: searching for patterns, usages, references, grep\n"
+        f"- implementation: writing, editing, fixing, building, creating, configuring code\n"
+        f"- general: anything else\n\n"
+        f"Task: {task_text[:300]}\n\n"
+        f"Agent type (one word only):"
+    )
+
+    try:
+        import mlx_lm
+        loop = __import__('asyncio').get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: mlx_lm.generate(
+                _extract_model, _extract_processor,
+                prompt=prompt, max_tokens=10, verbose=False
+            )
+        )
+        # Extract the first word from the response
+        agent_type = response.strip().split()[0].lower().strip('.,;:')
+        if agent_type not in VALID_AGENT_TYPES:
+            agent_type = "general"
+        return {"agent_type": agent_type}, len(response.split())
+    except Exception as e:
+        logger.warning(f"[assist] route_task failed: {e}")
+        return {"agent_type": "general"}, 0
