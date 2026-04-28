@@ -200,8 +200,19 @@ class Orchestrator extends EventEmitter {
   }
 
   async _dispatchNode(node) {
-    // Emit in_progress with 'general' as placeholder — will be updated after routing
+    // Emit in_progress with 'general' as placeholder — updated when agent-type-selected fires
     this._updateNodeStatus(node.id, 'in_progress', { agentType: 'general' });
+
+    // Listen for the pool's agent-type-selected event to update the badge
+    // before the agent actually starts running (fires after routing, before slot acquire)
+    const onTypeSelected = ({ taskId, agentType }) => {
+      if (taskId !== node.id) return;
+      if (this._graph.nodes.get(node.id)) {
+        this._graph.nodes.get(node.id).agentType = agentType;
+      }
+      this.emit('task-status-event', { nodeId: node.id, status: 'in_progress', agentType });
+    };
+    this._agentPool.once('agent-type-selected', onTypeSelected);
 
     try {
       const startTime = Date.now();
@@ -235,19 +246,10 @@ class Orchestrator extends EventEmitter {
       const duration = Date.now() - startTime;
       const agentType = result?.agentType ?? 'general';
 
-      // Now we know the real agent type — re-emit in_progress with correct type
-      // and inject LSP instructions retroactively if needed
-      if (agentType === 'implementation' && this._lspManager?.getStatus().status === 'ready') {
-        // LSP instructions were already passed via task.systemPromptSuffix in dispatch
-        // (agent-pool passes task to factory which uses it) — nothing more needed here
-      }
-
       // Attach agent type to the graph node so the renderer can display it
       if (this._graph.nodes.get(node.id)) {
         this._graph.nodes.get(node.id).agentType = agentType;
       }
-      // Re-emit in_progress with the real agent type so the UI updates
-      this.emit('task-status-event', { nodeId: node.id, status: 'in_progress', agentType });
 
       const taskResult = {
         nodeId: node.id,
@@ -278,6 +280,7 @@ class Orchestrator extends EventEmitter {
       this._context[node.id] = taskResult.output;
       this._updateNodeStatus(node.id, 'completed', { agentType });
     } catch (err) {
+      this._agentPool.off('agent-type-selected', onTypeSelected);
       this._handleFailure(node.id, err);
     }
   }
