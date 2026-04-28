@@ -204,6 +204,17 @@ async def _startup_memory():
             print(f"[server] WARNING: Memory-bridge initialization failed: {e}", file=sys.stderr)
 
 
+@app.on_event("shutdown")
+async def _shutdown_memory():
+    """Flush memory-bridge components on server shutdown."""
+    if _memory_bridge is not None:
+        try:
+            await _memory_bridge.shutdown()
+            print("[server] Memory-bridge shutdown complete")
+        except Exception as e:
+            print(f"[server] WARNING: Memory-bridge shutdown failed: {e}", file=sys.stderr)
+
+
 # ── schemas ───────────────────────────────────────────────────────────────────
 class Message(BaseModel):
     role: str

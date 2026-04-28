@@ -1207,7 +1207,16 @@ async def retrieve(req: RetrieveRequest):
 import asyncio as _asyncio
 
 # Semaphore for extraction model inference (concurrency=1)
-_extraction_semaphore = _asyncio.Semaphore(1)
+# Lazy-initialized inside the first async call to avoid creating it before
+# the event loop is running (which raises DeprecationWarning/error in Python 3.12+)
+_extraction_semaphore: "_asyncio.Semaphore | None" = None
+
+
+def _get_extraction_semaphore() -> "_asyncio.Semaphore":
+    global _extraction_semaphore
+    if _extraction_semaphore is None:
+        _extraction_semaphore = _asyncio.Semaphore(1)
+    return _extraction_semaphore
 
 # Extraction queue state
 _extraction_queue_depth = 0
@@ -1367,7 +1376,7 @@ async def extract(req: ExtractRequest):
     async def _llm_extract():
         global _extraction_queue_depth, _extraction_processing, _last_extraction_at, _extraction_source
 
-        async with _extraction_semaphore:
+        async with _get_extraction_semaphore():
             _extraction_processing = True
             try:
                 llm_triples = []
