@@ -214,8 +214,8 @@ agentPool.registerType({ name: 'context-gather', systemPrompt: '', allowedTools:
 agentPool.registerType({ name: 'code-search', systemPrompt: '', allowedTools: ['read_file', 'list_dir', 'search_files', 'bash'] })
 agentPool.registerType({ name: 'requirements', systemPrompt: '', allowedTools: [] })
 agentPool.registerType({ name: 'design', systemPrompt: '', allowedTools: [] })
-agentPool.registerType({ name: 'implementation', systemPrompt: '', allowedTools: ['read_file', 'write_file', 'edit_file', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch'] })
-agentPool.registerType({ name: 'general', systemPrompt: '', allowedTools: ['read_file', 'write_file', 'edit_file', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch'] })
+agentPool.registerType({ name: 'implementation', systemPrompt: '', allowedTools: ['read_file', 'write_file', 'edit_file', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch'], timeout: 1800000 }) // 30 min
+agentPool.registerType({ name: 'general', systemPrompt: '', allowedTools: ['read_file', 'write_file', 'edit_file', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch'], timeout: 1800000 }) // 30 min
 
 // ── shared accessors for IPC modules ──────────────────────────────────────────
 const ctx = {

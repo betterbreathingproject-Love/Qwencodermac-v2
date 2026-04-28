@@ -2393,11 +2393,17 @@ function renderTaskGraph(graph) {
     const node = nodes[id]
     const indent = (node.depth || 0) * 12
     const agentTag = node.agentType && node.agentType !== 'general' ? `<span class="tg-node-agent">${esc(node.agentType)}</span>` : ''
+    const elapsedTag = node.status === 'in_progress'
+      ? `<span class="tg-node-elapsed" data-start="${node._startTime || Date.now()}">0s</span>`
+      : ''
+    const activityTag = node.status === 'in_progress'
+      ? `<span class="tg-node-activity" data-node-id="${id}"></span>`
+      : ''
     return `<div class="tg-node status-${node.status}" data-node-id="${id}" style="padding-left:${8 + indent}px" onclick="showTaskDetail('${id}')">
       <span class="tg-node-dot ${node.status}"></span>
       <span class="tg-node-id">${esc(id)}</span>
       <span class="tg-node-title">${esc(node.title)}</span>
-      ${agentTag}
+      ${agentTag}${elapsedTag}${activityTag}
     </div>`
   }).join('')
 
@@ -2495,6 +2501,10 @@ if (window.app.onTaskStatusEvent) {
       if (currentTaskGraph.nodes[evt.nodeId]) {
         currentTaskGraph.nodes[evt.nodeId].status = evt.status
         if (evt.agentType) currentTaskGraph.nodes[evt.nodeId].agentType = evt.agentType
+        // Record start time for elapsed timer
+        if (evt.status === 'in_progress') {
+          currentTaskGraph.nodes[evt.nodeId]._startTime = Date.now()
+        }
         renderTaskGraph(currentTaskGraph)
         renderSpecTaskProgress() // sync spec panel
       } else {
@@ -2530,7 +2540,44 @@ if (window.app.onTaskStatusEvent) {
   })
 }
 
-// ── spec workflow panel (AI-powered) ──────────────────────────────────────────
+// ── Elapsed timer for in-progress task nodes ──────────────────────────────────
+setInterval(() => {
+  const elapsedEls = document.querySelectorAll('.tg-node-elapsed')
+  elapsedEls.forEach(el => {
+    const start = parseInt(el.dataset.start, 10)
+    if (!start) return
+    const secs = Math.floor((Date.now() - start) / 1000)
+    const mins = Math.floor(secs / 60)
+    el.textContent = mins > 0 ? `${mins}m ${secs % 60}s` : `${secs}s`
+  })
+}, 1000)
+
+// ── Forward agent streaming events to active task activity indicator ──────────
+if (window.app.onOrchestratorEvent) {
+  window.app.onOrchestratorEvent(evt => {
+    // evt.taskId, evt.channel, evt.data
+    const taskId = evt.taskId
+    if (!taskId) return
+    const activityEl = document.querySelector(`.tg-node-activity[data-node-id="${taskId}"]`)
+    if (!activityEl) return
+    // Show the tool/channel name as a brief activity hint
+    let hint = ''
+    if (evt.channel === 'tool_use') {
+      hint = `⚙ ${evt.data?.name || 'tool'}`
+    } else if (evt.channel === 'tool_result') {
+      hint = `✓ ${evt.data?.name || 'done'}`
+    } else if (evt.channel === 'text' && evt.data) {
+      // Show last ~40 chars of streamed text
+      const text = typeof evt.data === 'string' ? evt.data : (evt.data.text || '')
+      hint = text.slice(-40).replace(/\n/g, ' ')
+    } else if (evt.channel) {
+      hint = evt.channel
+    }
+    if (hint) activityEl.textContent = hint
+  })
+}
+
+
 let currentSpecDir = null
 let currentSpecName = null
 let specGenerating = false

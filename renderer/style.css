@@ -443,6 +443,8 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .tg-node-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tg-node.active { background: rgba(124,106,247,0.1); border: 1px solid rgba(124,106,247,0.2); }
 .tg-node-agent { font-size: 9px; font-family: 'SF Mono', monospace; color: var(--accent2, #f5a623); background: rgba(245,166,35,0.12); padding: 1px 5px; border-radius: 3px; white-space: nowrap; flex-shrink: 0; }
+.tg-node-elapsed { font-size: 9px; font-family: 'SF Mono', monospace; color: var(--muted); margin-left: 4px; white-space: nowrap; flex-shrink: 0; min-width: 28px; }
+.tg-node-activity { font-size: 9px; color: var(--muted); margin-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; opacity: 0.7; font-style: italic; }
 .orch-agent-badge { font-size: 10px; font-family: 'SF Mono', monospace; color: var(--accent2, #f5a623); background: rgba(245,166,35,0.15); padding: 1px 6px; border-radius: 3px; margin-left: 4px; vertical-align: middle; }
 
 /* ── spec workflow panel (sidebar) ──────────────────────────────────────────── */

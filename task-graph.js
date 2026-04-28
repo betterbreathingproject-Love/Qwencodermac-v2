@@ -112,8 +112,13 @@ function parseTaskGraph(markdown) {
       continue;
     }
 
-    const [, indent, bracketContent, id, title] = match;
+    const [, indent, bracketContent, rawId, rawTitle] = match;
     const depth = Math.floor(indent.length / 2);
+
+    // Strip markdown bold/italic markers (**text**, *text*, __text__, _text_)
+    // so that tasks.md files with formatted titles parse correctly.
+    const id = rawId.replace(/^\*{1,2}|^\_{1,2}|\*{1,2}$|\_{1,2}$/g, '');
+    const title = rawTitle.replace(/\*{1,2}([^*]+)\*{1,2}/g, '$1').replace(/\_{1,2}([^_]+)\_{1,2}/g, '$1');
 
     // Parse status and markers from bracket content
     const node = createTaskNode({ id, title, depth });

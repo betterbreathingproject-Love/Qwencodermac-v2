@@ -76,6 +76,13 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
       orchestratorInstance.on('task-status-event', (evt) => {
         getMainWindow()?.webContents.send('task-status-event', evt)
       })
+
+      // Forward agent streaming events (tool calls, tokens) to renderer
+      const agentEventHandler = (evt) => {
+        getMainWindow()?.webContents.send('orchestrator-agent-event', evt)
+      }
+      getAgentPool().on('agent-event', agentEventHandler)
+
       orchestratorInstance.on('task-error', (evt) => {
         console.error('[orchestrator] Task error:', evt.nodeId, evt.error)
         getMainWindow()?.webContents.send('task-status-event', { nodeId: evt.nodeId, status: 'failed', error: evt.error })
@@ -84,10 +91,12 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
       })
       orchestratorInstance.on('completed', () => {
         console.log('[orchestrator] All tasks completed')
+        getAgentPool().off('agent-event', agentEventHandler)
         getMainWindow()?.webContents.send('orchestrator-completed')
       })
       orchestratorInstance.start().catch(err => {
         console.error('[orchestrator] Start error:', err)
+        getAgentPool().off('agent-event', agentEventHandler)
         getMainWindow()?.webContents.send('task-status-event', { nodeId: 'orchestrator', status: 'failed', error: err.message })
         getMainWindow()?.webContents.send('orchestrator-completed')
       })
