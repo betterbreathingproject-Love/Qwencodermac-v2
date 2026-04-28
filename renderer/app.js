@@ -1097,9 +1097,11 @@ async function sendAgentMode(prompt, opts = {}) {
         }
         break
       case 'routing-decision':
-        if (ev.source === 'small model' || ev.source === 'keyword') {
-          const roleIcons = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡', debug: '🐛' }
-          const label = ev.source === 'keyword' ? '⚡ Fast routed' : '🤖 Fast model routed'
+        if (ev.source === 'small model' || ev.source === 'keyword' || ev.source === 'todo') {
+          const roleIcons = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡', debug: '🐛', requirements: '📋', design: '📐' }
+          const label = ev.source === 'keyword' ? '⚡ Fast routed'
+            : ev.source === 'todo' ? '⚡ Todo routed'
+            : '🤖 Fast model routed'
           appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${label} → ${roleIcons[ev.agentType] || '⚡'} ${ev.agentType}</span>`)
         }
         break
@@ -1550,9 +1552,11 @@ async function sendAgentMode(prompt, opts = {}) {
                 }
                 break
               case 'routing-decision':
-                if (ev.source === 'small model' || ev.source === 'keyword') {
-                  const roleIcons = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡', debug: '🐛' }
-                  const label = ev.source === 'keyword' ? '⚡ Fast routed' : '🤖 Fast model routed'
+                if (ev.source === 'small model' || ev.source === 'keyword' || ev.source === 'todo') {
+                  const roleIcons = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡', debug: '🐛', requirements: '📋', design: '📐' }
+                  const label = ev.source === 'keyword' ? '⚡ Fast routed'
+                    : ev.source === 'todo' ? '⚡ Todo routed'
+                    : '🤖 Fast model routed'
                   appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${label} → ${roleIcons[ev.agentType] || '⚡'} ${ev.agentType}</span>`)
                 }
                 break
@@ -3259,10 +3263,12 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         break
       }
       case 'routing-decision': {
-        const roleIcons = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡', debug: '🐛' }
+        const roleIcons = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡', debug: '🐛', requirements: '📋', design: '📐' }
         const icon = roleIcons[ev.agentType] || '⚡'
-        if (ev.source === 'small model' || ev.source === 'keyword') {
-          const label = ev.source === 'keyword' ? '⚡ Fast routed' : '🤖 Fast model routed'
+        if (ev.source === 'small model' || ev.source === 'keyword' || ev.source === 'todo') {
+          const label = ev.source === 'keyword' ? '⚡ Fast routed'
+            : ev.source === 'todo' ? '⚡ Todo routed'
+            : '🤖 Fast model routed'
           appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${label} → ${icon} ${ev.agentType}</span>`)
         }
         break

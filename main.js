@@ -135,7 +135,21 @@ const agentPool = new AgentPool({
     const cwd = task.cwd || currentProject || process.cwd()
     console.log('[agent-factory] Creating', typeName, 'agent for task:', task.id, task.title)
 
-    const bridge = new DirectBridge(new WindowSink(mainWindow), { agentRole: typeName, allowedTools: agentType?.allowedTools || null, lspManager, getCalibrationProfile: ipcServer.getCalibrationProfile })
+    const bridge = new DirectBridge(new WindowSink(mainWindow), {
+      agentRole: typeName,
+      allowedTools: agentType?.allowedTools || null,
+      lspManager,
+      getCalibrationProfile: ipcServer.getCalibrationProfile,
+      routeTask: async (title) => {
+        const kwType = agentPool.selectType({ title, description: '' })
+        const kwName = kwType?.name || 'general'
+        if (kwName !== 'general') return kwName
+        if (_memoryClientForRouting?.assistRouteTask) {
+          return await _memoryClientForRouting.assistRouteTask(title).catch(() => null)
+        }
+        return null
+      },
+    })
 
     // The bridge already has agentRole set — _buildSystemPrompt will inject the correct
     // role overlay. We only need to add steering docs and routing instructions on top.
@@ -325,7 +339,19 @@ function createWindow() {
   })
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'))
   mainWindow.on('closed', () => { ipcServer.stopServer(); mainWindow = null })
-  qwenBridge = new DirectBridge(new WindowSink(mainWindow), { getCalibrationProfile: ipcServer.getCalibrationProfile })
+  qwenBridge = new DirectBridge(new WindowSink(mainWindow), {
+    getCalibrationProfile: ipcServer.getCalibrationProfile,
+    routeTask: async (title) => {
+      // Keyword-first, small model fallback — same logic as qwen-run routing
+      const kwType = agentPool.selectType({ title, description: '' })
+      const kwName = kwType?.name || 'general'
+      if (kwName !== 'general') return kwName
+      if (_memoryClientForRouting?.assistRouteTask) {
+        return await _memoryClientForRouting.assistRouteTask(title).catch(() => null)
+      }
+      return null
+    },
+  })
 
   // Start LSP manager asynchronously — does not block window creation
   lspManager = new LspManager()

@@ -1333,6 +1333,8 @@ class DirectBridge {
     this._allowedTools = opts.allowedTools || null
     this._telegramForwarder = opts.telegramForwarder || null
     this._getCalibrationProfile = opts.getCalibrationProfile || null
+    // Optional: function(title) → role string | null — used for todo-driven re-routing
+    this._routeTask = opts.routeTask || null
   }
 
   setLspManager(lspManager) {
@@ -2461,12 +2463,37 @@ class DirectBridge {
         }
 
         // Todo watch — fire-and-forget after each tool result
+        // When a todo transitions to in_progress, re-route via small model to pick the best agent role
         if (assistClient && assistClient.TODO_WATCH_ENABLED && _lastTodos) {
           const _todosSnapshot = _lastTodos  // capture current reference
-          assistClient.assistTodoWatch(fnName, content, _todosSnapshot).then(updated => {
+          assistClient.assistTodoWatch(fnName, content, _todosSnapshot).then(async updated => {
             if (updated && hasStatusChanges(updated, _todosSnapshot)) {
-              this.send('qwen-event', { type: 'tool_result', tool: 'update_todos', result: { todos: updated } })
               _lastTodos = updated  // update the tracked todos
+              this.send('qwen-event', { type: 'tool_result', tool: 'update_todos', result: { todos: updated } })
+
+              // Re-route when a new todo becomes in_progress
+              const newlyActive = updated.find((t, i) => {
+                const prev = _todosSnapshot[i]
+                return t.status === 'in_progress' && prev?.status !== 'in_progress'
+              })
+              if (newlyActive && memoryClient && typeof memoryClient.assistRouteTask === 'function') {
+                // Use injected routeTask (keyword + small model) if available, else small model only
+                let newRole = null
+                if (typeof this._routeTask === 'function') {
+                  newRole = await this._routeTask(newlyActive.text).catch(() => null)
+                } else {
+                  newRole = await memoryClient.assistRouteTask(newlyActive.text).catch(() => null)
+                }
+
+                if (newRole && newRole !== this._agentRole) {
+                  this._agentRole = newRole
+                  this.send('qwen-event', { type: 'agent-type', agentType: newRole })
+                  this.send('qwen-event', { type: 'routing-decision', agentType: newRole, source: 'todo' })
+                  // Update system message so the model gets the new role preamble on the next turn
+                  const sysMsg = messages.find(m => m.role === 'system')
+                  if (sysMsg) sysMsg.content = this._buildSystemPrompt(cwd, permissionMode)
+                }
+              }
             }
           }).catch(() => {})
         }
