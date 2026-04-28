@@ -55,12 +55,12 @@ Implement the dual-model fast assistant by adding a `POST /memory/assist` endpoi
     - Verify `_get_extraction_semaphore()` returns the same instance on repeated calls
     - _Requirements: 1.6, 7.1_
 
-- [~] 3. Extend `GET /memory/status` with `fast_assistant_enabled`
+- [x] 3. Extend `GET /memory/status` with `fast_assistant_enabled`
   - Add `fast_assistant_enabled: bool` field to the `MemoryStatus` Pydantic model
   - Set it to `True` when `_extract_model is not None` in the `get_memory_status` handler
   - _Requirements: 10.1_
 
-- [~] 4. Checkpoint — Ensure all Python tests pass
+- [-] 4. Checkpoint — Ensure all Python tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [~] 5. Create `assist-client.js`

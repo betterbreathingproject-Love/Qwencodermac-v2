@@ -262,7 +262,9 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
 
   // Use small model to pick the best agent role for this prompt (if no explicit role given)
   let resolvedRole = agentRole || 'general'
-  if (!agentRole && _memoryClientForRouting?.assistRouteTask) {
+  // Route via small model when user hasn't explicitly picked a non-general role
+  const isAutoMode = !agentRole || agentRole === 'general'
+  if (isAutoMode && _memoryClientForRouting?.assistRouteTask) {
     try {
       const routed = await _memoryClientForRouting.assistRouteTask(prompt.slice(0, 200))
       console.log('[qwen-run] assistRouteTask result:', routed, '→ resolvedRole:', routed || 'general')
@@ -281,6 +283,14 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
 
   // Emit agent-type event so the renderer can show which role was selected
   mainWindow?.webContents.send('qwen-event', { type: 'agent-type', agentType: resolvedRole })
+
+  // Emit a visible routing decision message for the user
+  const routingSource = (isAutoMode && resolvedRole !== 'general') ? 'small model' : (agentRole ? 'manual' : 'default')
+  mainWindow?.webContents.send('qwen-event', {
+    type: 'routing-decision',
+    agentType: resolvedRole,
+    source: routingSource,
+  })
 
   qwenBridge.run({ prompt, cwd: cwd || currentProject, permissionMode, model, images, conversationHistory, samplingParams, taskGraphPath }).catch(() => {})
   return { ok: true }

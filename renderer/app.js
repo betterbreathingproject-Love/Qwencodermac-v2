@@ -1086,7 +1086,21 @@ async function sendAgentMode(prompt, opts = {}) {
     if (agentFinished && ev.type !== 'session-end') return
     switch(ev.type) {
       case 'agent-type':
-        if (ev.agentType && ev.agentType !== 'general') _currentAgentType = ev.agentType
+        if (ev.agentType && ev.agentType !== 'general') {
+          _currentAgentType = ev.agentType
+          const sel = document.getElementById('roleSelect')
+          if (sel && sel.value === 'general') {
+            sel.value = ev.agentType
+            sel.style.outline = '1px solid var(--accent, #7c6af7)'
+            setTimeout(() => { sel.style.outline = '' }, 2000)
+          }
+        }
+        break
+      case 'routing-decision':
+        if (ev.source === 'small model') {
+          const roleIcons = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡' }
+          appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">🤖 Fast model routed → ${roleIcons[ev.agentType] || '⚡'} ${ev.agentType}</span>`)
+        }
         break
       case 'session-start':
         setActivity('🤖 Agent running in ' + esc(ev.cwd||'.') + ' <span class="activity-dot">●</span>')
@@ -1518,7 +1532,21 @@ async function sendAgentMode(prompt, opts = {}) {
           window.app.onQwenEvent(ev => {
             switch (ev.type) {
               case 'agent-type':
-                if (ev.agentType && ev.agentType !== 'general') _currentAgentType = ev.agentType
+                if (ev.agentType && ev.agentType !== 'general') {
+                  _currentAgentType = ev.agentType
+                  const sel = document.getElementById('roleSelect')
+                  if (sel && sel.value === 'general') {
+                    sel.value = ev.agentType
+                    sel.style.outline = '1px solid var(--accent, #7c6af7)'
+                    setTimeout(() => { sel.style.outline = '' }, 2000)
+                  }
+                }
+                break
+              case 'routing-decision':
+                if (ev.source === 'small model') {
+                  const roleIcons = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡' }
+                  appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">🤖 Fast model routed → ${roleIcons[ev.agentType] || '⚡'} ${ev.agentType}</span>`)
+                }
                 break
               case 'session-start': {
                 // Find the current in-progress task from the todo panel or task graph
@@ -3208,6 +3236,22 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         // Small model routed this prompt — set agent type before session-start fires
         if (ev.agentType && ev.agentType !== 'general') {
           _currentAgentType = ev.agentType
+          // Update the dropdown to show what was auto-picked
+          const sel = document.getElementById('roleSelect')
+          if (sel && sel.value === 'general') {
+            sel.value = ev.agentType
+            // Flash it briefly so user notices the auto-selection
+            sel.style.outline = '1px solid var(--accent, #7c6af7)'
+            setTimeout(() => { sel.style.outline = '' }, 2000)
+          }
+        }
+        break
+      }
+      case 'routing-decision': {
+        const roleIcons = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡' }
+        const icon = roleIcons[ev.agentType] || '⚡'
+        if (ev.source === 'small model') {
+          appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">🤖 Fast model routed → ${icon} ${ev.agentType}</span>`)
         }
         break
       }

@@ -152,6 +152,7 @@ class MemoryStatus(BaseModel):
     archive: str
     extraction_model: Optional[str]             # model name or None
     extraction_model_memory_gb: Optional[float]
+    fast_assistant_enabled: bool
 
 
 class MemoryStats(BaseModel):
@@ -457,6 +458,7 @@ async def get_memory_status():
         archive="ready" if _archive is not None else "unavailable",
         extraction_model=extraction_name,
         extraction_model_memory_gb=getattr(_extract_model, "memory_gb", None) if _extract_model is not None else None,
+        fast_assistant_enabled=_extract_model is not None,
     )
 
 
