@@ -436,6 +436,69 @@ describe('Property 3 — primary model messages unchanged when assist returns nu
   })
 })
 
+// ── ECONNREFUSED handling ─────────────────────────────────────────────────────
+
+describe('_assistRequest returns null on ECONNREFUSED', () => {
+  it('returns null when connection is refused', async () => {
+    // Find a port that is definitely not listening
+    const closedPort = await new Promise((resolve) => {
+      const srv = http.createServer()
+      srv.listen(0, '127.0.0.1', () => {
+        const { port } = srv.address()
+        srv.close(() => resolve(port))
+      })
+    })
+
+    const result = await withRedirectedPort(closedPort, () =>
+      _assistRequest('vision', {}, 3000)
+    )
+    assert.equal(result, null, '_assistRequest must return null on ECONNREFUSED')
+  })
+})
+
+// ── assistFetchSummarize calls endpoint when content > threshold ───────────────
+
+describe('assistFetchSummarize calls endpoint when content > FETCH_SUMMARIZE_THRESHOLD', () => {
+  let mock = null
+
+  before(async () => {
+    mock = await makeMockServer(200, { result: 'summary text', result_data: null, elapsed_ms: 100, output_tokens: 50 })
+  })
+
+  after(async () => {
+    if (mock) await mock.close()
+  })
+
+  it('calls the endpoint and returns summary when content exceeds threshold', async () => {
+    const content = 'x'.repeat(FETCH_SUMMARIZE_THRESHOLD + 1)
+    const result = await withRedirectedPort(mock.port, () =>
+      assistClient.assistFetchSummarize('http://example.com', content, 512)
+    )
+    assert.equal(result, 'summary text', 'should return summary from endpoint')
+  })
+})
+
+// ── assistValidateTool calls endpoint for validated tools ─────────────────────
+
+describe('assistValidateTool calls endpoint for tools in VALIDATED_TOOLS', () => {
+  let mock = null
+
+  before(async () => {
+    mock = await makeMockServer(200, { result: null, result_data: { valid: true }, elapsed_ms: 50, output_tokens: 5 })
+  })
+
+  after(async () => {
+    if (mock) await mock.close()
+  })
+
+  it('calls the endpoint and returns result_data for edit_file', async () => {
+    const result = await withRedirectedPort(mock.port, () =>
+      assistClient.assistValidateTool('edit_file', { path: 'test.js', old_string: 'foo', new_string: 'bar' }, 'context')
+    )
+    assert.deepEqual(result, { valid: true }, 'should return result_data from endpoint')
+  })
+})
+
 // ── Module exports verification ───────────────────────────────────────────────
 
 describe('assist-client.js module exports', () => {

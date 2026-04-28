@@ -72,7 +72,7 @@ Implement the dual-model fast assistant by adding a `POST /memory/assist` endpoi
   - `assistValidateTool` uses 10s timeout; `assistDiagnoseError` uses 15s; `assistExtractRelevantSection` uses 20s; all others use `ASSIST_TIMEOUT_MS = 65000`
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 10.4, 10.5, 10.6, 17.2, 17.3_
 
-  - [ ]* 5.1 Write unit tests for `assist-client.js` (`test/assist-client.test.js`)
+  - [x]* 5.1 Write unit tests for `assist-client.js` (`test/assist-client.test.js`)
     - Verify all 10 functions and 7 constants are exported
     - Verify `_assistRequest` returns `null` on HTTP 503 `degraded: true`, ECONNREFUSED, and HTTP 500
     - Verify `assistFetchSummarize` returns `null` without calling the endpoint when content ≤ `FETCH_SUMMARIZE_THRESHOLD`
@@ -80,7 +80,7 @@ Implement the dual-model fast assistant by adding a `POST /memory/assist` endpoi
     - Verify warning is logged exactly once on non-degraded failure
     - _Requirements: 2.2, 2.3, 2.6, 11.7_
 
-  - [ ]* 5.2 Write property tests for `assist-client.js` (`test/assist-client.property.test.js`)
+  - [x]* 5.2 Write property tests for `assist-client.js` (`test/assist-client.property.test.js`)
     - **Property 2: Assist client returns null for any HTTP error** — `fc.integer({ min: 400, max: 599 })` → result is `null`
     - **Property 3: All capabilities degrade to null when no extraction model is loaded** — all 10 functions return `null` on HTTP 503 degraded
     - **Property 5: Fetch summarize threshold is respected in both directions** — `fc.string()` → called iff `length > FETCH_SUMMARIZE_THRESHOLD`
@@ -102,7 +102,7 @@ Implement the dual-model fast assistant by adding a `POST /memory/assist` endpoi
   - Only call when not actively streaming (gap point constraint)
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7_
 
-  - [ ]* 7.1 Write property test for vision replacement (`test/assist-client.property.test.js`)
+  - [x]* 7.1 Write property test for vision replacement (`test/assist-client.property.test.js`)
     - **Property 4: Vision replacement preserves message structure** — for any array of image parts and non-null descriptions, each replacement is a text part starting with `[Vision: ` and ending with `]`, length ≤ `VISION_MAX_CHARS + '[Vision: ]'.length`
     - **Validates: Requirements 3.3, 3.7**
 
@@ -124,7 +124,7 @@ Implement the dual-model fast assistant by adding a `POST /memory/assist` endpoi
   - Integration point 9 — File extract: after `read_file` result, if `content.length > FILE_EXTRACT_THRESHOLD` and task context is available, await `assistExtractRelevantSection` and replace with `[Relevant section extracted by fast model — file: ${n} chars total]\n\n${section}` when non-null
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.6, 6.7, 13.1, 13.2, 13.3, 14.1, 14.2, 14.3, 15.1, 15.2, 15.3, 15.7_
 
-  - [ ]* 10.1 Write property tests for threshold guards (`test/assist-client.property.test.js`)
+  - [x]* 10.1 Write property tests for threshold guards (`test/assist-client.property.test.js`)
     - **Property 10: Git summarize threshold is respected** — bash + git command, `s.length > GIT_SUMMARIZE_THRESHOLD` iff called
     - **Property 11: Search ranking threshold is respected** — `R.length > SEARCH_RANK_THRESHOLD` iff called
     - **Property 12: File extract threshold is respected** — `s.length > FILE_EXTRACT_THRESHOLD` iff called
@@ -137,7 +137,7 @@ Implement the dual-model fast assistant by adding a `POST /memory/assist` endpoi
   - Skip validation entirely for tools not in `VALIDATED_TOOLS`
   - _Requirements: 11.1, 11.3, 11.4, 11.5, 11.7_
 
-  - [ ]* 11.1 Write property tests for tool validation (`test/assist-client.property.test.js`)
+  - [x]* 11.1 Write property tests for tool validation (`test/assist-client.property.test.js`)
     - **Property 7: Tool validation rejection prevents tool execution** — for any validated tool + `{valid: false, reason}`, tool is not executed and system message is injected
     - **Property 8: Validation is skipped for non-validated tools** — for any tool name not in `VALIDATED_TOOLS`, `assistValidateTool` is not called
     - **Validates: Requirements 11.3, 11.7**
@@ -148,7 +148,7 @@ Implement the dual-model fast assistant by adding a `POST /memory/assist` endpoi
   - When null or timeout, use original content unchanged
   - _Requirements: 12.1, 12.2, 12.3, 12.5, 12.6_
 
-  - [ ]* 12.1 Write property test for error diagnosis format (`test/assist-client.property.test.js`)
+  - [x]* 12.1 Write property test for error diagnosis format (`test/assist-client.property.test.js`)
     - **Property 9: Error diagnosis format is always correct** — for any `(diagnosis, originalError)`, result equals `[Fast model diagnosis: ${diagnosis}]\n\n${originalError}`
     - **Validates: Requirements 12.2**
 
