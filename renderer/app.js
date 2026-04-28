@@ -1103,12 +1103,21 @@ async function sendAgentMode(prompt, opts = {}) {
           const label = ev.source === 'keyword' ? '⚡ Fast routed'
             : ev.source === 'todo' ? '⚡ Todo routed'
             : '🤖 Fast model routed'
-          appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${label} → ${roleIcons[ev.agentType] || '⚡'} ${ev.agentType}</span>`)
+          const icon = roleIcons[ev.agentType] || '⚡'
+          // Insert into the current response block's tools area so it's visible inline
+          const toolsEl = document.getElementById(respId + '-tools')
+          const html = `<div class="msg-system" style="color:var(--accent,#7c6af7);font-size:11px;padding:2px 8px">${label} → ${icon} ${ev.agentType}</div>`
+          if (toolsEl) toolsEl.insertAdjacentHTML('afterbegin', html)
+          else appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${label} → ${icon} ${ev.agentType}</span>`)
         }
         break
-      case 'fast-assist':
-        appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${ev.label || '⚡ Fast Assistant'}</span>`)
+      case 'fast-assist': {
+        const toolsEl = document.getElementById(respId + '-tools')
+        const html = `<div class="msg-system" style="color:var(--accent,#7c6af7);font-size:11px;padding:2px 8px">${ev.label || '⚡ Fast Assistant'}</div>`
+        if (toolsEl) toolsEl.insertAdjacentHTML('afterbegin', html)
+        else appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${ev.label || '⚡ Fast Assistant'}</span>`)
         break
+      }
       case 'session-start':
         setActivity('🤖 Agent running in ' + esc(ev.cwd||'.') + ' <span class="activity-dot">●</span>')
         startPromptProgress()
@@ -1558,12 +1567,20 @@ async function sendAgentMode(prompt, opts = {}) {
                   const label = ev.source === 'keyword' ? '⚡ Fast routed'
                     : ev.source === 'todo' ? '⚡ Todo routed'
                     : '🤖 Fast model routed'
-                  appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${label} → ${roleIcons[ev.agentType] || '⚡'} ${ev.agentType}</span>`)
+                  const icon = roleIcons[ev.agentType] || '⚡'
+                  const toolsEl = document.getElementById(respId + '-tools')
+                  const html = `<div class="msg-system" style="color:var(--accent,#7c6af7);font-size:11px;padding:2px 8px">${label} → ${icon} ${ev.agentType}</div>`
+                  if (toolsEl) toolsEl.insertAdjacentHTML('afterbegin', html)
+                  else appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${label} → ${icon} ${ev.agentType}</span>`)
                 }
                 break
-              case 'fast-assist':
-                appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${ev.label || '⚡ Fast Assistant'}</span>`)
+              case 'fast-assist': {
+                const toolsEl = document.getElementById(respId + '-tools')
+                const html = `<div class="msg-system" style="color:var(--accent,#7c6af7);font-size:11px;padding:2px 8px">${ev.label || '⚡ Fast Assistant'}</div>`
+                if (toolsEl) toolsEl.insertAdjacentHTML('afterbegin', html)
+                else appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${ev.label || '⚡ Fast Assistant'}</span>`)
                 break
+              }
               case 'session-start': {
                 // Find the current in-progress task from the todo panel or task graph
                 const activeTask = currentTodos.find(t => t.status === 'in_progress')
@@ -3270,13 +3287,20 @@ async function _launchOrchestrator(tasksPath, taskCount) {
           const label = ev.source === 'keyword' ? '⚡ Fast routed'
             : ev.source === 'todo' ? '⚡ Todo routed'
             : '🤖 Fast model routed'
-          appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${label} → ${icon} ${ev.agentType}</span>`)
+          const toolsEl = orchTaskBlockId ? document.getElementById(orchTaskBlockId + '-tools') : null
+          const html = `<div class="msg-system" style="color:var(--accent,#7c6af7);font-size:11px;padding:2px 8px">${label} → ${icon} ${ev.agentType}</div>`
+          if (toolsEl) toolsEl.insertAdjacentHTML('afterbegin', html)
+          else appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${label} → ${icon} ${ev.agentType}</span>`)
         }
         break
       }
-      case 'fast-assist':
-        appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${ev.label || '⚡ Fast Assistant'}</span>`)
+      case 'fast-assist': {
+        const toolsEl = orchTaskBlockId ? document.getElementById(orchTaskBlockId + '-tools') : null
+        const html = `<div class="msg-system" style="color:var(--accent,#7c6af7);font-size:11px;padding:2px 8px">${ev.label || '⚡ Fast Assistant'}</div>`
+        if (toolsEl) toolsEl.insertAdjacentHTML('afterbegin', html)
+        else appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${ev.label || '⚡ Fast Assistant'}</span>`)
         break
+      }
       case 'session-start': {
         const activeTask = currentTodos.find(t => t.status === 'in_progress')
         const agentType = _currentAgentType
