@@ -1726,12 +1726,13 @@ _VALID_ASSIST_TASK_TYPES = frozenset({
 })
 
 # Legacy route_task support (kept for backward compatibility)
-VALID_AGENT_TYPES = ["explore", "context-gather", "code-search", "requirements", "design", "implementation", "general"]
+VALID_AGENT_TYPES = ["explore", "context-gather", "code-search", "requirements", "design", "debug", "implementation", "general"]
 
 ROUTE_TASK_PROMPT = (
     "Classify this task into exactly one category. Reply with only the category name.\n\n"
-    "Categories: explore, context-gather, code-search, requirements, design, implementation, general\n\n"
+    "Categories: explore, context-gather, code-search, requirements, design, debug, implementation, general\n\n"
     "Rules:\n"
+    "- debug: diagnose errors, crashes, failing tests, stack traces, root cause analysis\n"
     "- implementation: write, edit, fix, build, upgrade, migrate, install, create, add, update, render, parse\n"
     "- explore: understand, analyze, audit, review existing code\n"
     "- context-gather: find relevant files, dependencies\n"
