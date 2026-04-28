@@ -1098,7 +1098,7 @@ async function sendAgentMode(prompt, opts = {}) {
         break
       case 'routing-decision':
         if (ev.source === 'small model' || ev.source === 'keyword' || ev.source === 'todo') {
-          const roleIcons = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡', debug: '🐛', requirements: '📋', design: '📐' }
+          const roleIcons = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡', debug: '🐛', tester: '🧪', requirements: '📋', design: '📐' }
           const label = ev.source === 'keyword' ? '⚡ Fast routed'
             : ev.source === 'todo' ? '⚡ Todo routed'
             : '🤖 Fast model routed'
@@ -1553,7 +1553,7 @@ async function sendAgentMode(prompt, opts = {}) {
                 break
               case 'routing-decision':
                 if (ev.source === 'small model' || ev.source === 'keyword' || ev.source === 'todo') {
-                  const roleIcons = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡', debug: '🐛', requirements: '📋', design: '📐' }
+                  const roleIcons = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡', debug: '🐛', tester: '🧪', requirements: '📋', design: '📐' }
                   const label = ev.source === 'keyword' ? '⚡ Fast routed'
                     : ev.source === 'todo' ? '⚡ Todo routed'
                     : '🤖 Fast model routed'
@@ -3263,7 +3263,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         break
       }
       case 'routing-decision': {
-        const roleIcons = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡', debug: '🐛', requirements: '📋', design: '📐' }
+        const roleIcons = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡', debug: '🐛', tester: '🧪', requirements: '📋', design: '📐' }
         const icon = roleIcons[ev.agentType] || '⚡'
         if (ev.source === 'small model' || ev.source === 'keyword' || ev.source === 'todo') {
           const label = ev.source === 'keyword' ? '⚡ Fast routed'

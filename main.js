@@ -73,6 +73,12 @@ const ROLE_OVERLAYS = {
     '(5) Re-run to verify.\n' +
     'Do NOT guess and patch — diagnose first.',
 
+  'tester':
+    'You are in TESTER mode. Verify behaviour using the browser and screenshots.\n' +
+    'Workflow: navigate → screenshot → interact (one action at a time) → screenshot → verify with browser_get_text/browser_evaluate → browser_close.\n' +
+    'Anti-stuck: if blank page, use browser_wait_for("body","visible"); if element missing, check DOM with browser_evaluate; never click same element twice without a screenshot.\n' +
+    'Always call browser_close at the end to finalise the video. Report the video path in your summary.',
+
   'requirements':
     'You are in REQUIREMENTS mode. Clarify and document what needs to be built — do NOT write implementation code.\n' +
     'Output structured requirements: user stories, acceptance criteria, edge cases, constraints.\n' +
@@ -209,6 +215,7 @@ agentPool.registerType({ name: 'code-search', systemPrompt: '', allowedTools: ['
 agentPool.registerType({ name: 'requirements', systemPrompt: '', allowedTools: [] })
 agentPool.registerType({ name: 'design', systemPrompt: '', allowedTools: [] })
 agentPool.registerType({ name: 'debug', systemPrompt: '', allowedTools: ['read_file', 'list_dir', 'search_files', 'bash', 'web_search', 'web_fetch'] })
+agentPool.registerType({ name: 'tester', systemPrompt: '', allowedTools: ['browser_navigate', 'browser_screenshot', 'browser_click', 'browser_type', 'browser_get_text', 'browser_get_html', 'browser_evaluate', 'browser_wait_for', 'browser_select_option', 'browser_close', 'bash', 'read_file'] })
 agentPool.registerType({ name: 'implementation', systemPrompt: '', allowedTools: ['read_file', 'write_file', 'edit_file', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch'], timeout: 1800000 }) // 30 min
 agentPool.registerType({ name: 'general', systemPrompt: '', allowedTools: ['read_file', 'write_file', 'edit_file', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch'], timeout: 1800000 }) // 30 min
 
