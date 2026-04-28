@@ -1722,6 +1722,7 @@ _VALID_ASSIST_TASK_TYPES = frozenset({
     "rank_search",
     "extract_section",
     "detect_repetition",
+    "route_task",
 })
 
 # Legacy route_task support (kept for backward compatibility)
@@ -2246,6 +2247,38 @@ async def _handle_detect_repetition(payload: dict) -> AssistResponse:
         return AssistResponse(result_data={"repeating": False}, elapsed_ms=elapsed_ms, output_tokens=0)
 
 
+async def _handle_route_task(payload: dict) -> AssistResponse:
+    """Route a task to the best agent type using the extraction model."""
+    import time
+    t0 = time.monotonic()
+
+    task_text = payload.get("task", "")[:300]
+    if not task_text:
+        return AssistResponse(result_data={"agent_type": "general"}, elapsed_ms=0, output_tokens=0)
+
+    try:
+        import mlx_lm, asyncio
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: mlx_lm.generate(
+                _extract_model, _extract_processor,
+                prompt=ROUTE_TASK_PROMPT.format(task=task_text),
+                max_tokens=10, verbose=False
+            )
+        )
+        agent_type = response.strip().lower().split()[0] if response.strip() else "general"
+        if agent_type not in VALID_AGENT_TYPES:
+            agent_type = "general"
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        logger.debug(f"[assist/route_task] {task_text[:60]!r} → {agent_type} ({elapsed_ms}ms)")
+        return AssistResponse(result_data={"agent_type": agent_type}, elapsed_ms=elapsed_ms, output_tokens=len(response.split()))
+    except Exception as e:
+        logger.warning(f"[assist/route_task] failed: {e}")
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result_data={"agent_type": "general"}, elapsed_ms=elapsed_ms, output_tokens=0)
+
+
 _ASSIST_HANDLERS = {
     "vision": _handle_vision,
     "todo_bootstrap": _handle_todo_bootstrap,
@@ -2257,6 +2290,7 @@ _ASSIST_HANDLERS = {
     "rank_search": _handle_rank_search,
     "extract_section": _handle_extract_section,
     "detect_repetition": _handle_detect_repetition,
+    "route_task": _handle_route_task,
 }
 
 

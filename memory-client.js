@@ -297,6 +297,9 @@ async function assistRouteTask(taskTitle, taskDescription = '') {
       console.log('[assistRouteTask] degraded:', result.reason)
       return null
     }
+    // Handler returns AssistResponse with result_data: { agent_type: "..." }
+    if (result.result_data && typeof result.result_data.agent_type === 'string') return result.result_data.agent_type
+    // Fallback: flat result field
     if (result.result && typeof result.result === 'string') return result.result
     return null
   } catch (err) {
