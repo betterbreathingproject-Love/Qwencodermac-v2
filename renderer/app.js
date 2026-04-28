@@ -1438,6 +1438,9 @@ async function sendAgentMode(prompt, opts = {}) {
         break
       case 'session-end':
         document.getElementById(respId+'-status').textContent = '✅ Agent finished'
+        // Reset role dropdown back to general so next message starts fresh
+        _currentAgentType = null
+        { const sel = document.getElementById('roleSelect'); if (sel) sel.value = 'general' }
         // Combine all text segments from every turn (text→tool→text→...)
         const fullText = allTextSegments.filter(Boolean).join('\n\n')
         const textEl = document.getElementById(respId+'-text')
@@ -4775,8 +4778,8 @@ function _renderExtractionModelSection() {
   const isLoaded = status && status.loaded
 
   const statusHtml = isLoaded
-    ? `<span style="color:var(--green,#4caf50)">● ${esc(status.modelName)}${status.memoryGb ? ` (${status.memoryGb.toFixed(1)}GB)` : ''}</span>`
-    : `<span style="color:var(--muted,#666)">Not loaded</span>`
+    ? `<span style="color:var(--green,#4caf50)">● ${esc(status.modelName)}${status.memoryGb ? ` (${status.memoryGb.toFixed(1)}GB)` : ''}</span> <span style="color:var(--accent,#7c6af7);font-size:10px">⚡ Fast Assistant active</span>`
+    : `<span style="color:var(--muted,#666)">Not loaded</span> <span style="color:var(--muted,#666);font-size:10px">Fast Assistant inactive</span>`
 
   const modelOptions = _extractionModelList.length > 0
     ? _extractionModelList.map(m => `<option value="${esc(m.path)}">${esc(_formatModelName(m.id))}</option>`).join('')

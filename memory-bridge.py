@@ -2269,7 +2269,7 @@ async def _handle_route_task(payload: dict) -> AssistResponse:
         )
         agent_type = "general"
         response_lower = response.strip().lower()
-        logger.warning(f"[assist/route_task] raw model output: {response_lower!r}")
+        logger.debug(f"[assist/route_task] raw model output: {response_lower!r}")
         # Search for any valid type anywhere in the response
         for candidate in VALID_AGENT_TYPES:
             if candidate in response_lower:
