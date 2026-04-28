@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, nativeTheme } = require('electron')
 const path = require('path')
+const fs = require('node:fs')
 const { DirectBridge, WindowSink } = require('./direct-bridge')
 const { AgentPool } = require('./agent-pool')
 const { loadSteeringDocs, formatSteeringForPrompt } = require('./steering-loader')
@@ -592,48 +593,112 @@ function createWindow() {
         miniAppServer.start()
       }
 
-      // Start cloudflared tunnel for public HTTPS access (no interstitial page)
+      // Start cloudflared tunnel for public HTTPS access
+      // Uses a named tunnel for a stable URL that persists across restarts.
       if (!miniAppTunnel) {
-        const { spawn } = require('node:child_process')
-        const tunnelProcess = spawn('cloudflared', ['tunnel', '--url', `http://localhost:${MINIAPP_PORT}`], {
-          stdio: ['ignore', 'pipe', 'pipe'],
-        })
+        const { spawn, execSync } = require('node:child_process')
+        const tunnelConfigPath = path.join(app.getPath('userData'), 'cloudflared-tunnel.json')
 
-        // Parse the public URL from cloudflared's stderr output
-        miniAppPublicUrl = await new Promise((resolve, reject) => {
-          let output = ''
-          const timeout = setTimeout(() => reject(new Error('Tunnel startup timed out')), 15000)
+        let tunnelName = null
+        let tunnelHostname = null
 
-          const onData = (chunk) => {
-            output += chunk.toString()
-            const match = output.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/)
-            if (match) {
-              clearTimeout(timeout)
-              tunnelProcess.stderr.off('data', onData)
-              tunnelProcess.stdout.off('data', onData)
-              resolve(match[0])
+        // Check if we already have a named tunnel configured
+        if (fs.existsSync(tunnelConfigPath)) {
+          try {
+            const cfg = JSON.parse(fs.readFileSync(tunnelConfigPath, 'utf8'))
+            tunnelName = cfg.tunnelName
+            tunnelHostname = cfg.hostname
+          } catch { /* ignore corrupt config */ }
+        }
+
+        // If no named tunnel exists, try to create one
+        if (!tunnelName) {
+          try {
+            // Check if cloudflared is logged in (has credentials)
+            const listOutput = execSync('cloudflared tunnel list --output json 2>/dev/null', { encoding: 'utf8', timeout: 10000 })
+            const tunnels = JSON.parse(listOutput || '[]')
+
+            // Look for an existing qwencoder tunnel
+            const existing = tunnels.find(t => t.name === 'qwencoder-miniapp')
+            if (existing) {
+              tunnelName = existing.name
+              tunnelHostname = `${existing.id}.cfargotunnel.com`
+            } else {
+              // Create a new named tunnel
+              const createOutput = execSync('cloudflared tunnel create qwencoder-miniapp 2>&1', { encoding: 'utf8', timeout: 15000 })
+              const idMatch = createOutput.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/)
+              if (idMatch) {
+                tunnelName = 'qwencoder-miniapp'
+                tunnelHostname = `${idMatch[1]}.cfargotunnel.com`
+              }
             }
+
+            // Save config for next time
+            if (tunnelName && tunnelHostname) {
+              fs.writeFileSync(tunnelConfigPath, JSON.stringify({ tunnelName, hostname: tunnelHostname }))
+            }
+          } catch {
+            // cloudflared not logged in or not available — fall back to quick tunnel
+            tunnelName = null
+            tunnelHostname = null
           }
-          tunnelProcess.stderr.on('data', onData)
-          tunnelProcess.stdout.on('data', onData)
-          tunnelProcess.on('error', (err) => { clearTimeout(timeout); reject(err) })
-          tunnelProcess.on('exit', (code) => {
-            if (!miniAppPublicUrl) { clearTimeout(timeout); reject(new Error(`cloudflared exited with code ${code}`)) }
+        }
+
+        let tunnelProcess
+        if (tunnelName) {
+          // Use named tunnel with stable hostname
+          tunnelProcess = spawn('cloudflared', [
+            'tunnel', 'run',
+            '--url', `http://localhost:${MINIAPP_PORT}`,
+            tunnelName,
+          ], { stdio: ['ignore', 'pipe', 'pipe'] })
+
+          miniAppPublicUrl = `https://${tunnelHostname}`
+        } else {
+          // Fallback: quick tunnel (rotating URL)
+          tunnelProcess = spawn('cloudflared', ['tunnel', '--url', `http://localhost:${MINIAPP_PORT}`], {
+            stdio: ['ignore', 'pipe', 'pipe'],
           })
-        })
+
+          // Parse the public URL from cloudflared's stderr output
+          miniAppPublicUrl = await new Promise((resolve, reject) => {
+            let output = ''
+            const timeout = setTimeout(() => reject(new Error('Tunnel startup timed out')), 15000)
+
+            const onData = (chunk) => {
+              output += chunk.toString()
+              const match = output.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/)
+              if (match) {
+                clearTimeout(timeout)
+                tunnelProcess.stderr.off('data', onData)
+                tunnelProcess.stdout.off('data', onData)
+                resolve(match[0])
+              }
+            }
+            tunnelProcess.stderr.on('data', onData)
+            tunnelProcess.stdout.on('data', onData)
+            tunnelProcess.on('error', (err) => { clearTimeout(timeout); reject(err) })
+            tunnelProcess.on('exit', (code) => {
+              if (!miniAppPublicUrl) { clearTimeout(timeout); reject(new Error(`cloudflared exited with code ${code}`)) }
+            })
+          })
+        }
 
         miniAppTunnel = tunnelProcess
         miniAppTunnel.on('exit', () => {
           miniAppTunnel = null
-          miniAppPublicUrl = null
-          if (remoteJobController) remoteJobController._miniAppUrl = null
-          // Reset the bot's menu button since the URL is now dead
-          if (telegramBot?._token && telegramBot.getPairedChatId()) {
-            const { telegramRequest } = require('./telegram-bot')
-            telegramRequest('setChatMenuButton', telegramBot._token, {
-              chat_id: telegramBot.getPairedChatId(),
-              menu_button: JSON.stringify({ type: 'default' }),
-            }).catch(() => {})
+          // Only clear the URL for quick tunnels — named tunnels keep the same URL on restart
+          if (!tunnelName) {
+            miniAppPublicUrl = null
+            if (remoteJobController) remoteJobController._miniAppUrl = null
+            // Reset the bot's menu button since the URL is now dead
+            if (telegramBot?._token && telegramBot.getPairedChatId()) {
+              const { telegramRequest } = require('./telegram-bot')
+              telegramRequest('setChatMenuButton', telegramBot._token, {
+                chat_id: telegramBot.getPairedChatId(),
+                menu_button: JSON.stringify({ type: 'default' }),
+              }).catch(() => {})
+            }
           }
         })
 

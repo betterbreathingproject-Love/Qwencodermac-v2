@@ -282,6 +282,8 @@ const state = {
 // Uses polling for status updates (same approach as the other app).
 let connected = false;
 let pollInterval = null;
+let disconnectCount = 0;
+const DISCONNECT_THRESHOLD = 3; // Show reconnect prompt after 3 consecutive failures
 
 function getApiBase() {
   return window.location.origin;
@@ -296,6 +298,7 @@ async function sendCmd(type, payload = {}) {
     });
     const data = await res.json();
     if (!connected) { connected = true; state.connected = true; }
+    disconnectCount = 0;
     // For 'run' command, immediately set state to running
     if (type === 'run' && payload.prompt) {
       state.jobState = 'running';
@@ -309,7 +312,9 @@ async function sendCmd(type, payload = {}) {
     handleMessage(data);
     render();
   } catch {
+    disconnectCount++;
     if (connected) { connected = false; state.connected = false; render(); }
+    if (disconnectCount >= DISCONNECT_THRESHOLD) { showDisconnectedOverlay(); }
   }
 }
 
@@ -318,6 +323,7 @@ async function pollStatus() {
     const res = await fetch(getApiBase() + '/api/status');
     const data = await res.json();
     if (!connected) { connected = true; state.connected = true; }
+    disconnectCount = 0;
 
     const prev = state.jobState;
 
@@ -343,7 +349,9 @@ async function pollStatus() {
 
     render();
   } catch {
+    disconnectCount++;
     if (connected) { connected = false; state.connected = false; render(); }
+    if (disconnectCount >= DISCONNECT_THRESHOLD) { showDisconnectedOverlay(); }
   }
 }
 
@@ -869,6 +877,21 @@ function showToast(msg) {
   el.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ── Disconnected Overlay ──────────────────────────────
+function showDisconnectedOverlay() {
+  stopPolling();
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;padding:24px;text-align:center">
+      <div style="font-size:48px;margin-bottom:16px;opacity:.6">🔌</div>
+      <div style="font-size:18px;font-weight:700;margin-bottom:8px">Connection Lost</div>
+      <div style="font-size:13px;color:var(--txt2);line-height:1.6;max-width:280px;margin-bottom:20px">
+        The server URL has changed. Please close this window and reopen the Mini App from Telegram to reconnect.
+      </div>
+      <div style="font-size:11px;color:var(--txt3)">Type <code>/app</code> in the bot chat to get the new link.</div>
+    </div>`;
 }
 
 // ── Init ──────────────────────────────────────────────
