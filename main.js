@@ -266,6 +266,7 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
 
   // Use small model to pick the best agent role for this prompt (if no explicit role given)
   let resolvedRole = agentRole || 'general'
+  let routedByKeyword = false
   // Route via small model when user hasn't explicitly picked a non-general role
   const isAutoMode = !agentRole || agentRole === 'general'
   if (isAutoMode) {
@@ -275,6 +276,7 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
 
     if (keywordName !== 'general') {
       resolvedRole = keywordName
+      routedByKeyword = true
       console.log('[qwen-run] keyword routing:', resolvedRole)
     } else if (_memoryClientForRouting?.assistRouteTask) {
       // Ambiguous — fall back to small model
@@ -299,7 +301,7 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
   mainWindow?.webContents.send('qwen-event', { type: 'agent-type', agentType: resolvedRole })
 
   // Emit a visible routing decision message for the user
-  const routingSource = (isAutoMode && resolvedRole !== 'general') ? 'small model' : (agentRole ? 'manual' : 'default')
+  const routingSource = !isAutoMode ? 'manual' : resolvedRole === 'general' ? 'default' : routedByKeyword ? 'keyword' : 'small model'
   mainWindow?.webContents.send('qwen-event', {
     type: 'routing-decision',
     agentType: resolvedRole,
