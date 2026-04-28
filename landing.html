@@ -332,6 +332,7 @@
     <li><a href="#features">Features</a></li>
     <li><a href="#agents">Agents</a></li>
     <li><a href="#inference">Inference</a></li>
+    <li><a href="#loop">Agent Loop</a></li>
     <li><a href="#workflow">Workflow</a></li>
   </ul>
   <button class="nav-cta">Download for Mac</button>
@@ -424,6 +425,12 @@
         <div class="feature-icon ic-green">📦</div>
         <h3>Context Compaction</h3>
         <p>Long conversations are automatically compacted by the claw-compactor, keeping the context window fresh without losing history.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon ic-teal">🔭</div>
+        <h3>LSP-Powered Safe Edits</h3>
+        <p>Before every file write, the agent checks blast radius, simulates the edit atomically, and verifies diagnostics post-write — all via a live Language Server Protocol connection.</p>
       </div>
 
       <div class="feature-card">
