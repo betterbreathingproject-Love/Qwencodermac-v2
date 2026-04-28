@@ -25,8 +25,8 @@ const CATEGORY_KEYWORDS = {
   'code-search': ['search', 'find', 'grep', 'locate', 'lookup', 'ast', 'query', 'where is', 'usage', 'references'],
   'requirements': ['requirement', 'requirements', 'spec', 'specification', 'user story', 'acceptance', 'define', 'criteria'],
   'design': ['design', 'architecture', 'diagram', 'interface', 'schema', 'model', 'plan', 'structure', 'layout', 'api design'],
-  'debug': ['debug', 'debugg', 'diagnose', 'trace', 'stack trace', 'error', 'exception', 'crash', 'failing', 'broken', 'not working', 'reproduce', 'root cause', 'why is', 'why does'],
-  'implementation': ['implement', 'code', 'build', 'create', 'write', 'develop', 'refactor', 'fix', 'bug', 'add', 'update', 'modify', 'change', 'set up', 'configure', 'install', 'upgrade', 'migrate', 'integrate', 'wire', 'connect', 'replace', 'rewrite', 'patch', 'extend', 'enable', 'disable', 'render', 'display', 'handle', 'parse', 'generate', 'emit', 'register', 'initialise', 'initialize'],
+  'debug': ['debug', 'debugg', 'diagnose', 'trace', 'stack trace', 'error', 'exception', 'crash', 'failing', 'broken', 'not working', 'reproduce', 'root cause', 'why is', 'why does', "doesn't work", "not loading", "won't load", "fails to", "not starting"],
+  'implementation': ['implement', 'code', 'build', 'create', 'write', 'develop', 'refactor', 'fix', 'bug', 'add', 'update', 'modify', 'change', 'set up', 'configure', 'install', 'upgrade', 'migrate', 'integrate', 'wire', 'connect', 'replace', 'rewrite', 'patch', 'extend', 'enable', 'disable', 'render', 'display', 'handle', 'parse', 'generate', 'emit', 'register'],
 };
 
 // --- AgentPool ---
@@ -141,6 +141,9 @@ class AgentPool extends EventEmitter {
 
           if (score > bestScore) {
             bestScore = score;
+            bestMatch = typeConfig;
+          } else if (score === bestScore && score > 0 && typeName === 'debug') {
+            // debug wins ties — it's more specific than implementation/explore
             bestMatch = typeConfig;
           }
         }
