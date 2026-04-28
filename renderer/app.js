@@ -1103,6 +1103,9 @@ async function sendAgentMode(prompt, opts = {}) {
           appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${label} → ${roleIcons[ev.agentType] || '⚡'} ${ev.agentType}</span>`)
         }
         break
+      case 'fast-assist':
+        appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${ev.label || '⚡ Fast Assistant'}</span>`)
+        break
       case 'session-start':
         setActivity('🤖 Agent running in ' + esc(ev.cwd||'.') + ' <span class="activity-dot">●</span>')
         startPromptProgress()
@@ -1552,6 +1555,9 @@ async function sendAgentMode(prompt, opts = {}) {
                   const label = ev.source === 'keyword' ? '⚡ Fast routed' : '🤖 Fast model routed'
                   appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${label} → ${roleIcons[ev.agentType] || '⚡'} ${ev.agentType}</span>`)
                 }
+                break
+              case 'fast-assist':
+                appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${ev.label || '⚡ Fast Assistant'}</span>`)
                 break
               case 'session-start': {
                 // Find the current in-progress task from the todo panel or task graph
@@ -3261,6 +3267,9 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         }
         break
       }
+      case 'fast-assist':
+        appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${ev.label || '⚡ Fast Assistant'}</span>`)
+        break
       case 'session-start': {
         const activeTask = currentTodos.find(t => t.status === 'in_progress')
         const agentType = _currentAgentType

@@ -1672,7 +1672,10 @@ class DirectBridge {
                 imageData, mimeType,
                 'Describe this screenshot in detail, focusing on UI elements, error messages, and code visible on screen.'
               )
-              if (desc) msg.content[i] = { type: 'text', text: `[Vision: ${desc}]` }
+              if (desc) {
+                msg.content[i] = { type: 'text', text: `[Vision: ${desc}]` }
+                this.send('qwen-event', { type: 'fast-assist', task: 'vision', label: '⚡ Fast Assistant — image described' })
+              }
             }
           }
         }
@@ -2376,7 +2379,10 @@ class DirectBridge {
               imageData, mimeType,
               'Describe this screenshot in detail, focusing on UI elements, error messages, and code visible on screen.'
             )
-            if (desc) content = `[Vision: ${desc}]`
+            if (desc) {
+              content = `[Vision: ${desc}]`
+              this.send('qwen-event', { type: 'fast-assist', task: 'vision', label: '⚡ Fast Assistant — screenshot described' })
+            }
           }
         }
 
