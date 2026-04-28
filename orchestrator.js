@@ -212,7 +212,7 @@ class Orchestrator extends EventEmitter {
       }
       this.emit('task-status-event', { nodeId: node.id, status: 'in_progress', agentType });
     };
-    this._agentPool.once('agent-type-selected', onTypeSelected);
+    this._agentPool.once?.('agent-type-selected', onTypeSelected);
 
     try {
       const startTime = Date.now();
@@ -236,8 +236,11 @@ class Orchestrator extends EventEmitter {
 
       const task = { ...node, status: 'in_progress', specContext: specContextWithMemory };
 
-      // LSP safe-edit injection — applied after dispatch resolves the real agent type
-      // (see below, after dispatch returns)
+      // Inject LSP safe-edit instructions for implementation agents when LSP is ready
+      const selectedType = this._agentPool?.selectType?.(node);
+      if (selectedType?.name === 'implementation' && this._lspManager?.getStatus().status === 'ready') {
+        task.systemPromptSuffix = SAFE_EDIT_INSTRUCTIONS;
+      }
 
       const result = await this._agentPool.dispatch(
         task,
@@ -280,7 +283,7 @@ class Orchestrator extends EventEmitter {
       this._context[node.id] = taskResult.output;
       this._updateNodeStatus(node.id, 'completed', { agentType });
     } catch (err) {
-      this._agentPool.off('agent-type-selected', onTypeSelected);
+      this._agentPool.off?.('agent-type-selected', onTypeSelected);
       this._handleFailure(node.id, err);
     }
   }
