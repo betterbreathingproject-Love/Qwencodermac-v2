@@ -1691,3 +1691,85 @@ async def session_crystallize(req: SessionCrystallizeRequest):
             status_code=500,
             detail=f"Failed to crystallize session: {e}"
         )
+
+
+# ── Assist Endpoint ───────────────────────────────────────────────────────────
+
+class AssistRequest(BaseModel):
+    task_type: str   # "route_task" (and future types)
+    payload: Any
+
+
+VALID_AGENT_TYPES = ["explore", "context-gather", "code-search", "requirements", "design", "implementation", "general"]
+
+ROUTE_TASK_PROMPT = (
+    "You are an orchestrator. Given a task title and optional description, "
+    "choose the single best agent type from this list:\n"
+    "- explore: understand/analyze/audit existing code or structure\n"
+    "- context-gather: find relevant files and dependencies\n"
+    "- code-search: search/grep/locate symbols or usages\n"
+    "- requirements: define or refine requirements/specs\n"
+    "- design: architecture, schema, interface, or API design\n"
+    "- implementation: write, edit, fix, build, upgrade, migrate, configure, install, render, parse, generate, register, initialize, or any hands-on coding task\n"
+    "- general: anything that doesn't fit the above\n\n"
+    "Respond with ONLY the agent type name, nothing else.\n\n"
+    "Task: {task}\n\nAgent type:"
+)
+
+
+@router.post("/assist")
+async def assist(req: AssistRequest):
+    """Lightweight assist endpoint — routes tasks to the extraction model.
+
+    Currently supports task_type='route_task' which uses the small model
+    to select the best agent type for a given task title/description.
+
+    Returns HTTP 503 with degraded=true when no extraction model is loaded.
+    Returns HTTP 400 for unsupported task_type.
+    Returns HTTP 504 on timeout.
+    """
+    if req.task_type not in ("route_task",):
+        raise HTTPException(status_code=400, detail=f"Unsupported task_type: {req.task_type}")
+
+    if _extract_model is None or _extract_processor is None:
+        return {"degraded": True, "reason": "no extraction model loaded"}
+
+    if req.task_type == "route_task":
+        task_text = req.payload.get("task", "") if isinstance(req.payload, dict) else str(req.payload)
+        if not task_text:
+            raise HTTPException(status_code=400, detail="payload.task is required for route_task")
+
+        prompt = ROUTE_TASK_PROMPT.format(task=task_text[:300])
+
+        try:
+            import asyncio
+            import mlx_lm
+
+            async def _run():
+                async with _get_extraction_semaphore():
+                    loop = asyncio.get_event_loop()
+                    result = await loop.run_in_executor(
+                        None,
+                        lambda: mlx_lm.generate(
+                            _extract_model, _extract_processor,
+                            prompt=prompt, max_tokens=10, verbose=False
+                        )
+                    )
+                    return result
+
+            response = await asyncio.wait_for(_run(), timeout=60.0)
+
+            # Parse the agent type from the response
+            agent_type = response.strip().lower().split()[0] if response.strip() else "general"
+            # Sanitize — only accept known types
+            if agent_type not in VALID_AGENT_TYPES:
+                agent_type = "general"
+
+            logger.debug(f"[assist/route_task] task={task_text[:60]!r} → {agent_type}")
+            return {"result": agent_type}
+
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail="Extraction model timed out")
+        except Exception as e:
+            logger.error(f"[assist/route_task] failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))

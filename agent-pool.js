@@ -4,6 +4,12 @@ const { EventEmitter } = require('node:events');
 const crypto = require('node:crypto');
 const { LSP_TOOL_SETS } = require('./direct-bridge');
 
+// Memory client — gracefully degrades if unavailable
+let memoryClient = null
+try {
+  memoryClient = require('./memory-client.js')
+} catch (_) {}
+
 // --- Constants ---
 
 const DEFAULT_MAX_CONCURRENCY = 3;
@@ -196,7 +202,24 @@ class AgentPool extends EventEmitter {
    * @returns {Promise<object>} TaskResult
    */
   async dispatch(task, context, options = {}) {
-    const agentType = this.selectType(task);
+    // Try small-model routing first; fall back to keyword matching
+    let agentType = null
+    if (memoryClient && typeof memoryClient.assistRouteTask === 'function') {
+      const routed = await memoryClient.assistRouteTask(
+        task.title || task.id || '',
+        task.description || ''
+      )
+      if (routed && this._types.has(routed)) {
+        agentType = this._types.get(routed)
+        // Merge LSP tools
+        const effectiveTools = this._getEffectiveTools(agentType)
+        agentType = { ...agentType, allowedTools: effectiveTools }
+      }
+    }
+    if (!agentType) {
+      agentType = this.selectType(task)
+    }
+
     const profile = this._getCalibrationProfile?.();
     const timeout = agentType?.timeout ?? profile?.poolTimeout ?? this._defaultTimeout;
     const taskId = task.id || crypto.randomUUID();

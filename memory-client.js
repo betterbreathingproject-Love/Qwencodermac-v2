@@ -277,6 +277,29 @@ async function getStatus() {
   }
 }
 
+/**
+ * Ask the small extraction model to pick the best agent type for a task.
+ * Returns the agent type string (e.g. 'implementation', 'explore') or null
+ * when the extraction model is not loaded (degraded mode) or on any error.
+ *
+ * @param {string} taskTitle - Task title
+ * @param {string} [taskDescription] - Optional task description
+ * @returns {Promise<string|null>}
+ */
+async function assistRouteTask(taskTitle, taskDescription = '') {
+  try {
+    const task = taskDescription ? `${taskTitle}\n${taskDescription}` : taskTitle
+    const body = { task_type: 'route_task', payload: { task } }
+    const result = await httpRequest('POST', '/memory/assist', body, 8000)
+    if (!result) return null
+    if (result.degraded) return null  // no extraction model — fall back to keywords
+    if (result.result && typeof result.result === 'string') return result.result
+    return null
+  } catch (_) {
+    return null
+  }
+}
+
 module.exports = {
   retrieve,
   archiveRecord,
@@ -286,6 +309,7 @@ module.exports = {
   vectorSearch,
   archiveSearch,
   getStatus,
+  assistRouteTask,
   // Expose for testing
   _httpRequest: httpRequest,
   _parseBaseUrl: parseBaseUrl,
