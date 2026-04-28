@@ -729,12 +729,14 @@ function parseMcpDiagnostics(result) {
 }
 
 /**
- * Estimate token count from a string. Rough heuristic: ~3.5 chars per token
- * for English/code content. Not exact, but good enough for trimming decisions.
+ * Estimate token count from a string. Rough heuristic: ~4 chars per token
+ * for English/code content. Matches server-side estimation (adjusted_chars // 4).
  */
 function estimateTokens(text) {
   if (!text) return 0
-  return Math.ceil(text.length / 3.5)
+  // Use chars/4 to match the server's estimation (server.py uses adjusted_chars // 4)
+  // Previously used 3.5 which underestimated tokens, causing 413 rejections
+  return Math.ceil(text.length / 4)
 }
 
 /**
@@ -769,9 +771,36 @@ function estimateMessagesTokens(messages) {
  * @returns {Array} Trimmed messages array
  */
 function trimMessages(messages, maxInputTokens) {
-  if (messages.length <= 4) return messages
   let current = estimateMessagesTokens(messages)
   if (current <= maxInputTokens) return messages
+
+  // Phase 0: Truncate the largest messages first (regardless of position).
+  // This handles short conversations where a single tool result dominates.
+  // Sort by content length descending, truncate the biggest ones until under budget.
+  const charBudgetPerToken = 4
+  const targetChars = Math.floor(maxInputTokens * charBudgetPerToken)
+  for (let pass = 0; pass < 3 && current > maxInputTokens; pass++) {
+    // Find the largest non-system message
+    let maxIdx = -1, maxLen = 0
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i]
+      if (m.role === 'system') continue
+      const len = (m.content || '').length
+      if (len > maxLen) { maxLen = len; maxIdx = i }
+    }
+    if (maxIdx === -1 || maxLen <= 2000) break
+    // Truncate to a proportional share of the budget (but at least 1500 chars)
+    const allowedChars = Math.max(1500, Math.floor(targetChars / messages.length))
+    if (maxLen > allowedChars) {
+      const oldLen = messages[maxIdx].content.length
+      messages[maxIdx].content = messages[maxIdx].content.slice(0, allowedChars) +
+        '\n\n... [trimmed: content too large for context window. Use more specific queries or read smaller sections.]'
+      current -= Math.ceil((oldLen - messages[maxIdx].content.length) / charBudgetPerToken)
+    }
+  }
+  if (current <= maxInputTokens) return messages
+
+  if (messages.length <= 4) return messages
 
   // Phase 1: Truncate large tool result messages in the middle
   // Keep first 2 and last 4 messages intact
@@ -782,7 +811,7 @@ function trimMessages(messages, maxInputTokens) {
     if (msg.role === 'tool' && msg.content && msg.content.length > 2000) {
       const oldLen = msg.content.length
       msg.content = msg.content.slice(0, 1500) + '\n\n... [trimmed to save context space]'
-      current -= Math.ceil((oldLen - msg.content.length) / 3.5)
+      current -= Math.ceil((oldLen - msg.content.length) / 4)
     }
   }
   if (current <= maxInputTokens) return messages
@@ -1481,18 +1510,33 @@ class DirectBridge {
           // HTTP 413 — prompt too large. Trim messages and retry.
           const isPromptTooLarge = /Server returned HTTP 413|Prompt too large/.test(msg)
           if (isPromptTooLarge && attempt < 7) {
-            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Prompt too large (HTTP 413), trimming context and retrying...` })
-            const trimmed = trimMessages(messages, effectiveMaxInputTokens)
+            // Parse the server's actual limit from the error if available
+            let serverLimit = effectiveMaxInputTokens
+            const limitMatch = msg.match(/"limit"\s*:\s*(\d+)/)
+            if (limitMatch) serverLimit = Math.min(serverLimit, parseInt(limitMatch[1], 10))
+            // Progressive reduction: each retry reduces budget by 20% more
+            const reductionFactor = 1 - (0.2 * (attempt + 1))
+            const targetTokens = Math.floor(serverLimit * Math.max(reductionFactor, 0.3))
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Prompt too large (HTTP 413), trimming context and retrying... (attempt ${attempt + 1}, target: ${targetTokens} tokens)` })
+            const trimmed = trimMessages(messages, targetTokens)
             messages.length = 0
             messages.push(...trimmed)
-            // If still over budget after trimMessages (large content in recent messages),
-            // progressively truncate the largest tool/assistant content in the last messages
-            if (estimateMessagesTokens(messages) > effectiveMaxInputTokens) {
-              const maxContentChars = Math.floor(effectiveMaxInputTokens * 3.5 / messages.length)
-              for (let mi = 0; mi < messages.length; mi++) {
-                const m = messages[mi]
-                if (m.content && m.content.length > maxContentChars && m.role !== 'system') {
-                  m.content = m.content.slice(0, maxContentChars) + '\n\n... [trimmed: content too large for context window. Use more specific queries or read smaller sections.]'
+            // If still over budget, aggressively truncate the largest messages
+            if (estimateMessagesTokens(messages) > targetTokens) {
+              // Sort indices by content length descending, truncate biggest first
+              const indexed = messages.map((m, idx) => ({ idx, len: (m.content || '').length, role: m.role }))
+                .filter(e => e.role !== 'system' && e.len > 1000)
+                .sort((a, b) => b.len - a.len)
+              const maxTotalChars = Math.floor(targetTokens * 4)
+              let currentChars = messages.reduce((sum, m) => sum + (m.content || '').length, 0)
+              for (const entry of indexed) {
+                if (currentChars <= maxTotalChars) break
+                const m = messages[entry.idx]
+                const allowedChars = Math.max(800, Math.floor(maxTotalChars / messages.length))
+                if (m.content.length > allowedChars) {
+                  const oldLen = m.content.length
+                  m.content = m.content.slice(0, allowedChars) + '\n\n... [trimmed: content too large for context window. Use more specific queries or read smaller sections.]'
+                  currentChars -= (oldLen - m.content.length)
                 }
               }
             }
@@ -2240,12 +2284,23 @@ class DirectBridge {
       if (estimatedTokens > config.PRE_SEND_LIMIT) {
         this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Prompt too large (~${estimatedTokens} tokens), trimming to ${config.PRE_SEND_LIMIT} before sending` })
         const trimmed = trimMessages(messages, config.PRE_SEND_LIMIT)
-        // If trimMessages didn't reduce enough (large content in recent messages), truncate them
+        // If trimMessages didn't reduce enough (large content in recent messages),
+        // aggressively truncate the largest messages first
         if (estimateMessagesTokens(trimmed) > config.PRE_SEND_LIMIT) {
-          const maxContentChars = Math.floor(config.PRE_SEND_LIMIT * 3.5 / trimmed.length)
-          for (const m of trimmed) {
-            if (m.content && m.content.length > maxContentChars && m.role !== 'system') {
-              m.content = m.content.slice(0, maxContentChars) + '\n\n... [trimmed: content too large for context window. Use more specific queries or read smaller sections.]'
+          const maxTotalChars = Math.floor(config.PRE_SEND_LIMIT * 4)
+          // Sort by content length descending, truncate biggest first
+          const indexed = trimmed.map((m, idx) => ({ idx, len: (m.content || '').length, role: m.role }))
+            .filter(e => e.role !== 'system' && e.len > 1500)
+            .sort((a, b) => b.len - a.len)
+          let currentChars = trimmed.reduce((sum, m) => sum + (m.content || '').length, 0)
+          for (const entry of indexed) {
+            if (currentChars <= maxTotalChars) break
+            const m = trimmed[entry.idx]
+            const allowedChars = Math.max(1000, Math.floor(maxTotalChars / trimmed.length))
+            if (m.content.length > allowedChars) {
+              const oldLen = m.content.length
+              m.content = m.content.slice(0, allowedChars) + '\n\n... [trimmed: content too large for context window. Use more specific queries or read smaller sections.]'
+              currentChars -= (oldLen - m.content.length)
             }
           }
         }

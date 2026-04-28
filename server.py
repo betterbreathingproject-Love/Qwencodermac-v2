@@ -869,30 +869,45 @@ async def chat_completions(req: ChatRequest):
             loop = asyncio.get_event_loop()
             queue: asyncio.Queue = asyncio.Queue()
             full_text_parts = []
+            _cancelled = threading.Event()  # Signal to stop inference thread on client disconnect
+
+            # Acquire the semaphore asynchronously — other requests wait here
+            # without blocking the event loop.
+            # The semaphore is released by the inference thread itself (via a
+            # callback) rather than by the generator. This ensures that even if
+            # the client disconnects and the generator is closed, the semaphore
+            # stays held until Metal inference actually finishes — preventing
+            # concurrent Metal operations that crash the process.
+            await sem.acquire()
 
             def run_stream():
                 try:
                     gen = stream_generate(_model, _processor, prompt, **kwargs)
                     last_result = None
                     for chunk in gen:
+                        if _cancelled.is_set():
+                            break
                         text = chunk.text if hasattr(chunk, 'text') else str(chunk)
                         if text:
                             loop.call_soon_threadsafe(queue.put_nowait, ("token", text))
                         last_result = chunk
-                    if last_result and hasattr(last_result, 'prompt_tps'):
+                    if not _cancelled.is_set() and last_result and hasattr(last_result, 'prompt_tps'):
                         loop.call_soon_threadsafe(queue.put_nowait, ("stats", last_result))
                 except Exception as e:
-                    import traceback
-                    print(f"[server] ❌ Stream inference error ({type(e).__name__}): {e}", file=sys.stderr)
-                    traceback.print_exc(file=sys.stderr)
-                    try:
-                        import mlx.core as mx
-                        mem_active = mx.metal.get_active_memory() / (1024**3)
-                        mem_peak = mx.metal.get_peak_memory() / (1024**3)
-                        print(f"[server] Metal memory — active: {mem_active:.2f} GB, peak: {mem_peak:.2f} GB", file=sys.stderr)
-                    except Exception:
-                        pass
-                    loop.call_soon_threadsafe(queue.put_nowait, ("error", str(e)))
+                    if _cancelled.is_set():
+                        print(f"[server] Inference interrupted (client disconnected): {type(e).__name__}", file=sys.stderr)
+                    else:
+                        import traceback
+                        print(f"[server] ❌ Stream inference error ({type(e).__name__}): {e}", file=sys.stderr)
+                        traceback.print_exc(file=sys.stderr)
+                        try:
+                            import mlx.core as mx
+                            mem_active = mx.metal.get_active_memory() / (1024**3)
+                            mem_peak = mx.metal.get_peak_memory() / (1024**3)
+                            print(f"[server] Metal memory — active: {mem_active:.2f} GB, peak: {mem_peak:.2f} GB", file=sys.stderr)
+                        except Exception:
+                            pass
+                        loop.call_soon_threadsafe(queue.put_nowait, ("error", str(e)))
                 finally:
                     try:
                         import mlx.core as mx
@@ -900,40 +915,40 @@ async def chat_completions(req: ChatRequest):
                     except Exception:
                         pass
                     loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
+                    # Release the semaphore from the thread — this guarantees no
+                    # concurrent Metal inference even if the generator was closed.
+                    loop.call_soon_threadsafe(sem.release)
 
-            # Acquire the semaphore asynchronously — other requests wait here
-            # without blocking the event loop.
-            async with sem:
-                loop.run_in_executor(None, run_stream)
+            loop.run_in_executor(None, run_stream)
 
-                accumulated = ""
-                _content_sent_len = 0       # how much of accumulated we've sent as content
-                # ── incremental tool call streaming state ─────────────────
-                _in_tool_call = False       # True once we see <tool_call>
-                _tool_call_buf = ""         # raw text inside the tool call block
-                _tc_index = 0               # tool call index counter
-                _tc_id = ""                 # current tool call id
-                _tc_func_name = ""          # function name once detected
-                _tc_name_sent = False       # whether we've sent the name delta
-                _tc_last_args_len = 0       # track how much of args we've sent
-                _tc_json_args = None        # JSON-style args (when model uses JSON instead of XML params)
-                _tc_completed = []          # list of completed tool call chunks
-                _TOOL_OPEN = "<tool_call>"
-                _TOOL_CLOSE = "</tool_call>"
-                _PARTIAL_TAGS = ("<", "<t", "<to", "<too", "<tool",
-                                 "<tool_", "<tool_c", "<tool_ca",
-                                 "<tool_cal", "<tool_call")
+            accumulated = ""
+            _content_sent_len = 0       # how much of accumulated we've sent as content
+            # ── incremental tool call streaming state ─────────────────
+            _in_tool_call = False       # True once we see <tool_call>
+            _tool_call_buf = ""         # raw text inside the tool call block
+            _tc_index = 0               # tool call index counter
+            _tc_id = ""                 # current tool call id
+            _tc_func_name = ""          # function name once detected
+            _tc_name_sent = False       # whether we've sent the name delta
+            _tc_last_args_len = 0       # track how much of args we've sent
+            _tc_json_args = None        # JSON-style args (when model uses JSON instead of XML params)
+            _tc_completed = []          # list of completed tool call chunks
+            _TOOL_OPEN = "<tool_call>"
+            _TOOL_CLOSE = "</tool_call>"
+            _PARTIAL_TAGS = ("<", "<t", "<to", "<too", "<tool",
+                             "<tool_", "<tool_c", "<tool_ca",
+                             "<tool_cal", "<tool_call")
 
-                while True:
-                    kind, data = await queue.get()
-                    if kind == "token":
-                        accumulated += data
-                        full_text_parts.append(data)
+            while True:
+                kind, data = await queue.get()
+                if kind == "token":
+                    accumulated += data
+                    full_text_parts.append(data)
 
-                        # ── detect tool call boundaries ───────────────────
-                        if not _in_tool_call:
-                            # Check if we've entered a tool call block
-                            tc_start = accumulated.find(_TOOL_OPEN, _content_sent_len)
+                    # ── detect tool call boundaries ───────────────────
+                    if not _in_tool_call:
+                        # Check if we've entered a tool call block
+                        tc_start = accumulated.find(_TOOL_OPEN, _content_sent_len)
                             if tc_start != -1:
                                 _in_tool_call = True
                                 _tc_id = f"call_{uuid.uuid4().hex[:12]}"
@@ -1185,6 +1200,8 @@ async def chat_completions(req: ChatRequest):
                         yield "data: [DONE]\n\n"
                         break
 
+            # Signal thread to stop (in case it's still running after normal completion)
+            _cancelled.set()
             _cleanup_images(images)
 
         # Aggressive post-request cache clearing to prevent memory accumulation
@@ -1283,7 +1300,7 @@ async def chat_completions(req: ChatRequest):
 
 
 if __name__ == "__main__":
-    import uvicorn, argparse
+    import uvicorn, argparse, signal
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8090)
@@ -1291,4 +1308,21 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.model:
         load_model(args.model)
+
+    # Graceful shutdown: unload model and clear Metal cache on SIGTERM
+    def _handle_sigterm(signum, frame):
+        global _model, _processor, _config
+        print("[server] Received SIGTERM, cleaning up...", file=sys.stderr)
+        try:
+            _model = None
+            _processor = None
+            _config = None
+            import mlx.core as mx
+            mx.metal.clear_cache()
+        except Exception:
+            pass
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
     uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="info", loop="asyncio")
