@@ -217,6 +217,7 @@ agentPool.registerType({ name: 'requirements', systemPrompt: '', allowedTools: [
 agentPool.registerType({ name: 'design', systemPrompt: '', allowedTools: [] })
 agentPool.registerType({ name: 'debug', systemPrompt: '', allowedTools: ['read_file', 'list_dir', 'search_files', 'bash', 'web_search', 'web_fetch'] })
 agentPool.registerType({ name: 'tester', systemPrompt: '', allowedTools: ['browser_navigate', 'browser_screenshot', 'browser_click', 'browser_type', 'browser_get_text', 'browser_get_html', 'browser_evaluate', 'browser_wait_for', 'browser_select_option', 'browser_close', 'bash', 'read_file'] })
+agentPool.registerType({ name: 'tester', systemPrompt: '', allowedTools: ['browser_navigate', 'browser_screenshot', 'browser_click', 'browser_type', 'browser_get_text', 'browser_get_html', 'browser_evaluate', 'browser_wait_for', 'browser_select_option', 'browser_close', 'bash', 'read_file'] })
 agentPool.registerType({ name: 'implementation', systemPrompt: '', allowedTools: ['read_file', 'write_file', 'edit_file', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch'], timeout: 1800000 }) // 30 min
 agentPool.registerType({ name: 'general', systemPrompt: '', allowedTools: ['read_file', 'write_file', 'edit_file', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch'], timeout: 1800000 }) // 30 min
 
