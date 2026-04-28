@@ -1696,10 +1696,33 @@ async def session_crystallize(req: SessionCrystallizeRequest):
 # ── Assist Endpoint ───────────────────────────────────────────────────────────
 
 class AssistRequest(BaseModel):
-    task_type: str   # "route_task" (and future types)
-    payload: Any
+    task_type: str
+    payload: dict
+    timeout_ms: Optional[int] = 60000
 
 
+class AssistResponse(BaseModel):
+    result: Optional[str] = None
+    result_data: Optional[Any] = None
+    elapsed_ms: int
+    output_tokens: int
+
+
+# Valid task_type values for the assist endpoint
+_VALID_ASSIST_TASK_TYPES = frozenset({
+    "vision",
+    "todo_bootstrap",
+    "todo_watch",
+    "fetch_summarize",
+    "tool_validate",
+    "error_diagnose",
+    "git_summarize",
+    "rank_search",
+    "extract_section",
+    "detect_repetition",
+})
+
+# Legacy route_task support (kept for backward compatibility)
 VALID_AGENT_TYPES = ["explore", "context-gather", "code-search", "requirements", "design", "implementation", "general"]
 
 ROUTE_TASK_PROMPT = (
@@ -1717,59 +1740,131 @@ ROUTE_TASK_PROMPT = (
 )
 
 
+async def _assist_with_semaphore(handler_coro):
+    """Run a handler coroutine under the extraction semaphore (concurrency=1)."""
+    async with _get_extraction_semaphore():
+        return await handler_coro
+
+
+# ── Assist handler stubs (implemented in Task 2) ─────────────────────────────
+
+async def _handle_vision(payload: dict) -> AssistResponse:
+    raise NotImplementedError("_handle_vision not yet implemented")
+
+
+async def _handle_todo_bootstrap(payload: dict) -> AssistResponse:
+    raise NotImplementedError("_handle_todo_bootstrap not yet implemented")
+
+
+async def _handle_todo_watch(payload: dict) -> AssistResponse:
+    raise NotImplementedError("_handle_todo_watch not yet implemented")
+
+
+async def _handle_fetch_summarize(payload: dict) -> AssistResponse:
+    raise NotImplementedError("_handle_fetch_summarize not yet implemented")
+
+
+async def _handle_tool_validate(payload: dict) -> AssistResponse:
+    raise NotImplementedError("_handle_tool_validate not yet implemented")
+
+
+async def _handle_error_diagnose(payload: dict) -> AssistResponse:
+    raise NotImplementedError("_handle_error_diagnose not yet implemented")
+
+
+async def _handle_git_summarize(payload: dict) -> AssistResponse:
+    raise NotImplementedError("_handle_git_summarize not yet implemented")
+
+
+async def _handle_rank_search(payload: dict) -> AssistResponse:
+    raise NotImplementedError("_handle_rank_search not yet implemented")
+
+
+async def _handle_extract_section(payload: dict) -> AssistResponse:
+    raise NotImplementedError("_handle_extract_section not yet implemented")
+
+
+async def _handle_detect_repetition(payload: dict) -> AssistResponse:
+    raise NotImplementedError("_handle_detect_repetition not yet implemented")
+
+
+_ASSIST_HANDLERS = {
+    "vision": _handle_vision,
+    "todo_bootstrap": _handle_todo_bootstrap,
+    "todo_watch": _handle_todo_watch,
+    "fetch_summarize": _handle_fetch_summarize,
+    "tool_validate": _handle_tool_validate,
+    "error_diagnose": _handle_error_diagnose,
+    "git_summarize": _handle_git_summarize,
+    "rank_search": _handle_rank_search,
+    "extract_section": _handle_extract_section,
+    "detect_repetition": _handle_detect_repetition,
+}
+
+
 @router.post("/assist")
 async def assist(req: AssistRequest):
     """Lightweight assist endpoint — routes tasks to the extraction model.
 
-    Currently supports task_type='route_task' which uses the small model
-    to select the best agent type for a given task title/description.
+    Supports 10 task types: vision, todo_bootstrap, todo_watch, fetch_summarize,
+    tool_validate, error_diagnose, git_summarize, rank_search, extract_section,
+    detect_repetition.
 
+    Returns HTTP 400 for unknown task_type.
     Returns HTTP 503 with degraded=true when no extraction model is loaded.
-    Returns HTTP 400 for unsupported task_type.
-    Returns HTTP 504 on timeout.
+    Returns HTTP 504 on timeout (60s).
     """
-    if req.task_type not in ("route_task",):
-        raise HTTPException(status_code=400, detail=f"Unsupported task_type: {req.task_type}")
+    import asyncio
+    import time
 
-    if _extract_model is None or _extract_processor is None:
+    # Validate task_type
+    if req.task_type not in _VALID_ASSIST_TASK_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported task_type: {req.task_type!r}. "
+                   f"Valid values: {sorted(_VALID_ASSIST_TASK_TYPES)}"
+        )
+
+    # Degrade gracefully when no extraction model is loaded
+    if _extract_model is None:
+        logger.debug(f"[assist/{req.task_type}] degraded — no extraction model loaded")
         return {"degraded": True, "reason": "no extraction model loaded"}
 
-    if req.task_type == "route_task":
-        task_text = req.payload.get("task", "") if isinstance(req.payload, dict) else str(req.payload)
-        if not task_text:
-            raise HTTPException(status_code=400, detail="payload.task is required for route_task")
+    # Apply _fail_closed_filter to all string fields in payload before dispatch
+    filtered_payload: dict = {}
+    for k, v in req.payload.items():
+        if isinstance(v, str):
+            filtered_payload[k] = _fail_closed_filter(v)
+        elif isinstance(v, list):
+            filtered_payload[k] = [
+                _fail_closed_filter(item) if isinstance(item, str) else item
+                for item in v
+            ]
+        else:
+            filtered_payload[k] = v
 
-        prompt = ROUTE_TASK_PROMPT.format(task=task_text[:300])
+    handler = _ASSIST_HANDLERS[req.task_type]
+    t0 = time.monotonic()
 
-        try:
-            import asyncio
-            import mlx_lm
+    try:
+        response: AssistResponse = await _asyncio.wait_for(
+            _assist_with_semaphore(handler(filtered_payload)),
+            timeout=60.0,
+        )
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        logger.debug(
+            f"[assist/{req.task_type}] completed in {elapsed_ms}ms, "
+            f"output_tokens={response.output_tokens}"
+        )
+        return response
 
-            async def _run():
-                async with _get_extraction_semaphore():
-                    loop = asyncio.get_event_loop()
-                    result = await loop.run_in_executor(
-                        None,
-                        lambda: mlx_lm.generate(
-                            _extract_model, _extract_processor,
-                            prompt=prompt, max_tokens=10, verbose=False
-                        )
-                    )
-                    return result
-
-            response = await asyncio.wait_for(_run(), timeout=60.0)
-
-            # Parse the agent type from the response
-            agent_type = response.strip().lower().split()[0] if response.strip() else "general"
-            # Sanitize — only accept known types
-            if agent_type not in VALID_AGENT_TYPES:
-                agent_type = "general"
-
-            logger.debug(f"[assist/route_task] task={task_text[:60]!r} → {agent_type}")
-            return {"result": agent_type}
-
-        except asyncio.TimeoutError:
-            raise HTTPException(status_code=504, detail="Extraction model timed out")
-        except Exception as e:
-            logger.error(f"[assist/route_task] failed: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+    except _asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Assist task timed out")
+    except NotImplementedError as e:
+        # Stubs not yet implemented — return a placeholder response
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        logger.debug(f"[assist/{req.task_type}] stub (not yet implemented)")
+        return AssistResponse(result=None, result_data=None, elapsed_ms=elapsed_ms, output_tokens=0)
+    except Exception as e:
+        logger.error(f"[assist/{req.task_type}] failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
