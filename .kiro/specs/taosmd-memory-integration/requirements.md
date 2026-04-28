@@ -97,7 +97,7 @@ This specification covers integrating taosmd (a local-first AI memory system) as
 3. WHEN the Extraction_Model is loaded, THE Memory_Backend SHALL report its status (model name, memory usage) via the `GET /memory/status` endpoint
 4. IF loading the Extraction_Model would cause Metal memory usage to exceed 85% of system RAM, THEN THE Memory_Backend SHALL reject the load request with HTTP 507 and a descriptive error indicating insufficient memory
 5. THE Memory_Backend SHALL expose a `POST /memory/extractor/unload` endpoint that releases the Extraction_Model and frees its Metal memory allocation
-6. IF the Extraction_Model is not loaded, THEN THE Memory_Backend SHALL fall back to regex-only fact extraction (15ms per turn) and log a warning that LLM-based extraction is unavailable
+6. IF the Extraction_Model is not loaded, THEN THE Memory_Backend SHALL route LLM-based fact extraction to the primary model using a lightweight extraction prompt, falling back to regex-only extraction (15ms per turn) only if the primary model is also unavailable
 
 ### Requirement 7: Async Fact Extraction After Each Agent Turn
 
@@ -198,7 +198,33 @@ This specification covers integrating taosmd (a local-first AI memory system) as
 4. THE Memory_Backend SHALL store all persistent data under `~/.qwencoder/memory/` with the following structure: `knowledge-graph.db`, `vector-memory.db`, `archive/` (JSONL files), `archive-index.db`, `crystals.db`
 5. IF the `~/.qwencoder/memory/` directory does not exist, THEN THE Memory_Backend SHALL create it and all required subdirectories on first initialization
 
-### Requirement 15: Secret Filtering on Ingest
+### Requirement 15: Extraction Model UI in Model Picker
+
+**User Story:** As a user, I want to select and manage the memory extraction model from the existing model picker tab, so that I can load/unload the secondary model without using API calls directly.
+
+#### Acceptance Criteria
+
+1. THE model picker panel SHALL display an "Extraction Model" section below the primary model selector, showing the current extraction model status (loaded model name, memory usage, or "Not loaded")
+2. THE "Extraction Model" section SHALL display a dropdown of available models from `~/.lmstudio/models/` filtered to models ≤ 8B parameters (suitable for extraction), with an option to select any model
+3. WHEN the user selects an extraction model and clicks "Load", THE renderer SHALL call the Memory_Client to trigger `POST /memory/extractor/load` with the selected model path
+4. WHEN the extraction model is loaded, THE UI SHALL display a green status indicator, the model name, and an "Unload" button
+5. WHEN the user clicks "Unload", THE renderer SHALL call `POST /memory/extractor/unload` and update the status to "Not loaded"
+6. IF loading the extraction model fails (e.g. insufficient memory), THE UI SHALL display the error message from the server (HTTP 507) as a toast notification
+7. WHEN no extraction model is selected or loaded, THE Memory_Backend SHALL route fact extraction requests to the primary model using a lightweight extraction prompt, so that memory extraction still functions with a single model
+
+### Requirement 16: Single-Model Extraction Fallback
+
+**User Story:** As a user, I want fact extraction to work using my primary model when no dedicated extraction model is loaded, so that the memory system functions out of the box without requiring a second model.
+
+#### Acceptance Criteria
+
+1. WHEN the Memory_Backend receives a `POST /memory/extract` request and no Extraction_Model is loaded, THE Memory_Backend SHALL route the LLM extraction to the primary model's `/v1/chat/completions` endpoint using a short structured extraction prompt
+2. WHEN using the primary model for extraction, THE Memory_Backend SHALL use a concise system prompt (under 200 tokens) that instructs the model to output entity-relationship triples in JSON format
+3. WHEN using the primary model for extraction, THE Memory_Backend SHALL queue extraction requests and process them sequentially to avoid contending with user-facing inference
+4. WHEN a dedicated Extraction_Model is loaded, THE Memory_Backend SHALL prefer it over the primary model for all extraction requests
+5. THE Memory_Backend SHALL track which model performed each extraction in the extraction queue status (`GET /memory/extract/queue`), reporting either "extraction_model" or "primary_model" as the source
+
+### Requirement 17: Secret Filtering on Ingest
 
 **User Story:** As a user, I want sensitive information automatically redacted before it enters the memory system, so that API keys, passwords, and tokens are not persisted in the knowledge graph or archive.
 

@@ -247,7 +247,37 @@ This plan implements taosmd as a persistent memory layer for QwenCoder Mac Studi
     - File: `test/orchestrator-memory.test.js`
     - _Requirements: 10.1, 10.3, 10.4, 10.5_
 
-- [ ] 13. Final checkpoint — Ensure all tests pass
+- [ ] 13. Add extraction model UI to model picker and single-model fallback
+  - [ ] 13.1 Add "Extraction Model" section to the model picker panel in `renderer/app.js`
+    - Display extraction model status (loaded name + memory usage, or "Not loaded") below the primary model selector
+    - Show a dropdown of available models from `~/.lmstudio/models/` (filtered to ≤ 8B where possible, with option to select any)
+    - Add "Load" button that calls `POST /memory/extractor/load` via IPC → Memory_Client
+    - When loaded, show green indicator, model name, and "Unload" button
+    - Show toast notification on load failure (e.g. HTTP 507 insufficient memory)
+    - _Requirements: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6_
+
+  - [ ] 13.2 Add IPC handlers in main process for extraction model load/unload
+    - Wire `memory-extractor-load` and `memory-extractor-unload` IPC channels
+    - Forward to Memory_Client's HTTP calls to the backend
+    - Return status/error to renderer
+    - _Requirements: 15.3, 15.5_
+
+  - [ ] 13.3 Implement single-model extraction fallback in `memory-bridge.py`
+    - When no Extraction_Model is loaded, route extraction to primary model's `/v1/chat/completions` endpoint
+    - Use a concise extraction system prompt (under 200 tokens) that outputs entity-relationship triples as JSON
+    - Queue extraction requests sequentially to avoid contending with user-facing inference
+    - Prefer dedicated Extraction_Model when loaded; fall back to primary model otherwise
+    - Track extraction source ("extraction_model" or "primary_model") in queue status
+    - _Requirements: 16.1, 16.2, 16.3, 16.4, 16.5_
+
+  - [ ]* 13.4 Write unit tests for single-model extraction fallback
+    - Test that extraction routes to primary model when no extraction model loaded
+    - Test that extraction prefers dedicated model when available
+    - Test sequential queuing to avoid inference contention
+    - File: `test/memory-bridge.test.js`
+    - _Requirements: 16.1, 16.3, 16.4_
+
+- [ ] 14. Final checkpoint — Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
