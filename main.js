@@ -268,13 +268,23 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
   let resolvedRole = agentRole || 'general'
   // Route via small model when user hasn't explicitly picked a non-general role
   const isAutoMode = !agentRole || agentRole === 'general'
-  if (isAutoMode && _memoryClientForRouting?.assistRouteTask) {
-    try {
-      const routed = await _memoryClientForRouting.assistRouteTask(prompt.slice(0, 200))
-      console.log('[qwen-run] assistRouteTask result:', routed, '→ resolvedRole:', routed || 'general')
-      if (routed) resolvedRole = routed
-    } catch (err) {
-      console.warn('[qwen-run] assistRouteTask failed:', err.message)
+  if (isAutoMode) {
+    // Keyword matching first — fast, no model call needed for unambiguous signals
+    const keywordType = agentPool.selectType({ title: prompt, description: '' })
+    const keywordName = keywordType?.name || 'general'
+
+    if (keywordName !== 'general') {
+      resolvedRole = keywordName
+      console.log('[qwen-run] keyword routing:', resolvedRole)
+    } else if (_memoryClientForRouting?.assistRouteTask) {
+      // Ambiguous — fall back to small model
+      try {
+        const routed = await _memoryClientForRouting.assistRouteTask(prompt.slice(0, 200))
+        console.log('[qwen-run] assistRouteTask result:', routed, '→ resolvedRole:', routed || 'general')
+        if (routed) resolvedRole = routed
+      } catch (err) {
+        console.warn('[qwen-run] assistRouteTask failed:', err.message)
+      }
     }
   } else {
     console.log('[qwen-run] routing skipped — agentRole:', agentRole, 'hasClient:', !!_memoryClientForRouting?.assistRouteTask)
