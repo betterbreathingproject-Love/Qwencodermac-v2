@@ -51,11 +51,15 @@ def _get_version(engine):
 
 
 def _extract_stages_applied(stats):
-    """Extract list of stage names that actually ran from per_stage stats."""
+    """Extract stages info from stats. v7.1 uses stages_run (int count), not a list."""
+    # v7.1 API: stages_run is an integer count on per-message stats
+    stages_run = stats.get("stages_run")
+    if isinstance(stages_run, int):
+        return stages_run  # return count directly
+    # Legacy list format
     per_stage = stats.get("per_stage", [])
     if per_stage:
         return [s["name"] for s in per_stage if not s.get("skipped", True)]
-    # Fallback for older API
     return stats.get("stages_applied", [])
 
 
@@ -89,22 +93,20 @@ def cmd_compress_messages():
         raw_stats = result.get("stats", {})
 
         # Normalize stats to expected format
-        # Aggregate stages_applied from per-message stats
+        # Aggregate stages_run from per-message stats (v7.1: int count per message)
         per_msg_list = result.get("per_message", [])
-        all_stages = set()
+        total_stages_run = 0
         for pm in per_msg_list:
-            pm_stats = pm.get("stats", pm)  # per_message items may have stats nested or flat
-            per_stage = pm_stats.get("per_stage", [])
-            for s in per_stage:
-                if not s.get("skipped", True):
-                    all_stages.add(s["name"])
+            sr = pm.get("stages_run", 0)
+            if isinstance(sr, int):
+                total_stages_run = max(total_stages_run, sr)
 
         stats = {
             "compressed": True,
             "original_tokens": raw_stats.get("original_tokens", 0),
             "compressed_tokens": raw_stats.get("compressed_tokens", 0),
             "reduction_pct": raw_stats.get("reduction_pct", 0),
-            "stages_applied": _extract_stages_applied(raw_stats) or sorted(all_stages),
+            "stages_applied": total_stages_run,  # int count in v7.1
             "original_messages": len(messages),
             "compressed_messages": len(compressed_msgs),
             "timing_ms": raw_stats.get("total_timing_ms", 0),
