@@ -33,6 +33,7 @@ _archive = None             # Archive instance
 _extractor = None           # MemoryExtractor instance
 _extract_model = None       # Secondary MLX model for extraction
 _extract_processor = None   # Tokenizer/processor for extraction model
+_extract_model_path = None  # Path of the loaded extraction model (for status reporting)
 _initialized = False
 _data_path = None           # Path to ~/.qwencoder/memory/ (set during initialize)
 _last_extraction_at = None  # Timestamp of last successful extraction
@@ -412,6 +413,7 @@ async def shutdown():
     _initialized = False
     _data_path = None
     _last_extraction_at = None
+    _extract_model_path = None
     logger.info("Memory shutdown complete")
 
 
@@ -441,11 +443,19 @@ def _get_dir_size(dir_path: Path) -> int:
 @router.get("/status", response_model=MemoryStatus)
 async def get_memory_status():
     """Return initialization state of each memory component and extraction model availability."""
+    # Report extraction model by stored path (mlx_lm models have no .name attribute)
+    extraction_name = None
+    if _extract_model is not None:
+        extraction_name = (
+            getattr(_extract_model, "name", None)
+            or (_extract_model_path and str(_extract_model_path).split("/")[-1])
+            or "extraction-model"
+        )
     return MemoryStatus(
         knowledge_graph="ready" if _kg is not None else "unavailable",
         vector_memory="ready" if _vm is not None else "unavailable",
         archive="ready" if _archive is not None else "unavailable",
-        extraction_model=getattr(_extract_model, "name", None) if _extract_model is not None else None,
+        extraction_model=extraction_name,
         extraction_model_memory_gb=getattr(_extract_model, "memory_gb", None) if _extract_model is not None else None,
     )
 
@@ -1254,7 +1264,7 @@ async def extractor_load(req: ExtractorLoadRequest):
 
     Returns HTTP 507 if insufficient memory, HTTP 500 on load failure.
     """
-    global _extract_model, _extract_processor, _extraction_source
+    global _extract_model, _extract_processor, _extraction_source, _extract_model_path
 
     # Check Metal memory usage before loading
     try:
@@ -1279,6 +1289,7 @@ async def extractor_load(req: ExtractorLoadRequest):
         import mlx_lm
         logger.info(f"Loading extraction model: {req.model_path}")
         _extract_model, _extract_processor = mlx_lm.load(req.model_path)
+        _extract_model_path = req.model_path
         _extraction_source = "extraction_model"
         logger.info(f"Extraction model loaded: {req.model_path}")
         return {
@@ -1302,7 +1313,7 @@ async def extractor_load(req: ExtractorLoadRequest):
 @router.post("/extractor/unload")
 async def extractor_unload():
     """Unload the extraction model and free its Metal memory allocation."""
-    global _extract_model, _extract_processor, _extraction_source
+    global _extract_model, _extract_processor, _extraction_source, _extract_model_path
 
     if _extract_model is None:
         return {"ok": True, "message": "No extraction model loaded"}
@@ -1311,6 +1322,7 @@ async def extractor_unload():
         _extract_model = None
         _extract_processor = None
         _extraction_source = None
+        _extract_model_path = None
         import gc
         gc.collect()
         try:
