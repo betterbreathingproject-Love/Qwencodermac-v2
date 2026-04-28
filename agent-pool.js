@@ -204,22 +204,31 @@ class AgentPool extends EventEmitter {
    * @returns {Promise<object>} TaskResult
    */
   async dispatch(task, context, options = {}) {
-    // Try small-model routing first; fall back to keyword matching
+    // Keyword matching runs first — high-confidence keyword hits override the fast assistant.
+    // This prevents the small model from misclassifying tasks that have unambiguous signals
+    // (e.g. "debug", "diagnose", "crash") as explore/general.
+    const keywordType = this.selectType(task)
+    const keywordName = keywordType?.name || 'general'
+
+    // If keyword matching produced a specific (non-general) type, trust it directly.
+    // Only fall through to the fast assistant for ambiguous (general) matches.
     let agentType = null
-    if (memoryClient && typeof memoryClient.assistRouteTask === 'function') {
+    if (keywordName !== 'general') {
+      agentType = keywordType
+    } else if (memoryClient && typeof memoryClient.assistRouteTask === 'function') {
+      // Ambiguous — ask the fast assistant
       const routed = await memoryClient.assistRouteTask(
         task.title || task.id || '',
         task.description || ''
       )
       if (routed && this._types.has(routed)) {
         agentType = this._types.get(routed)
-        // Merge LSP tools
         const effectiveTools = this._getEffectiveTools(agentType)
         agentType = { ...agentType, allowedTools: effectiveTools }
       }
     }
     if (!agentType) {
-      agentType = this.selectType(task)
+      agentType = keywordType || this.selectType(task)
     }
 
     const profile = this._getCalibrationProfile?.();
