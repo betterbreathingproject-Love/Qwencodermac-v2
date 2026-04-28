@@ -229,6 +229,92 @@
     }
     footer strong { color: var(--text); }
 
+    /* ── AGENT LOOP DIAGRAM ── */
+    .loop-wrap { max-width: 860px; margin: 0 auto; }
+
+    .loop-lanes {
+      display: grid; grid-template-columns: repeat(4, 1fr);
+      gap: 8px; margin-bottom: 24px;
+    }
+    .lane-label {
+      text-align: center; font-size: 10px; font-weight: 700;
+      letter-spacing: 1.5px; text-transform: uppercase;
+      padding: 8px 4px; border-radius: 6px;
+      background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+    }
+
+    .loop-diagram { display: flex; flex-direction: column; align-items: stretch; gap: 0; }
+
+    .loop-step {
+      display: flex; align-items: flex-start; gap: 16px;
+      padding: 20px 24px; border-radius: 12px;
+      border: 1px solid var(--border);
+      position: relative; transition: border-color .2s;
+    }
+    .loop-step:hover { border-color: rgba(255,255,255,0.18); }
+
+    /* lane colour coding */
+    .ls-user   { background: rgba(124,106,247,0.06); border-left: 3px solid rgba(124,106,247,0.5); }
+    .ls-main   { background: rgba(79,195,247,0.05);  border-left: 3px solid rgba(79,195,247,0.45); }
+    .ls-python { background: rgba(52,211,153,0.05);  border-left: 3px solid rgba(52,211,153,0.4); }
+    .ls-gpu    { background: rgba(251,146,60,0.06);  border-left: 3px solid rgba(251,146,60,0.5); }
+
+    .ls-icon { font-size: 22px; flex-shrink: 0; margin-top: 2px; width: 32px; text-align: center; }
+    .ls-body { flex: 1; min-width: 0; }
+    .ls-title { font-size: 15px; font-weight: 700; margin-bottom: 5px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .ls-desc  { font-size: 13px; color: var(--muted); line-height: 1.6; }
+    .ls-desc code { color: var(--accent2); font-family: 'SF Mono','Fira Code',monospace; font-size: 12px; }
+    .ls-desc strong { color: var(--text); }
+
+    .ls-side {
+      display: flex; flex-direction: column; gap: 4px;
+      flex-shrink: 0; min-width: 140px; padding-left: 16px;
+      border-left: 1px solid var(--border);
+    }
+    .ls-check { font-size: 11px; color: var(--muted); white-space: nowrap; }
+
+    .ls-badge {
+      font-size: 10px; font-weight: 600; letter-spacing: 0.3px;
+      padding: 2px 8px; border-radius: 100px;
+    }
+    .ls-badge-purple { background: rgba(124,106,247,0.18); color: #a78bfa; }
+    .ls-badge-blue   { background: rgba(79,195,247,0.15);  color: #7dd3fc; }
+    .ls-badge-green  { background: rgba(52,211,153,0.13);  color: #6ee7b7; }
+    .ls-badge-orange { background: rgba(251,146,60,0.15);  color: #fdba74; }
+
+    .loop-arrow {
+      text-align: center; font-size: 20px; color: var(--border);
+      line-height: 1; padding: 4px 0;
+    }
+
+    .loop-back {
+      margin-top: 8px; display: flex; flex-direction: column; align-items: center; gap: 8px;
+    }
+    .loop-back-line {
+      width: 2px; height: 32px;
+      background: linear-gradient(to bottom, rgba(124,106,247,0.5), transparent);
+    }
+    .loop-back-label {
+      font-size: 12px; color: var(--accent3); font-weight: 600;
+      text-align: center; padding: 8px 20px;
+      border: 1px dashed rgba(124,106,247,0.35); border-radius: 8px;
+      background: rgba(124,106,247,0.06);
+    }
+
+    .loop-terminals {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 24px;
+    }
+    .loop-terminal {
+      border-radius: 10px; padding: 18px; text-align: center;
+      border: 1px solid var(--border);
+    }
+    .lt-done  { background: rgba(52,211,153,0.07);  border-color: rgba(52,211,153,0.25); }
+    .lt-limit { background: rgba(251,146,60,0.07);  border-color: rgba(251,146,60,0.25); }
+    .lt-abort { background: rgba(244,114,182,0.07); border-color: rgba(244,114,182,0.25); }
+    .lt-icon  { font-size: 24px; margin-bottom: 8px; }
+    .lt-title { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+    .lt-desc  { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
     @media (max-width: 768px) {
       nav { padding: 16px 20px; }
       .nav-links { display: none; }
@@ -472,6 +558,249 @@
     </div>
   </div>
 </div>
+
+<!-- AGENT LOOP DIAGRAM -->
+<section id="loop" style="padding: 100px 24px;">
+  <div class="container">
+    <p class="section-label" style="text-align:center;">Intelligence round-trip</p>
+    <h2 class="section-title" style="text-align:center;margin:0 auto 20px;">The full agent loop, visualised.</h2>
+    <p class="section-sub" style="text-align:center;margin:0 auto 60px;">Every turn through the loop injects intelligence at multiple checkpoints — memory retrieval, fast-model assistance, calibrated limits, tool validation, and context compaction — before the primary model ever sees a token.</p>
+
+    <div class="loop-wrap">
+
+      <!-- ── LANE LABELS ── -->
+      <div class="loop-lanes">
+        <div class="lane-label" style="color:#7c6af7;">USER / RENDERER</div>
+        <div class="lane-label" style="color:#4fc3f7;">ELECTRON MAIN</div>
+        <div class="lane-label" style="color:#34d399;">PYTHON FASTAPI</div>
+        <div class="lane-label" style="color:#fb923c;">METAL GPU</div>
+      </div>
+
+      <!-- ── FLOW DIAGRAM ── -->
+      <div class="loop-diagram">
+
+        <!-- Step 1: User sends message -->
+        <div class="loop-step ls-user">
+          <div class="ls-icon">💬</div>
+          <div class="ls-body">
+            <div class="ls-title">User Message</div>
+            <div class="ls-desc">Prompt enters via IPC from Renderer → DirectBridge._agentLoop()</div>
+          </div>
+        </div>
+        <div class="loop-arrow">↓</div>
+
+        <!-- Step 2: Memory Retrieval -->
+        <div class="loop-step ls-main">
+          <div class="ls-icon">🧠</div>
+          <div class="ls-body">
+            <div class="ls-title">Memory Retrieval <span class="ls-badge ls-badge-blue">memory-client.js</span></div>
+            <div class="ls-desc">POST /memory/retrieve — KG triples + vector search + archive FTS. Recall phrases trigger "thorough" mode. Results injected as <code>[Memory Context]</code> system message. Token budget enforced (≤ 2048 tok).</div>
+          </div>
+          <div class="ls-side">
+            <div class="ls-check">✓ KnowledgeGraph</div>
+            <div class="ls-check">✓ VectorMemory</div>
+            <div class="ls-check">✓ Archive FTS5</div>
+          </div>
+        </div>
+        <div class="loop-arrow">↓</div>
+
+        <!-- Step 3: Calibration check -->
+        <div class="loop-step ls-main">
+          <div class="ls-icon">📐</div>
+          <div class="ls-body">
+            <div class="ls-title">Calibration Profile Applied <span class="ls-badge ls-badge-purple">calibrator.js</span></div>
+            <div class="ls-desc">Reads live CalibrationProfile from ipc-server.js. Sets <strong>maxTurns</strong>, <strong>timeoutPerTurn</strong>, <strong>maxInputTokens</strong>, and <strong>compactionThreshold</strong> — all derived from real MLX benchmark TPS &amp; context window.</div>
+          </div>
+          <div class="ls-side">
+            <div class="ls-check">✓ maxTurns = 500</div>
+            <div class="ls-check">✓ timeout ∝ TPS</div>
+            <div class="ls-check">✓ tokens ∝ ctx_window</div>
+          </div>
+        </div>
+        <div class="loop-arrow">↓</div>
+
+        <!-- Step 4: Fast model pre-processing -->
+        <div class="loop-step ls-python">
+          <div class="ls-icon">⚡</div>
+          <div class="ls-body">
+            <div class="ls-title">Fast Model Pre-processing <span class="ls-badge ls-badge-green">assist-client.js → /memory/assist</span></div>
+            <div class="ls-desc">Qwen2.5-VL-3B runs in the gaps. Vision images are described and replaced with text. Todo list is bootstrapped from the user prompt. All via <code>_extraction_semaphore</code> — never blocks primary model.</div>
+          </div>
+          <div class="ls-side">
+            <div class="ls-check">✓ Vision offload</div>
+            <div class="ls-check">✓ Todo bootstrap</div>
+            <div class="ls-check">✓ Non-blocking</div>
+          </div>
+        </div>
+        <div class="loop-arrow">↓</div>
+
+        <!-- Step 5: Primary model inference -->
+        <div class="loop-step ls-gpu">
+          <div class="ls-icon">🔮</div>
+          <div class="ls-body">
+            <div class="ls-title">Primary Model Inference <span class="ls-badge ls-badge-orange">MLX · /v1/chat/completions</span></div>
+            <div class="ls-desc">Qwen3-30B-A3B streams tokens via SSE. Context includes memory, calibrated limits, and fast-model enrichments. <code>_inference_semaphore</code> serializes Metal GPU access.</div>
+          </div>
+          <div class="ls-side">
+            <div class="ls-check">✓ Streaming SSE</div>
+            <div class="ls-check">✓ Metal serialized</div>
+            <div class="ls-check">✓ OpenAI-compat</div>
+          </div>
+        </div>
+        <div class="loop-arrow">↓</div>
+
+        <!-- Step 6: Tool call decision -->
+        <div class="loop-step ls-main">
+          <div class="ls-icon">🔀</div>
+          <div class="ls-body">
+            <div class="ls-title">Tool Call Routing</div>
+            <div class="ls-desc">Model emits a tool call. DirectBridge parses the function name and args. Validated tools (<code>edit_file</code>, <code>write_file</code>, <code>bash</code>, <code>read_file</code>) go through the fast-model validator before execution.</div>
+          </div>
+          <div class="ls-side">
+            <div class="ls-check">✓ Parse tool call</div>
+            <div class="ls-check">✓ Route to handler</div>
+          </div>
+        </div>
+        <div class="loop-arrow">↓</div>
+
+        <!-- Step 7: Tool validation -->
+        <div class="loop-step ls-python">
+          <div class="ls-icon">🛡️</div>
+          <div class="ls-body">
+            <div class="ls-title">Fast Model Tool Validation <span class="ls-badge ls-badge-green">tool_validate</span></div>
+            <div class="ls-desc">Before destructive tool execution, Qwen2.5-VL-3B checks the call against recent context. If <code>valid: false</code>, a system message is injected and the primary model is re-prompted — the tool is never executed.</div>
+          </div>
+          <div class="ls-side">
+            <div class="ls-check">✓ Pre-execution gate</div>
+            <div class="ls-check">✓ 10s timeout</div>
+            <div class="ls-check">✓ Fail-safe reject</div>
+          </div>
+        </div>
+        <div class="loop-arrow">↓</div>
+
+        <!-- Step 8a: LSP safe-edit workflow -->
+        <div class="loop-step ls-main">
+          <div class="ls-icon">🔭</div>
+          <div class="ls-body">
+            <div class="ls-title">LSP Safe-Edit Workflow <span class="ls-badge ls-badge-blue">lsp-manager.js · JSON-RPC</span></div>
+            <div class="ls-desc">Before any file write, the agent runs the LSP safe-edit sequence: <strong>blast-radius check</strong> (<code>lsp_get_change_impact</code>), <strong>atomic simulation</strong> (<code>lsp_simulate_edit_atomic</code>), then post-write <strong>diagnostics</strong> (<code>lsp_get_diagnostics</code>). Role-specific tool sets are injected per agent type.</div>
+          </div>
+          <div class="ls-side">
+            <div class="ls-check">✓ get_change_impact</div>
+            <div class="ls-check">✓ simulate_edit_atomic</div>
+            <div class="ls-check">✓ get_diagnostics</div>
+            <div class="ls-check">✓ get_definition</div>
+            <div class="ls-check">✓ get_references</div>
+            <div class="ls-check">✓ workspace_symbol</div>
+          </div>
+        </div>
+        <div class="loop-arrow">↓</div>
+
+        <!-- Step 8b: Tool execution -->
+        <div class="loop-step ls-main">
+          <div class="ls-icon">🔧</div>
+          <div class="ls-body">
+            <div class="ls-title">Tool Execution</div>
+            <div class="ls-desc">File read/write, bash, search, Playwright browser automation. Results are returned as tool messages. Errors trigger fast-model diagnosis. LSP diagnostics are re-checked post-write.</div>
+          </div>
+          <div class="ls-side">
+            <div class="ls-check">✓ File I/O</div>
+            <div class="ls-check">✓ Bash / PTY</div>
+            <div class="ls-check">✓ Playwright</div>
+            <div class="ls-check">✓ AST search</div>
+          </div>
+        </div>
+        <div class="loop-arrow">↓</div>
+
+        <!-- Step 9: Post-tool fast model enrichment -->
+        <div class="loop-step ls-python">
+          <div class="ls-icon">🔬</div>
+          <div class="ls-body">
+            <div class="ls-title">Post-Tool Fast Model Enrichment <span class="ls-badge ls-badge-green">5 task types</span></div>
+            <div class="ls-desc">Large results are processed before the primary model sees them: web fetch summaries (> 4k chars), git diff summaries (> 2k chars), search result ranking (> 15 results), file section extraction (> 8k chars), error diagnosis.</div>
+          </div>
+          <div class="ls-side">
+            <div class="ls-check">✓ fetch_summarize</div>
+            <div class="ls-check">✓ git_summarize</div>
+            <div class="ls-check">✓ rank_search</div>
+            <div class="ls-check">✓ extract_section</div>
+            <div class="ls-check">✓ error_diagnose</div>
+          </div>
+        </div>
+        <div class="loop-arrow">↓</div>
+
+        <!-- Step 10: Context check -->
+        <div class="loop-step ls-main">
+          <div class="ls-icon">📏</div>
+          <div class="ls-body">
+            <div class="ls-title">Context Window Check <span class="ls-badge ls-badge-purple">compactor.js</span></div>
+            <div class="ls-desc">Token count estimated. If above <strong>compactionThreshold</strong> (calibrated to 85% of maxInputTokens), the conversation is archived to memory first, then compacted by the claw-compactor. Loop continues with fresh context.</div>
+          </div>
+          <div class="ls-side">
+            <div class="ls-check">✓ Archive before compact</div>
+            <div class="ls-check">✓ Calibrated threshold</div>
+            <div class="ls-check">✓ History preserved</div>
+          </div>
+        </div>
+        <div class="loop-arrow">↓</div>
+
+        <!-- Step 11: Memory extraction -->
+        <div class="loop-step ls-python">
+          <div class="ls-icon">💾</div>
+          <div class="ls-body">
+            <div class="ls-title">Async Memory Extraction <span class="ls-badge ls-badge-green">fire-and-forget</span></div>
+            <div class="ls-desc">POST /memory/extract — Qwen2.5-VL-3B extracts entity-relationship triples and facts from the assistant response. Stored in KnowledgeGraph + VectorMemory. Secret filtering (17 patterns) runs on all content before storage.</div>
+          </div>
+          <div class="ls-side">
+            <div class="ls-check">✓ KG triples</div>
+            <div class="ls-check">✓ Vector embed</div>
+            <div class="ls-check">✓ Secret filter</div>
+          </div>
+        </div>
+        <div class="loop-arrow">↓</div>
+
+        <!-- Step 12: Repetition detection -->
+        <div class="loop-step ls-python">
+          <div class="ls-icon">🔁</div>
+          <div class="ls-body">
+            <div class="ls-title">Repetition Detection <span class="ls-badge ls-badge-green">detect_repetition</span></div>
+            <div class="ls-desc">Fast model checks the last 3 responses for looping behaviour. If <code>repeating: true</code>, a system message is injected to break the loop before the next primary model call.</div>
+          </div>
+          <div class="ls-side">
+            <div class="ls-check">✓ Fire-and-forget</div>
+            <div class="ls-check">✓ Loop-breaking</div>
+          </div>
+        </div>
+
+        <!-- Loop back arrow -->
+        <div class="loop-back">
+          <div class="loop-back-line"></div>
+          <div class="loop-back-label">↑ Next turn — loop repeats until task complete or maxTurns reached</div>
+        </div>
+
+        <!-- Terminal states -->
+        <div class="loop-terminals">
+          <div class="loop-terminal lt-done">
+            <div class="lt-icon">✅</div>
+            <div class="lt-title">Task Complete</div>
+            <div class="lt-desc">Model returns final response. Session archived. Memory updated.</div>
+          </div>
+          <div class="loop-terminal lt-limit">
+            <div class="lt-icon">⏱️</div>
+            <div class="lt-title">Turn Limit</div>
+            <div class="lt-desc">maxTurns reached (calibrated). Wrap-up notice injected at turn N-5.</div>
+          </div>
+          <div class="loop-terminal lt-abort">
+            <div class="lt-icon">🛑</div>
+            <div class="lt-title">User Abort</div>
+            <div class="lt-desc">AbortController signal propagated. Loop exits cleanly.</div>
+          </div>
+        </div>
+
+      </div><!-- /.loop-diagram -->
+    </div><!-- /.loop-wrap -->
+  </div>
+</section>
 
 <!-- CTA -->
 <section style="text-align:center;">

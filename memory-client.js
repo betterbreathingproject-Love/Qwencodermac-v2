@@ -291,19 +291,15 @@ async function assistRouteTask(taskTitle, taskDescription = '') {
     const task = taskDescription ? `${taskTitle}\n${taskDescription}` : taskTitle
     const body = { task_type: 'route_task', payload: { task } }
     const result = await httpRequest('POST', '/memory/assist', body, 8000)
-    console.log('[assistRouteTask] raw response:', JSON.stringify(result))
     if (!result) return null
-    if (result.degraded) {
-      console.log('[assistRouteTask] degraded:', result.reason)
-      return null
-    }
+    if (result.degraded) return null
     // Handler returns AssistResponse with result_data: { agent_type: "..." }
     if (result.result_data && typeof result.result_data.agent_type === 'string') return result.result_data.agent_type
     // Fallback: flat result field
     if (result.result && typeof result.result === 'string') return result.result
     return null
   } catch (err) {
-    console.warn('[assistRouteTask] error:', err.message)
+    // Silently degrade — routing failure is non-critical
     return null
   }
 }
