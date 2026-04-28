@@ -1363,6 +1363,14 @@ async function sendAgentMode(prompt, opts = {}) {
         }
         break
       }
+      case 'memory-extract': {
+        // Show a subtle notification when the extraction model processes a turn
+        const toolsEl = document.getElementById(respId+'-tools')
+        if (toolsEl && ev.message) {
+          toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--muted);font-size:10px;opacity:0.7">${esc(ev.message)}</div>`)
+        }
+        break
+      }
       case 'system':
         if (ev.subtype === 'debug') {
           setActivity(`🔍 ${esc(ev.data)} <span class="activity-dot">●</span>`)

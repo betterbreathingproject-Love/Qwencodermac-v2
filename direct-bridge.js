@@ -1415,6 +1415,29 @@ class DirectBridge {
       // Wait for the server to be ready before starting the agent loop
       await this._waitForServer()
 
+      // ── Memory: session-start retrieval ──────────────────────────────────
+      // Retrieve relevant past context using the current prompt as the query.
+      // This is especially valuable on session resume when conversation history
+      // has been trimmed — the agent gets relevant memories even without full history.
+      if (memoryClient) {
+        try {
+          const recallMode = detectRecallMode(prompt)
+          const memResult = await memoryClient.retrieve(prompt, {
+            mode: recallMode,
+            agentName: this._agentRole || 'main-agent',
+            topK: 8,
+          })
+          if (memResult && memResult.results && memResult.results.length > 0) {
+            const memLines = memResult.results.map(r => `[${r.source}] ${r.content}`).join('\n')
+            messages.push({
+              role: 'system',
+              content: `[Memory Context — from previous sessions]\n${memLines}`,
+            })
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Memory: retrieved ${memResult.results.length} relevant items from past sessions` })
+          }
+        } catch (_) { /* memory unavailable — proceed without */ }
+      }
+
       // Gather active diagnostics and inject into context so the agent
       // is aware of existing errors before it starts working
       if (this._lspManager?.getStatus().status === 'ready') {
@@ -1685,7 +1708,24 @@ class DirectBridge {
       // ── Memory: post-turn async fact extraction ───────────────────────────
       // Fire-and-forget extraction — must not block the agent loop
       if (memoryClient && text && text.length > 0) {
-        memoryClient.extractTurn(text, this._agentRole || 'main-agent', _sessionId).catch(() => {})
+        const _extractAgentRole = this._agentRole || 'main-agent'
+        const _extractSelf = this
+        memoryClient.extractTurn(text, _extractAgentRole, _sessionId)
+          .then((result) => {
+            // Notify the UI which model performed extraction
+            if (result && result.llm_extraction_queued) {
+              // Check extraction source after a short delay (LLM extraction is async)
+              setTimeout(() => {
+                memoryClient.getStatus().then(status => {
+                  if (status) {
+                    const src = status.extractionModel ? `🧠 Memory: extracting facts via ${status.extractionModel}` : '🧠 Memory: extracting facts via primary model'
+                    _extractSelf.send('qwen-event', { type: 'memory-extract', source: status.extractionModel || 'primary_model', message: src })
+                  }
+                }).catch(() => {})
+              }, 500)
+            }
+          })
+          .catch(() => {})
       }
 
       // ── Memory: archive assistant decisions ───────────────────────────────
