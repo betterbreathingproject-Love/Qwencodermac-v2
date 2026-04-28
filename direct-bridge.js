@@ -49,6 +49,10 @@ function _findPythonPath() {
 }
 const pythonPath = _findPythonPath()
 
+// ── Assist integration constants ──────────────────────────────────────────────
+const VALIDATED_TOOLS = new Set(['edit_file', 'write_file', 'bash', 'read_file'])
+const GIT_CMD_RE = /^git\s+(status|log|diff|show)\b/
+
 // ── EventSink implementations ─────────────────────────────────────────────────
 
 /**
@@ -842,6 +846,18 @@ function trimMessages(messages, maxInputTokens) {
   return trimmed
 }
 
+// ── Assist integration helpers ────────────────────────────────────────────────
+
+/**
+ * Returns true if any todo item's status changed between two todo arrays.
+ * Used to decide whether to emit an update_todos event after todo_watch.
+ */
+function hasStatusChanges(updated, current) {
+  if (!Array.isArray(updated) || !Array.isArray(current)) return false
+  if (updated.length !== current.length) return false
+  return updated.some((item, i) => item.status !== current[i].status)
+}
+
 // ── JSON repair for malformed tool arguments from local LLMs ──────────────────
 
 /**
@@ -1493,6 +1509,7 @@ class DirectBridge {
     let lastTextResponses = []  // Track recent text-only responses for repetition detection
     let consecutivePlanningNudges = 0  // Track how many times we've nudged for planning-only responses
     let _lastTodos = null  // Track the latest todo list for completion checking
+    let _bootstrapDone = false  // Track whether todo bootstrap has fired
     let _textOnlyTurns = 0  // Track consecutive text-only responses for safety valve
 
     // ── Memory: session start ─────────────────────────────────────────────────
@@ -1622,6 +1639,37 @@ class DirectBridge {
           }
         } catch (_) {
           // Memory retrieval failed — continue without context
+        }
+      }
+
+      // Vision offload — replace image parts with text descriptions before LLM call
+      if (assistClient) {
+        for (const msg of messages) {
+          if (!Array.isArray(msg.content)) continue
+          for (let i = 0; i < msg.content.length; i++) {
+            const part = msg.content[i]
+            if (part.type === 'image_url' || part.type === 'image') {
+              const imageData = part.image_url?.url || part.source?.data || ''
+              const mimeType = part.image_url?.detail ? 'image/png' : (part.source?.media_type || 'image/png')
+              const desc = await assistClient.assistVision(
+                imageData, mimeType,
+                'Describe this screenshot in detail, focusing on UI elements, error messages, and code visible on screen.'
+              )
+              if (desc) msg.content[i] = { type: 'text', text: `[Vision: ${desc}]` }
+            }
+          }
+        }
+      }
+
+      // Todo bootstrap — fire-and-forget before first LLM call
+      if (assistClient && assistClient.TODO_BOOTSTRAP_ENABLED && turn === 0) {
+        const userPrompt = messages.filter(m => m.role === 'user').pop()?.content || ''
+        if (typeof userPrompt === 'string' && userPrompt) {
+          assistClient.assistTodoBootstrap(userPrompt).then(todos => {
+            if (todos && !_bootstrapDone) {
+              this.send('qwen-event', { type: 'tool_result', tool: 'update_todos', result: { todos } })
+            }
+          }).catch(() => {})
         }
       }
 
@@ -1896,6 +1944,21 @@ class DirectBridge {
           }
         }
 
+        // Assist-based repetition detection — fire-and-forget (supplements existing string-matching)
+        if (assistClient && text) {
+          lastTextResponses.push(text.slice(0, 500))
+          if (lastTextResponses.length > 3) lastTextResponses.shift()
+          if (lastTextResponses.length >= 2) {
+            const _responsesSnapshot = [...lastTextResponses]
+            assistClient.assistDetectRepetition(_responsesSnapshot).then(result => {
+              if (result && result.repeating) {
+                // Inject system message to break the loop
+                messages.push({ role: 'system', content: `[Repetition detected: ${result.reason || 'semantic loop'}] Please take a different approach or use a tool to make progress.` })
+              }
+            }).catch(() => {})
+          }
+        }
+
         // ── Text-only response: the model did NOT use any tools ──
         // Instead of treating this as "done", nudge the model to use tools.
         // The ONLY way to properly end a session is via the task_complete tool.
@@ -2095,7 +2158,8 @@ class DirectBridge {
 
         // Track todo state for completion checking
         if (fnName === 'update_todos' && Array.isArray(fnArgs.todos)) {
-          _lastTodos = fnArgs.todos
+          _bootstrapDone = true
+          _lastTodos = fnArgs.todos || null
         }
 
         // Speculative edit hook: simulate write_file before executing it
@@ -2122,6 +2186,16 @@ class DirectBridge {
             }
           } catch {
             // On failure/timeout, skip speculative check and proceed normally
+          }
+        }
+
+        // Tool pre-validation — check tool args before execution (awaited, 10s timeout)
+        if (assistClient && VALIDATED_TOOLS.has(fnName)) {
+          const recentContext = messages.slice(-6).map(m => typeof m.content === 'string' ? m.content : '').join('\n')
+          const validation = await assistClient.assistValidateTool(fnName, fnArgs, recentContext)
+          if (validation && !validation.valid) {
+            messages.push({ role: 'system', content: `Tool call rejected: ${validation.reason}` })
+            continue  // re-prompt primary model without executing the tool
           }
         }
 
@@ -2267,6 +2341,62 @@ class DirectBridge {
           }
         }
 
+        // Error diagnosis — prepend fast model diagnosis to tool errors (awaited, 15s timeout)
+        if (assistClient && isError && content) {
+          const recentContext = messages.slice(-4).map(m => typeof m.content === 'string' ? m.content : '').join('\n')
+          const diagnosis = await assistClient.assistDiagnoseError(fnName, fnArgs, content, recentContext)
+          if (diagnosis) content = `[Fast model diagnosis: ${diagnosis}]\n\n${content}`
+        }
+
+        // Vision offload for browser_screenshot results
+        if (assistClient && fnName === 'browser_screenshot' && content) {
+          // content may be a base64 image or contain one
+          const imageMatch = content.match(/data:(image\/[^;]+);base64,([A-Za-z0-9+/=]+)/)
+          if (imageMatch) {
+            const mimeType = imageMatch[1]
+            const imageData = imageMatch[2]
+            const desc = await assistClient.assistVision(
+              imageData, mimeType,
+              'Describe this screenshot in detail, focusing on UI elements, error messages, and code visible on screen.'
+            )
+            if (desc) content = `[Vision: ${desc}]`
+          }
+        }
+
+        // Fetch summarize — summarize large web_fetch results
+        if (assistClient && fnName === 'web_fetch' && typeof content === 'string' && content.length > assistClient.FETCH_SUMMARIZE_THRESHOLD) {
+          const summary = await assistClient.assistFetchSummarize(fnArgs.url || '', content, 512)
+          if (summary) content = `[Summarized by fast model — original: ${content.length} chars]\n\n${summary}`
+        }
+
+        // Git summarize — summarize large git command outputs
+        if (assistClient && fnName === 'bash' && typeof content === 'string' && content.length > assistClient.GIT_SUMMARIZE_THRESHOLD) {
+          const cmd = fnArgs.command || ''
+          if (/^git\s+(status|log|diff|show)\b/.test(cmd)) {
+            const summary = await assistClient.assistGitSummarize(cmd, content)
+            if (summary) content = `[Git summary by fast model — original: ${content.length} chars]\n\n${summary}`
+          }
+        }
+
+        // Search rank — rank search results by relevance
+        if (assistClient && fnName === 'search_files' && typeof content === 'string') {
+          const lines = content.split('\n').filter(Boolean)
+          if (lines.length > assistClient.SEARCH_RANK_THRESHOLD) {
+            const taskContext = messages.filter(m => m.role === 'user').pop()?.content || ''
+            const ranked = await assistClient.assistRankSearchResults(fnArgs.pattern || '', lines, taskContext)
+            if (ranked) content = `[Ranked by fast model — showing 15 of ${lines.length} matches]\n\n${ranked.slice(0, 15).join('\n')}`
+          }
+        }
+
+        // File extract — extract relevant section from large files
+        if (assistClient && fnName === 'read_file' && typeof content === 'string' && content.length > assistClient.FILE_EXTRACT_THRESHOLD) {
+          const taskContext = messages.filter(m => m.role === 'user').pop()?.content || ''
+          if (taskContext) {
+            const section = await assistClient.assistExtractRelevantSection(fnArgs.path || '', content, taskContext)
+            if (section) content = `[Relevant section extracted by fast model — file: ${content.length} chars total]\n\n${section}`
+          }
+        }
+
         // For screenshots, send the full content (with base64 image) to the renderer
         // but strip the image data from the model context to save tokens
         let rendererContent = content
@@ -2296,6 +2426,17 @@ class DirectBridge {
               this._telegramForwarder.sendPhoto(tmpPath, 'Browser screenshot').catch(() => {})
             }
           } catch { /* non-blocking — don't fail the tool call */ }
+        }
+
+        // Todo watch — fire-and-forget after each tool result
+        if (assistClient && assistClient.TODO_WATCH_ENABLED && _lastTodos) {
+          const _todosSnapshot = _lastTodos  // capture current reference
+          assistClient.assistTodoWatch(fnName, content, _todosSnapshot).then(updated => {
+            if (updated && hasStatusChanges(updated, _todosSnapshot)) {
+              this.send('qwen-event', { type: 'tool_result', tool: 'update_todos', result: { todos: updated } })
+              _lastTodos = updated  // update the tracked todos
+            }
+          }).catch(() => {})
         }
 
         // Add tool result to messages (model gets stripped content)

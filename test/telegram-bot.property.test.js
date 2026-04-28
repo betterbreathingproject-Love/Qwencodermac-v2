@@ -90,9 +90,9 @@ describe('Property 4: Bot status object has required fields', () => {
 
           const status = bot.getStatus()
 
-          // Must have exactly these four keys
+          // Must have exactly these six keys
           const keys = Object.keys(status).sort()
-          assert.deepStrictEqual(keys, ['bot_username', 'connected', 'last_error', 'polling'])
+          assert.deepStrictEqual(keys, ['bot_username', 'connected', 'has_token', 'last_error', 'polling', 'token_masked'])
 
           // Type checks
           assert.equal(typeof status.connected, 'boolean')

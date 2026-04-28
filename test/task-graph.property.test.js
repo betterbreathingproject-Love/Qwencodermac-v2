@@ -30,10 +30,11 @@ function arbitraryTaskId(maxDepth = 0) {
 
 /**
  * Generate a safe title string (no newlines, no brackets, non-empty, single word-like tokens).
+ * Excludes underscores to avoid ambiguity with markdown italic/bold formatting.
  */
 function arbitraryTitle() {
   return fc
-    .stringMatching(/^[a-z][a-z0-9_]{0,19}$/)
+    .stringMatching(/^[a-z][a-z0-9]{0,19}$/)
     .filter((s) => s.length > 0);
 }
 

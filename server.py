@@ -909,7 +909,7 @@ async def chat_completions(req: ChatRequest):
 
         async def event_stream():
             sem = _get_inference_semaphore()
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             queue: asyncio.Queue = asyncio.Queue()
             full_text_parts = []
             _cancelled = threading.Event()  # Signal to stop inference thread on client disconnect
@@ -980,179 +980,186 @@ async def chat_completions(req: ChatRequest):
                              "<tool_", "<tool_c", "<tool_ca",
                              "<tool_cal", "<tool_call")
 
-            while True:
-                kind, data = await queue.get()
-                if kind == "token":
-                    accumulated += data
-                    full_text_parts.append(data)
+            # Race condition fix: _cancelled must be set whenever the generator
+            # exits for ANY reason — including GeneratorExit from client disconnect.
+            # Without this, the inference thread keeps running Metal ops while the
+            # next request also starts Metal → concurrent Metal access → crash.
+            try:
+                while True:
+                    kind, data = await queue.get()
+                    if kind == "token":
+                        accumulated += data
+                        full_text_parts.append(data)
 
-                    if not _in_tool_call:
-                        tc_start = accumulated.find(_TOOL_OPEN, _content_sent_len)
-                        if tc_start != -1:
-                            _in_tool_call = True
-                            _tc_id = f"call_{uuid.uuid4().hex[:12]}"
-                            _tc_func_name = ""
-                            _tc_name_sent = False
-                            _tc_last_args_len = 0
-                            _tc_json_args = None
-                            unsent = accumulated[_content_sent_len:tc_start]
-                            if unsent:
-                                chunk_data = {
-                                    "id": cid, "object": "chat.completion.chunk",
-                                    "created": created, "model": _model_id,
-                                    "choices": [{"index": 0, "delta": {"content": unsent}, "finish_reason": None}],
-                                }
-                                yield f"data: {json.dumps(chunk_data)}\n\n"
-                            _tool_call_buf = accumulated[tc_start + len(_TOOL_OPEN):]
-                        else:
-                            tail = accumulated[-11:] if len(accumulated) >= 11 else accumulated
-                            if any(tail.endswith(pt) for pt in _PARTIAL_TAGS):
-                                continue
-                            unsent = accumulated[_content_sent_len:]
-                            if unsent:
-                                chunk_data = {
-                                    "id": cid, "object": "chat.completion.chunk",
-                                    "created": created, "model": _model_id,
-                                    "choices": [{"index": 0, "delta": {"content": unsent}, "finish_reason": None}],
-                                }
-                                yield f"data: {json.dumps(chunk_data)}\n\n"
-                                _content_sent_len = len(accumulated)
-                    else:
-                        _tool_call_buf += data
-                        close_pos = _tool_call_buf.find("</function>")
-                        tc_close = _tool_call_buf.find(_TOOL_CLOSE)
-
-                        if not _tc_func_name:
-                            fn_match = _FUNC_NAME_RE.search(_tool_call_buf)
-                            if fn_match:
-                                _tc_func_name = fn_match.group(1).strip()
-                            elif tc_close != -1:
-                                json_body = _tool_call_buf[:tc_close].strip()
-                                try:
-                                    obj = json.loads(json_body)
-                                    _tc_func_name = obj.get("name", "")
-                                    _tc_json_args = obj.get("arguments", {})
-                                    print(f"[server] 🔧 JSON-style tool call detected: func={_tc_func_name}, args={json.dumps(_tc_json_args)[:200]}", file=sys.stderr)
-                                except (json.JSONDecodeError, ValueError):
-                                    print(f"[server] ⚠️ Tool call block has no <function=> and is not valid JSON: {repr(json_body[:200])}", file=sys.stderr)
-
-                        if _tc_func_name:
-                            if _tc_json_args is not None:
-                                current_args = json.dumps(_tc_json_args)
+                        if not _in_tool_call:
+                            tc_start = accumulated.find(_TOOL_OPEN, _content_sent_len)
+                            if tc_start != -1:
+                                _in_tool_call = True
+                                _tc_id = f"call_{uuid.uuid4().hex[:12]}"
+                                _tc_func_name = ""
+                                _tc_name_sent = False
+                                _tc_last_args_len = 0
+                                _tc_json_args = None
+                                unsent = accumulated[_content_sent_len:tc_start]
+                                if unsent:
+                                    chunk_data = {
+                                        "id": cid, "object": "chat.completion.chunk",
+                                        "created": created, "model": _model_id,
+                                        "choices": [{"index": 0, "delta": {"content": unsent}, "finish_reason": None}],
+                                    }
+                                    yield f"data: {json.dumps(chunk_data)}\n\n"
+                                _tool_call_buf = accumulated[tc_start + len(_TOOL_OPEN):]
                             else:
-                                fn_tag_end = _tool_call_buf.find(">", _tool_call_buf.find("<function="))
-                                func_body = _tool_call_buf[fn_tag_end + 1:] if fn_tag_end != -1 else ""
-                                clean_body = func_body.replace("</function>", "").replace("</tool_call>", "")
-                                current_args = parse_partial_tool_args(clean_body)
-                            if tc_close != -1 or close_pos != -1:
-                                print(f"[server] 🔧 Tool call complete: func={_tc_func_name}, parsed_args={current_args[:200]}", file=sys.stderr)
+                                tail = accumulated[-11:] if len(accumulated) >= 11 else accumulated
+                                if any(tail.endswith(pt) for pt in _PARTIAL_TAGS):
+                                    continue
+                                unsent = accumulated[_content_sent_len:]
+                                if unsent:
+                                    chunk_data = {
+                                        "id": cid, "object": "chat.completion.chunk",
+                                        "created": created, "model": _model_id,
+                                        "choices": [{"index": 0, "delta": {"content": unsent}, "finish_reason": None}],
+                                    }
+                                    yield f"data: {json.dumps(chunk_data)}\n\n"
+                                    _content_sent_len = len(accumulated)
+                        else:
+                            _tool_call_buf += data
+                            close_pos = _tool_call_buf.find("</function>")
+                            tc_close = _tool_call_buf.find(_TOOL_CLOSE)
 
-                            if not _tc_name_sent:
-                                tc_delta = {
-                                    "id": cid, "object": "chat.completion.chunk",
-                                    "created": created, "model": _model_id,
-                                    "choices": [{"index": 0, "delta": {"tool_calls": [{"index": _tc_index, "id": _tc_id, "type": "function", "function": {"name": _tc_func_name, "arguments": current_args}}]}, "finish_reason": None}],
-                                }
-                                yield f"data: {json.dumps(tc_delta)}\n\n"
-                                _tc_name_sent = True
-                                _tc_last_args_len = len(current_args)
-                            elif len(current_args) > _tc_last_args_len:
-                                tc_delta = {
-                                    "id": cid, "object": "chat.completion.chunk",
-                                    "created": created, "model": _model_id,
-                                    "choices": [{"index": 0, "delta": {"tool_calls": [{"index": _tc_index, "function": {"arguments": current_args}}]}, "finish_reason": None}],
-                                }
-                                yield f"data: {json.dumps(tc_delta)}\n\n"
-                                _tc_last_args_len = len(current_args)
+                            if not _tc_func_name:
+                                fn_match = _FUNC_NAME_RE.search(_tool_call_buf)
+                                if fn_match:
+                                    _tc_func_name = fn_match.group(1).strip()
+                                elif tc_close != -1:
+                                    json_body = _tool_call_buf[:tc_close].strip()
+                                    try:
+                                        obj = json.loads(json_body)
+                                        _tc_func_name = obj.get("name", "")
+                                        _tc_json_args = obj.get("arguments", {})
+                                        print(f"[server] 🔧 JSON-style tool call detected: func={_tc_func_name}, args={json.dumps(_tc_json_args)[:200]}", file=sys.stderr)
+                                    except (json.JSONDecodeError, ValueError):
+                                        print(f"[server] ⚠️ Tool call block has no <function=> and is not valid JSON: {repr(json_body[:200])}", file=sys.stderr)
 
-                        if tc_close != -1:
                             if _tc_func_name:
                                 if _tc_json_args is not None:
-                                    final_args = json.dumps(_tc_json_args)
+                                    current_args = json.dumps(_tc_json_args)
                                 else:
                                     fn_tag_end = _tool_call_buf.find(">", _tool_call_buf.find("<function="))
                                     func_body = _tool_call_buf[fn_tag_end + 1:] if fn_tag_end != -1 else ""
                                     clean_body = func_body.replace("</function>", "").replace("</tool_call>", "")
-                                    final_args = parse_partial_tool_args(clean_body)
-                                tc_final = {
-                                    "id": cid, "object": "chat.completion.chunk",
-                                    "created": created, "model": _model_id,
-                                    "choices": [{"index": 0, "delta": {"tool_calls": [{"index": _tc_index, "function": {"arguments": final_args}}]}, "finish_reason": None}],
-                                }
-                                yield f"data: {json.dumps(tc_final)}\n\n"
-                            _in_tool_call = False
-                            _tool_call_buf = ""
-                            _tc_index += 1
-                            after_close = accumulated[accumulated.rfind(_TOOL_CLOSE) + len(_TOOL_CLOSE):]
-                            if after_close.strip():
-                                accumulated = after_close
-                elif kind == "stats":
-                    stats_chunk = {
-                        "id": cid, "object": "chat.completion.chunk",
-                        "created": created, "model": _model_id,
-                        "choices": [{"index": 0, "delta": {}, "finish_reason": None}],
-                        "usage": {
-                            "prompt_tokens": getattr(data, "prompt_tokens", 0),
-                            "completion_tokens": getattr(data, "generation_tokens", 0),
-                            "total_tokens": getattr(data, "total_tokens", 0),
-                        },
-                        "x_stats": {
-                            "prompt_tps": round(getattr(data, "prompt_tps", 0), 2),
-                            "generation_tps": round(getattr(data, "generation_tps", 0), 2),
-                            "peak_memory_gb": round(getattr(data, "peak_memory", 0), 3),
-                        },
-                    }
-                    yield f"data: {json.dumps(stats_chunk)}\n\n"
-                elif kind == "error":
-                    yield f"event: error\ndata: {json.dumps({'error': data, 'type': 'server_error'})}\n\n"
-                    break
-                elif kind == "done":
-                    full_text = "".join(full_text_parts)
-                    if has_tools:
-                        tool_calls = parse_tool_calls(full_text)
-                        if tool_calls:
-                            print(f"[server] 🔧 Final parse_tool_calls found {len(tool_calls)} call(s)", file=sys.stderr)
-                            for i, tc in enumerate(tool_calls):
-                                print(f"[server]   [{i}] {tc['function']['name']}: {tc['function']['arguments'][:200]}", file=sys.stderr)
-                        elif '<tool_call>' in full_text or 'read_file' in full_text:
-                            print(f"[server] ⚠️ Tool call parse FAILED. Raw text (last 500 chars): {repr(full_text[-500:])}", file=sys.stderr)
-                        if tool_calls:
-                            if _tc_index > 0:
-                                for i, tc in enumerate(tool_calls):
-                                    tc_final_chunk = {
+                                    current_args = parse_partial_tool_args(clean_body)
+                                if tc_close != -1 or close_pos != -1:
+                                    print(f"[server] 🔧 Tool call complete: func={_tc_func_name}, parsed_args={current_args[:200]}", file=sys.stderr)
+
+                                if not _tc_name_sent:
+                                    tc_delta = {
                                         "id": cid, "object": "chat.completion.chunk",
                                         "created": created, "model": _model_id,
-                                        "choices": [{"index": 0, "delta": {"tool_calls": [{"index": i, "id": tc["id"], "type": "function", "function": {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]}}]}, "finish_reason": None}],
+                                        "choices": [{"index": 0, "delta": {"tool_calls": [{"index": _tc_index, "id": _tc_id, "type": "function", "function": {"name": _tc_func_name, "arguments": current_args}}]}, "finish_reason": None}],
                                     }
-                                    yield f"data: {json.dumps(tc_final_chunk)}\n\n"
-                                finish_chunk = {
-                                    "id": cid, "object": "chat.completion.chunk",
-                                    "created": created, "model": _model_id,
-                                    "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
-                                }
-                                yield f"data: {json.dumps(finish_chunk)}\n\n"
-                            else:
-                                tc_chunk = {
-                                    "id": cid, "object": "chat.completion.chunk",
-                                    "created": created, "model": _model_id,
-                                    "choices": [{"index": 0, "delta": {"tool_calls": tool_calls}, "finish_reason": "tool_calls"}],
-                                }
-                                yield f"data: {json.dumps(tc_chunk)}\n\n"
-                            yield "data: [DONE]\n\n"
-                            break
+                                    yield f"data: {json.dumps(tc_delta)}\n\n"
+                                    _tc_name_sent = True
+                                    _tc_last_args_len = len(current_args)
+                                elif len(current_args) > _tc_last_args_len:
+                                    tc_delta = {
+                                        "id": cid, "object": "chat.completion.chunk",
+                                        "created": created, "model": _model_id,
+                                        "choices": [{"index": 0, "delta": {"tool_calls": [{"index": _tc_index, "function": {"arguments": current_args}}]}, "finish_reason": None}],
+                                    }
+                                    yield f"data: {json.dumps(tc_delta)}\n\n"
+                                    _tc_last_args_len = len(current_args)
 
-                    final = {
-                        "id": cid, "object": "chat.completion.chunk",
-                        "created": created, "model": _model_id,
-                        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                    }
-                    yield f"data: {json.dumps(final)}\n\n"
-                    yield "data: [DONE]\n\n"
-                    break
+                            if tc_close != -1:
+                                if _tc_func_name:
+                                    if _tc_json_args is not None:
+                                        final_args = json.dumps(_tc_json_args)
+                                    else:
+                                        fn_tag_end = _tool_call_buf.find(">", _tool_call_buf.find("<function="))
+                                        func_body = _tool_call_buf[fn_tag_end + 1:] if fn_tag_end != -1 else ""
+                                        clean_body = func_body.replace("</function>", "").replace("</tool_call>", "")
+                                        final_args = parse_partial_tool_args(clean_body)
+                                    tc_final = {
+                                        "id": cid, "object": "chat.completion.chunk",
+                                        "created": created, "model": _model_id,
+                                        "choices": [{"index": 0, "delta": {"tool_calls": [{"index": _tc_index, "function": {"arguments": final_args}}]}, "finish_reason": None}],
+                                    }
+                                    yield f"data: {json.dumps(tc_final)}\n\n"
+                                _in_tool_call = False
+                                _tool_call_buf = ""
+                                _tc_index += 1
+                                after_close = accumulated[accumulated.rfind(_TOOL_CLOSE) + len(_TOOL_CLOSE):]
+                                if after_close.strip():
+                                    accumulated = after_close
+                    elif kind == "stats":
+                        stats_chunk = {
+                            "id": cid, "object": "chat.completion.chunk",
+                            "created": created, "model": _model_id,
+                            "choices": [{"index": 0, "delta": {}, "finish_reason": None}],
+                            "usage": {
+                                "prompt_tokens": getattr(data, "prompt_tokens", 0),
+                                "completion_tokens": getattr(data, "generation_tokens", 0),
+                                "total_tokens": getattr(data, "total_tokens", 0),
+                            },
+                            "x_stats": {
+                                "prompt_tps": round(getattr(data, "prompt_tps", 0), 2),
+                                "generation_tps": round(getattr(data, "generation_tps", 0), 2),
+                                "peak_memory_gb": round(getattr(data, "peak_memory", 0), 3),
+                            },
+                        }
+                        yield f"data: {json.dumps(stats_chunk)}\n\n"
+                    elif kind == "error":
+                        yield f"event: error\ndata: {json.dumps({'error': data, 'type': 'server_error'})}\n\n"
+                        break
+                    elif kind == "done":
+                        full_text = "".join(full_text_parts)
+                        if has_tools:
+                            tool_calls = parse_tool_calls(full_text)
+                            if tool_calls:
+                                print(f"[server] 🔧 Final parse_tool_calls found {len(tool_calls)} call(s)", file=sys.stderr)
+                                for i, tc in enumerate(tool_calls):
+                                    print(f"[server]   [{i}] {tc['function']['name']}: {tc['function']['arguments'][:200]}", file=sys.stderr)
+                            elif '<tool_call>' in full_text or 'read_file' in full_text:
+                                print(f"[server] ⚠️ Tool call parse FAILED. Raw text (last 500 chars): {repr(full_text[-500:])}", file=sys.stderr)
+                            if tool_calls:
+                                if _tc_index > 0:
+                                    for i, tc in enumerate(tool_calls):
+                                        tc_final_chunk = {
+                                            "id": cid, "object": "chat.completion.chunk",
+                                            "created": created, "model": _model_id,
+                                            "choices": [{"index": 0, "delta": {"tool_calls": [{"index": i, "id": tc["id"], "type": "function", "function": {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]}}]}, "finish_reason": None}],
+                                        }
+                                        yield f"data: {json.dumps(tc_final_chunk)}\n\n"
+                                    finish_chunk = {
+                                        "id": cid, "object": "chat.completion.chunk",
+                                        "created": created, "model": _model_id,
+                                        "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+                                    }
+                                    yield f"data: {json.dumps(finish_chunk)}\n\n"
+                                else:
+                                    tc_chunk = {
+                                        "id": cid, "object": "chat.completion.chunk",
+                                        "created": created, "model": _model_id,
+                                        "choices": [{"index": 0, "delta": {"tool_calls": tool_calls}, "finish_reason": "tool_calls"}],
+                                    }
+                                    yield f"data: {json.dumps(tc_chunk)}\n\n"
+                                yield "data: [DONE]\n\n"
+                                break
 
-            # Signal thread to stop (in case it's still running after normal completion)
-            _cancelled.set()
-            _cleanup_images(images)
+                        final = {
+                            "id": cid, "object": "chat.completion.chunk",
+                            "created": created, "model": _model_id,
+                            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                        }
+                        yield f"data: {json.dumps(final)}\n\n"
+                        yield "data: [DONE]\n\n"
+                        break
+
+            finally:
+                # Always signal the inference thread to stop — covers
+                # GeneratorExit (client disconnect) and normal completion.
+                _cancelled.set()
+                _cleanup_images(images)
 
         # Aggressive post-request cache clearing to prevent memory accumulation
         try:

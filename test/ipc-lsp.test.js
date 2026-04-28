@@ -118,7 +118,7 @@ describe('ipc-lsp', () => {
 
       await ipc.invoke('lsp-symbols', '/project/src/index.js')
       assert.equal(capturedTool, 'lsp_get_document_symbols')
-      assert.deepStrictEqual(capturedArgs, { path: '/project/src/index.js' })
+      assert.deepStrictEqual(capturedArgs, { file_path: '/project/src/index.js' })
     })
 
     it('returns empty symbols for degraded status', async () => {

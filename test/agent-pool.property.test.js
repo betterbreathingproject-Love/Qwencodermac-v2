@@ -22,15 +22,34 @@ function arbitrarySubagentType() {
 
 /**
  * Generate a task with a title containing keywords from a specific category.
+ * Only uses keywords that are unique to that category (not shared with others).
  */
 function arbitraryTaskWithCategory() {
   const allCategories = Object.keys(CATEGORY_KEYWORDS);
 
+  // Build a set of keywords that appear in more than one category (ambiguous)
+  const keywordCounts = {}
+  for (const keywords of Object.values(CATEGORY_KEYWORDS)) {
+    for (const kw of keywords) {
+      keywordCounts[kw] = (keywordCounts[kw] || 0) + 1
+    }
+  }
+  const ambiguous = new Set(Object.keys(keywordCounts).filter(kw => keywordCounts[kw] > 1))
+
+  // Build unique-keyword map per category
+  const uniqueKeywords = {}
+  for (const [cat, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
+    uniqueKeywords[cat] = keywords.filter(kw => !ambiguous.has(kw))
+  }
+
+  // Only use categories that have at least one unique keyword
+  const usableCategories = allCategories.filter(cat => uniqueKeywords[cat].length > 0)
+
   return fc.record({
-    category: fc.constantFrom(...allCategories),
+    category: fc.constantFrom(...usableCategories),
     extraWords: fc.array(fc.constantFrom('the', 'a', 'for', 'with', 'new', 'all', 'this', 'module', 'feature', 'test'), { minLength: 0, maxLength: 5 }),
   }).chain(({ category, extraWords }) => {
-    const keywords = CATEGORY_KEYWORDS[category];
+    const keywords = uniqueKeywords[category];
     return fc.record({
       keyword: fc.constantFrom(...keywords),
       category: fc.constant(category),

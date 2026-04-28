@@ -9,7 +9,8 @@ Implement the dual-model fast assistant by adding a `POST /memory/assist` endpoi
 - [x] 1. Add `POST /memory/assist` endpoint to `memory-bridge.py`
   - Add `AssistRequest` and `AssistResponse` Pydantic models to `memory-bridge.py`
   - Implement the `_get_extraction_semaphore()` lazy-init helper (or reuse if already present) and the `_assist_with_semaphore(handler_coro)` wrapper
-  - Implement the `POST /memory/assist` route: validate `task_type`, return HTTP 400 for unknown types, return HTTP 503 `{"degraded": true, "reason": "no extraction model loaded"}` when `_extract_model is None`, wrap handler dispatch in `asyncio.wait_for(..., timeout=60.0)` returning HTTP 504 on timeout
+  - Implement the `POST /memory/assist` route: validate `task_type`, return HTTP 400 for unknown types, return HTTP 503 `{"degraded": true, "reason": "no extraction model loaded"}` when `_extract_model is None`, wrap handler dispatch in `asyncio.wait_for(..
+  ., timeout=60.0)` returning HTTP 504 on timeout
   - Apply `_fail_closed_filter` to all text payload fields before passing to any handler
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6_
 
@@ -87,7 +88,7 @@ Implement the dual-model fast assistant by adding a `POST /memory/assist` endpoi
     - Use `{ numRuns: 150 }` for all properties
     - **Validates: Requirements 2.3, 6.1, 6.7, 8.1, 8.5, 11.7, 17.4**
 
-- [-] 6. Wire `assist-client.js` into `direct-bridge.js` — lazy load and state tracking
+- [x] 6. Wire `assist-client.js` into `direct-bridge.js` — lazy load and state tracking
   - Add lazy-require block for `assist-client.js` at the top of `direct-bridge.js` (same pattern as `memory-client.js`)
   - Add `_lastTodos`, `_bootstrapDone`, and `lastTextResponses` state variables inside `_agentLoop()` (or equivalent scope)
   - Add `VALIDATED_TOOLS` constant: `new Set(['edit_file', 'write_file', 'bash', 'read_file'])`
@@ -95,7 +96,7 @@ Implement the dual-model fast assistant by adding a `POST /memory/assist` endpoi
   - Add `hasStatusChanges(updated, current)` helper that returns `true` if any item's `status` differs
   - _Requirements: 8.1, 8.2, 8.3_
 
-- [~] 7. Integration point 1 — Vision offload (before first LLM call and after `browser_screenshot`)
+- [x] 7. Integration point 1 — Vision offload (before first LLM call and after `browser_screenshot`)
   - In the messages preprocessing block before `_streamCompletion`, iterate content parts; for each `image_url` or `image` part call `assistClient.assistVision(...)` and replace with `{ type: 'text', text: '[Vision: ${desc}]' }` when non-null
   - After `browser_screenshot` tool result is received, apply the same vision replacement before appending to messages
   - Only call when not actively streaming (gap point constraint)
@@ -105,18 +106,18 @@ Implement the dual-model fast assistant by adding a `POST /memory/assist` endpoi
     - **Property 4: Vision replacement preserves message structure** — for any array of image parts and non-null descriptions, each replacement is a text part starting with `[Vision: ` and ending with `]`, length ≤ `VISION_MAX_CHARS + '[Vision: ]'.length`
     - **Validates: Requirements 3.3, 3.7**
 
-- [~] 8. Integration point 2 — Todo bootstrap (before first LLM call, fire-and-forget)
+- [x] 8. Integration point 2 — Todo bootstrap (before first LLM call, fire-and-forget)
   - On `turn === 0`, fire `assistClient.assistTodoBootstrap(userPrompt).then(todos => { if (todos && !_bootstrapDone) emit update_todos event })` without awaiting
   - Set `_bootstrapDone = true` whenever the primary model calls `update_todos`; check this flag in the bootstrap `.then()` to discard late results
   - Emit `qwen-event` with `{ type: 'tool_result', tool: 'update_todos', result: { todos } }` using the existing sink
   - _Requirements: 4.1, 4.2, 4.4, 4.5, 4.6, 4.7_
 
-- [~] 9. Integration point 3 — Todo watch (after each tool result, fire-and-forget)
+- [x] 9. Integration point 3 — Todo watch (after each tool result, fire-and-forget)
   - After each tool result is received and `_lastTodos` is non-null, fire `assistClient.assistTodoWatch(fnName, content, _lastTodos).then(updated => { if (updated && hasStatusChanges(updated, _lastTodos)) emit update_todos event })` without awaiting
   - Update `_lastTodos` whenever the primary model calls `update_todos`
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6_
 
-- [~] 10. Integration points 4, 7, 8, 9 — Awaited tool result post-processors
+- [x] 10. Integration points 4, 7, 8, 9 — Awaited tool result post-processors
   - Integration point 4 — Fetch summarize: after `web_fetch` result, if `content.length > FETCH_SUMMARIZE_THRESHOLD`, await `assistFetchSummarize` and replace content with `[Summarized by fast model — original: ${n} chars]\n\n${summary}` when non-null
   - Integration point 7 — Git summarize: after `bash` result matching `GIT_CMD_RE`, if `content.length > GIT_SUMMARIZE_THRESHOLD`, await `assistGitSummarize` and replace with `[Git summary by fast model — original: ${n} chars]\n\n${summary}` when non-null
   - Integration point 8 — Search rank: after `search_files` result, split lines, if count > `SEARCH_RANK_THRESHOLD`, await `assistRankSearchResults` and replace with `[Ranked by fast model — showing 15 of ${total} matches]\n\n${top15}` when non-null
@@ -129,7 +130,7 @@ Implement the dual-model fast assistant by adding a `POST /memory/assist` endpoi
     - **Property 12: File extract threshold is respected** — `s.length > FILE_EXTRACT_THRESHOLD` iff called
     - **Validates: Requirements 13.1, 14.1, 15.1**
 
-- [~] 11. Integration point 5 — Tool pre-validation (before tool execution, awaited)
+- [x] 11. Integration point 5 — Tool pre-validation (before tool execution, awaited)
   - Before executing any tool in `VALIDATED_TOOLS`, await `assistClient.assistValidateTool(fnName, fnArgs, recentContext)` with a 10s timeout
   - When result is `{ valid: false, reason }`, push `{ role: 'system', content: 'Tool call rejected: ${reason}' }` to messages and `continue` to re-prompt the primary model without executing the tool
   - When result is `{ valid: true }` or `null`, proceed with tool execution normally
@@ -141,7 +142,7 @@ Implement the dual-model fast assistant by adding a `POST /memory/assist` endpoi
     - **Property 8: Validation is skipped for non-validated tools** — for any tool name not in `VALIDATED_TOOLS`, `assistValidateTool` is not called
     - **Validates: Requirements 11.3, 11.7**
 
-- [~] 12. Integration point 6 — Error diagnosis (after tool error, awaited)
+- [x] 12. Integration point 6 — Error diagnosis (after tool error, awaited)
   - After a tool result where `result.error` is truthy, await `assistClient.assistDiagnoseError(fnName, fnArgs, content, recentContext)` with a 15s timeout
   - When non-null, prepend to content: `[Fast model diagnosis: ${diagnosis}]\n\n${content}`
   - When null or timeout, use original content unchanged
@@ -151,22 +152,22 @@ Implement the dual-model fast assistant by adding a `POST /memory/assist` endpoi
     - **Property 9: Error diagnosis format is always correct** — for any `(diagnosis, originalError)`, result equals `[Fast model diagnosis: ${diagnosis}]\n\n${originalError}`
     - **Validates: Requirements 12.2**
 
-- [~] 13. Integration point 10 — Repetition detection (after each text response, fire-and-forget)
+- [x] 13. Integration point 10 — Repetition detection (after each text response, fire-and-forget)
   - After each non-tool-call assistant text response, push `text.slice(0, 500)` to `lastTextResponses`, keep only the last 3
   - When `lastTextResponses.length >= 2`, fire `assistClient.assistDetectRepetition(lastTextResponses).then(result => { if (result?.repeating) inject system message and trigger existing loop-breaking logic })` without awaiting
   - Leave the existing string-matching repetition detection in place as a fallback
   - _Requirements: 16.1, 16.2, 16.3, 16.5, 16.7_
 
-- [~] 14. Checkpoint — Ensure all tests pass
+- [x] 14. Checkpoint — Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [~] 15. Final wiring — verify graceful degradation end-to-end
+- [x] 15. Final wiring — verify graceful degradation end-to-end
   - Confirm the lazy-require guard (`assistClient = null` when module missing) means all integration points are no-ops when `assist-client.js` is absent or the endpoint is down
   - Confirm no `console.error` or `console.warn` is emitted in degraded mode (HTTP 503 `degraded: true` path)
   - Confirm the primary model's `messages` array, tool definitions, system prompt, and response handling are byte-for-byte identical in degraded vs. enabled mode for a session with no images, no large files, and no tool errors
   - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 9.1, 9.4_
 
-- [~] 16. Final checkpoint — Ensure all tests pass
+- [x] 16. Final checkpoint — Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
