@@ -5,6 +5,7 @@ const fs = require('fs')
 const path = require('path')
 const { spawn } = require('child_process')
 const calibrator = require('../calibrator')
+const config = require('../config')
 
 // ── calibration state ─────────────────────────────────────────────────────────
 let _calibrationProfile = null
@@ -244,9 +245,25 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
       req.write(body); req.end()
     })
 
-    // Trigger calibration after successful model load
+    // Trigger calibration and auto-load extraction model after successful model load
     if (!result.error) {
       runCalibration(serverUrl(), serverPort(), getMainWindow(), modelPath)
+
+      // Auto-load the dedicated fast extraction model (fire-and-forget)
+      // This enables all fast-assist features: todo bootstrap, error diagnosis,
+      // file section extraction, search ranking, etc.
+      const memClient = require('../memory-client.js')
+      const fastModelPath = config.DEFAULT_FAST_MODEL
+      memClient._httpRequest('POST', '/memory/extractor/load', { model_path: fastModelPath }, 60000)
+        .then(r => {
+          if (r && !r.error) {
+            console.log(`[main] Fast assist model loaded: ${fastModelPath}`)
+            getMainWindow()?.webContents.send('server-log', `⚡ Fast assist model ready (Qwen3.5 0.8B)`)
+          } else {
+            console.log(`[main] Fast assist model load failed: ${r?.error || 'no response'}`)
+          }
+        })
+        .catch(err => console.log(`[main] Fast assist model load error: ${err.message}`))
     }
 
     return result

@@ -153,11 +153,13 @@ const TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'read_file',
-      description: 'Read the contents of a file at the given path. Returns the file content as a string.',
+      description: 'Read the contents of a file at the given path. Returns the file content as a string. For large files, use start_line and end_line to read specific sections — the response will tell you the total line count and how to continue reading.',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string', description: 'Absolute or relative file path to read' },
+          start_line: { type: 'number', description: 'First line to read (1-indexed, inclusive). Omit to start from the beginning.' },
+          end_line: { type: 'number', description: 'Last line to read (1-indexed, inclusive). Omit to read to the end of the file.' },
         },
         required: ['path'],
       },
@@ -1121,8 +1123,19 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         const p = v.resolved
         if (!fs.existsSync(p)) return { error: `File not found: ${args.path}` }
         const stat = fs.statSync(p)
-        if (stat.size > 512 * 1024) return { error: `File too large (${(stat.size / 1024).toFixed(0)}KB). Read a smaller file or use search_files.` }
-        return { result: fs.readFileSync(p, 'utf-8') }
+        if (stat.size > 512 * 1024) return { error: `File too large (${(stat.size / 1024).toFixed(0)}KB). Use start_line/end_line to read sections, or use search_files to find specific content.` }
+        const raw = fs.readFileSync(p, 'utf-8')
+        // Line range support — lets the agent page through large files
+        if (args.start_line != null || args.end_line != null) {
+          const lines = raw.split('\n')
+          const total = lines.length
+          const start = Math.max(0, (args.start_line || 1) - 1)
+          const end = args.end_line != null ? Math.min(total, args.end_line) : total
+          const slice = lines.slice(start, end).join('\n')
+          const hasMore = end < total
+          return { result: slice + (hasMore ? `\n\n[lines ${start + 1}-${end} of ${total} total — call read_file again with start_line=${end + 1} to continue]` : '') }
+        }
+        return { result: raw }
       }
       case 'write_file': {
         if (typeof args.content !== 'string') return { error: 'content must be a string' }

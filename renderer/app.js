@@ -147,18 +147,23 @@ async function autoLoadLastModel() {
   if (!allModels.length) return  // no models available
   try {
     const appSettings = await window.app.getAppSettings()
-    if (!appSettings.lastModelPath) return
-    const match = allModels.find(m => m.path === appSettings.lastModelPath)
+    // Prefer saved last model, then fall back to the 35B default by name match
+    const targetPath = appSettings.lastModelPath ||
+      allModels.find(m => m.path && m.path.includes('Qwen3.6-35B-A3B-MLX-8bit'))?.path ||
+      allModels[0]?.path
+    if (!targetPath) return
+    const match = allModels.find(m => m.path === targetPath) || allModels[0]
     if (!match) return
     const modelName = _formatModelName(match.id)
     _showModelLoadingOverlay(modelName)
-    appendMsg('system', `⏳ Auto-loading last used model: ${modelName}`)
+    appendMsg('system', `⏳ Auto-loading model: ${modelName}`)
     const r = await window.app.loadModel(match.path)
     if (r && r.error) {
       _hideModelLoadingOverlay()
       appendMsg('system', `⚠️ Auto-load failed: ${r.error}`)
     } else {
       setLoadedModel(r.model_id || match.id)
+      window.app.saveAppSettings({ lastModelPath: match.path })
       _hideModelLoadingOverlay()
       appendMsg('system', `✅ Model loaded: ${modelName}`)
     }

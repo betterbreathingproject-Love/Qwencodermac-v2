@@ -11,6 +11,15 @@
 const CONTEXT_WINDOW = parseInt(process.env.CTX_WINDOW, 10) || 84000
 const MAX_OUTPUT_TOKENS = parseInt(process.env.MAX_OUTPUT_TOKENS, 10) || 32768
 
+// ── Default model paths ───────────────────────────────────────────────────────
+// Primary: Qwen3.6 35B A3B 8bit — the main intelligent agent model
+// Fast:    Qwen3.5 0.8B 8bit    — extraction model for fast-assist tasks
+const MODELS_DIR = process.env.MODELS_DIR || (require('os').homedir() + '/.lmstudio/models')
+const DEFAULT_PRIMARY_MODEL = process.env.PRIMARY_MODEL ||
+  MODELS_DIR + '/TheCluster/Qwen3.6-35B-A3B-MLX-8bit'
+const DEFAULT_FAST_MODEL = process.env.FAST_MODEL ||
+  MODELS_DIR + '/mlx-community/Qwen3.5-0.8B-MLX-8bit'
+
 module.exports = {
   // Total context budget in tokens
   CONTEXT_WINDOW,
@@ -43,4 +52,8 @@ module.exports = {
   // Rewind store settings
   REWIND_MAX_ENTRIES: 1000,
   REWIND_TTL_MS: 120 * 60 * 1000, // 2 hours
+
+  // Default model paths
+  DEFAULT_PRIMARY_MODEL,
+  DEFAULT_FAST_MODEL,
 }
