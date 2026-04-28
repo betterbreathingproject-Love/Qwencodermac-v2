@@ -956,10 +956,19 @@ async def chat_completions(req: ChatRequest):
                         mx.metal.clear_cache()
                     except Exception:
                         pass
-                    loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
+                    # Use try/except on call_soon_threadsafe in case the event loop
+                    # was closed before the thread finished (e.g. server shutdown).
+                    try:
+                        loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
+                    except Exception:
+                        pass
                     # Release semaphore from the thread — guarantees no concurrent
                     # Metal inference even if the async generator was closed early.
-                    loop.call_soon_threadsafe(sem.release)
+                    try:
+                        loop.call_soon_threadsafe(sem.release)
+                    except Exception:
+                        # Loop is gone — release directly to unblock any waiting coroutine
+                        sem.release()
 
             loop.run_in_executor(None, run_stream)
 
