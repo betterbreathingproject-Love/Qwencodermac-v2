@@ -2108,12 +2108,7 @@ class DirectBridge {
         // Dynamically update agent role badge based on what tool is being called.
         // This reflects the agent's actual current activity, not just the initial routing.
         const _writeTools = new Set(['write_file', 'edit_file'])
-        const _readTools = new Set(['read_file', 'list_dir', 'search_files'])
-        const _inferredRole = _writeTools.has(fnName) ? 'implementation'
-          : fnName === 'bash' ? 'implementation'
-          : fnName === 'browser_navigate' || fnName === 'browser_screenshot' ? 'explore'
-          : _readTools.has(fnName) && this._agentRole === 'explore' ? 'explore'
-          : null
+        const _inferredRole = _writeTools.has(fnName) ? 'implementation' : null
         if (_inferredRole && _inferredRole !== this._agentRole) {
           this._agentRole = _inferredRole
           this.send('qwen-event', { type: 'agent-type', agentType: _inferredRole })
