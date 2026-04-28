@@ -137,6 +137,11 @@ contextBridge.exposeInMainWorld('app', {
   onCalibrationStatus:   (cb) => ipcRenderer.on('calibration-status', (_, d) => cb(d)),
   offCalibrationStatus:  ()   => ipcRenderer.removeAllListeners('calibration-status'),
 
+  // Memory extraction model
+  loadExtractionModel:  (modelPath) => ipcRenderer.invoke('memory-extractor-load', modelPath),
+  unloadExtractionModel:()          => ipcRenderer.invoke('memory-extractor-unload'),
+  getMemoryStatus:      ()          => ipcRenderer.invoke('memory-status'),
+
   // Telegram
   telegramPair:      ()     => ipcRenderer.invoke('telegram-pair'),
   telegramStatus:    ()     => ipcRenderer.invoke('telegram-status'),
@@ -145,6 +150,11 @@ contextBridge.exposeInMainWorld('app', {
   telegramGetToken:  ()     => ipcRenderer.invoke('telegram-get-token'),
   onTelegramUnavailable: (cb) => ipcRenderer.on('telegram-unavailable', (_, d) => cb(d)),
   offTelegramUnavailable: () => ipcRenderer.removeAllListeners('telegram-unavailable'),
+
+  // Memory extraction model
+  loadExtractionModel:  (modelPath) => ipcRenderer.invoke('memory-extractor-load', modelPath),
+  unloadExtractionModel:()          => ipcRenderer.invoke('memory-extractor-unload'),
+  getMemoryStatus:      ()          => ipcRenderer.invoke('memory-status'),
 
   // Mini App
   miniappStart:      ()     => ipcRenderer.invoke('miniapp-start'),

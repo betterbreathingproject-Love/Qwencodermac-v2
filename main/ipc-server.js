@@ -259,6 +259,36 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
   })
 
   ipcMain.handle('get-server-url', () => serverUrl())
+
+  // ── Memory extraction model IPC handlers ─────────────────────────────────
+  ipcMain.handle('memory-extractor-load', async (event, modelPath) => {
+    try {
+      const memClient = require('../memory-client.js')
+      const result = await memClient._httpRequest('POST', '/memory/extractor/load', { model_path: modelPath }, 30000)
+      return result || { error: 'No response from memory backend' }
+    } catch (err) {
+      return { error: err.message || 'Failed to load extraction model' }
+    }
+  })
+
+  ipcMain.handle('memory-extractor-unload', async () => {
+    try {
+      const memClient = require('../memory-client.js')
+      const result = await memClient._httpRequest('POST', '/memory/extractor/unload', {}, 10000)
+      return result || { ok: true }
+    } catch (err) {
+      return { error: err.message || 'Failed to unload extraction model' }
+    }
+  })
+
+  ipcMain.handle('memory-status', async () => {
+    try {
+      const memClient = require('../memory-client.js')
+      return await memClient.getStatus()
+    } catch (err) {
+      return null
+    }
+  })
 }
 
 module.exports = { register, startServer, stopServer, restartServer, waitForServer, killStaleServer, findPython, runCalibration, getCalibrationProfile, isCalibrating, clearCalibration }

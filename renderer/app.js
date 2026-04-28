@@ -187,6 +187,10 @@ function renderModels(models) {
   }).join('')
   // Also update the central model switcher
   _renderModelSwitcher(models)
+  // Update extraction model dropdown
+  populateExtractionModelList(models)
+  // Refresh extraction model status
+  refreshExtractionModelStatus()
 }
 
 function _formatModelName(id) {
@@ -4611,3 +4615,119 @@ async function createSteeringDoc() {
 
 // Refresh steering docs when project changes
 const _origSwitchProject = typeof switchProject === 'function' ? switchProject : null
+
+// ── Extraction Model UI ───────────────────────────────────────────────────────
+
+let _extractionModelStatus = null  // { loaded: bool, modelName: string|null, memoryGb: number|null }
+let _extractionModelList = []      // Available models for extraction
+
+/**
+ * Refresh extraction model status from the memory backend.
+ */
+async function refreshExtractionModelStatus() {
+  try {
+    const status = await window.app.getMemoryStatus()
+    if (status && status.extractionModel) {
+      _extractionModelStatus = {
+        loaded: true,
+        modelName: status.extractionModel,
+        memoryGb: status.extractionModelMemoryGb || null,
+      }
+    } else {
+      _extractionModelStatus = { loaded: false, modelName: null, memoryGb: null }
+    }
+    _renderExtractionModelSection()
+  } catch (_) {
+    _extractionModelStatus = { loaded: false, modelName: null, memoryGb: null }
+    _renderExtractionModelSection()
+  }
+}
+
+/**
+ * Render the extraction model section in the model picker panel.
+ * Inserts/updates the section below the primary model list.
+ */
+function _renderExtractionModelSection() {
+  let section = document.getElementById('extractionModelSection')
+  if (!section) {
+    // Create the section and insert it before the sp-footer in sp-models
+    const footer = document.querySelector('#sp-models .sp-footer')
+    if (!footer) return
+    section = document.createElement('div')
+    section.id = 'extractionModelSection'
+    section.style.cssText = 'padding:8px 12px;border-top:1px solid var(--border,#333);margin-top:4px'
+    footer.parentNode.insertBefore(section, footer)
+  }
+
+  const status = _extractionModelStatus
+  const isLoaded = status && status.loaded
+
+  const statusHtml = isLoaded
+    ? `<span style="color:var(--green,#4caf50)">● ${esc(status.modelName)}${status.memoryGb ? ` (${status.memoryGb.toFixed(1)}GB)` : ''}</span>`
+    : `<span style="color:var(--muted,#666)">Not loaded</span>`
+
+  const modelOptions = _extractionModelList.length > 0
+    ? _extractionModelList.map(m => `<option value="${esc(m.path)}">${esc(_formatModelName(m.id))}</option>`).join('')
+    : '<option value="">No models available</option>'
+
+  section.innerHTML = `
+    <div class="section-label" style="margin-bottom:6px">EXTRACTION MODEL</div>
+    <div style="font-size:11px;margin-bottom:6px">${statusHtml}</div>
+    ${!isLoaded ? `
+      <select id="extractionModelSelect" class="mode-select" style="width:100%;margin-bottom:6px">
+        <option value="">Select model for extraction...</option>
+        ${modelOptions}
+      </select>
+      <button class="btn-primary" style="width:100%;font-size:11px;padding:4px 8px" onclick="loadExtractionModel()">Load</button>
+    ` : `
+      <button class="btn-secondary" style="width:100%;font-size:11px;padding:4px 8px" onclick="unloadExtractionModel()">Unload</button>
+    `}
+  `
+}
+
+/**
+ * Load the selected extraction model.
+ */
+async function loadExtractionModel() {
+  const select = document.getElementById('extractionModelSelect')
+  if (!select || !select.value) {
+    showToast('Select a model first', 'warning')
+    return
+  }
+  const modelPath = select.value
+  try {
+    const result = await window.app.loadExtractionModel(modelPath)
+    if (result && result.error) {
+      showToast(`Failed to load extraction model: ${result.error}`, 'error')
+    } else {
+      showToast('Extraction model loaded', 'success')
+      await refreshExtractionModelStatus()
+    }
+  } catch (err) {
+    showToast(`Failed to load extraction model: ${err.message || 'Unknown error'}`, 'error')
+  }
+}
+
+/**
+ * Unload the extraction model.
+ */
+async function unloadExtractionModel() {
+  try {
+    await window.app.unloadExtractionModel()
+    showToast('Extraction model unloaded', 'info')
+    await refreshExtractionModelStatus()
+  } catch (err) {
+    showToast(`Failed to unload extraction model: ${err.message || 'Unknown error'}`, 'error')
+  }
+}
+
+/**
+ * Populate the extraction model dropdown with available models.
+ * Called when the models panel is shown.
+ */
+function populateExtractionModelList(models) {
+  // Filter to models <= 8B where possible (heuristic: name contains 4B, 7B, 8B, 3B, 1B, 2B)
+  const smallModels = models.filter(m => /[1-8][Bb]/.test(m.id))
+  _extractionModelList = smallModels.length > 0 ? smallModels : models
+  _renderExtractionModelSection()
+}

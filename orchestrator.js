@@ -8,6 +8,14 @@ const {
   printTaskGraph,
 } = require('./task-graph.js');
 
+// Memory client — gracefully degrades if memory backend is unavailable
+let memoryClient = null
+try {
+  memoryClient = require('./memory-client.js')
+} catch (_) {
+  // memory-client.js not available — memory features disabled
+}
+
 // Valid states and transitions
 const STATES = ['idle', 'running', 'paused', 'completed', 'aborted'];
 
@@ -93,6 +101,19 @@ class Orchestrator extends EventEmitter {
     // assumes they're being handled by active dispatches, and breaks out
     // — causing the orchestrator to hang silently.
     this._resetStaleInProgressNodes();
+
+    // ── Memory: archive workflow start ────────────────────────────────────
+    if (memoryClient) {
+      const graphSummary = {
+        nodeCount: this._graph.nodes.size,
+        nodes: [...this._graph.nodes.values()].map(n => ({
+          id: n.id,
+          title: n.title || n.text || n.id,
+          status: n.status,
+        })),
+      }
+      memoryClient.archiveRecord('workflow_start', graphSummary, `Workflow started with ${this._graph.nodes.size} tasks`).catch(() => {})
+    }
 
     // Find start node: ^start marker or first root node
     if (this._state === 'running' && !this._hasInProgressNodes()) {
@@ -186,7 +207,25 @@ class Orchestrator extends EventEmitter {
 
     try {
       const startTime = Date.now();
-      const task = { ...node, status: 'in_progress', specContext: this._specContext };
+
+      // ── Memory: pre-dispatch retrieval ───────────────────────────────────
+      let specContextWithMemory = this._specContext
+      if (memoryClient) {
+        try {
+          const taskQuery = `${node.title || node.text || node.id} ${node.description || ''}`.trim()
+          const memResult = await memoryClient.retrieve(taskQuery, { mode: 'fast', topK: 5 })
+          if (memResult && memResult.results && memResult.results.length > 0) {
+            const memLines = memResult.results.map(r => `[${r.source}] ${r.content}`).join('\n')
+            specContextWithMemory = this._specContext
+              ? `${this._specContext}\n\n[Memory Context]\n${memLines}`
+              : `[Memory Context]\n${memLines}`
+          }
+        } catch (_) {
+          // Memory retrieval failed — dispatch without memory augmentation
+        }
+      }
+
+      const task = { ...node, status: 'in_progress', specContext: specContextWithMemory };
 
       // Inject safe-edit workflow instructions for implementation agents when LSP is ready
       const selectedType = this._agentPool?.selectType?.(node);
@@ -222,6 +261,16 @@ class Orchestrator extends EventEmitter {
       }
 
       this._results.set(node.id, taskResult);
+      // ── Memory: archive task completion ──────────────────────────────────
+      if (memoryClient) {
+        memoryClient.archiveRecord('task_completion', {
+          nodeId: node.id,
+          title: node.title || node.text || node.id,
+          output: (taskResult.output || '').slice(0, 500),
+          duration: taskResult.duration,
+          agentType: taskResult.agentType,
+        }, `Task completed: ${node.title || node.id}`).catch(() => {})
+      }
       // Store output in context for branch evaluation
       this._context[node.id] = taskResult.output;
       this._updateNodeStatus(node.id, 'completed', { agentType });

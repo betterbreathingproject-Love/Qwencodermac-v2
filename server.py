@@ -7,10 +7,23 @@ import os, base64, tempfile, time, uuid, json, asyncio, re, sys, threading
 from pathlib import Path
 from typing import Optional, Union, Any
 
+import importlib
+import signal
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+# ── memory-bridge integration ─────────────────────────────────────────────────
+# Import memory-bridge.py (hyphenated filename requires importlib).
+# Wrapped in try/except so server continues if memory-bridge has issues.
+_memory_bridge = None
+try:
+    _memory_bridge = importlib.import_module("memory-bridge")
+except Exception as _mem_err:
+    print(f"[server] WARNING: Failed to import memory-bridge: {_mem_err}", file=sys.stderr)
+    _memory_bridge = None
 
 # ── model state ───────────────────────────────────────────────────────────────
 _model = None
@@ -170,6 +183,25 @@ app = FastAPI(title="MLX Vision Server")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
+
+# ── register memory-bridge router ────────────────────────────────────────────
+if _memory_bridge is not None:
+    try:
+        app.include_router(_memory_bridge.router)
+        print("[server] Memory-bridge router registered (/memory/* endpoints)")
+    except Exception as _router_err:
+        print(f"[server] WARNING: Failed to register memory-bridge router: {_router_err}", file=sys.stderr)
+
+
+@app.on_event("startup")
+async def _startup_memory():
+    """Initialize memory-bridge components at server startup."""
+    if _memory_bridge is not None:
+        try:
+            await _memory_bridge.initialize()
+            print("[server] Memory-bridge initialized")
+        except Exception as e:
+            print(f"[server] WARNING: Memory-bridge initialization failed: {e}", file=sys.stderr)
 
 
 # ── schemas ───────────────────────────────────────────────────────────────────
@@ -1217,10 +1249,24 @@ if __name__ == "__main__":
     if args.model:
         load_model(args.model)
 
-    # Graceful shutdown: unload model and clear Metal cache on SIGTERM
+    # Graceful shutdown: unload model, shutdown memory, and clear Metal cache on SIGTERM
     def _handle_sigterm(signum, frame):
         global _model, _processor, _config
         print("[server] Received SIGTERM, cleaning up...", file=sys.stderr)
+
+        # Shutdown memory-bridge (flush Archive writes, close SQLite connections)
+        if _memory_bridge is not None:
+            try:
+                import asyncio as _asyncio
+                loop = _asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(_memory_bridge.shutdown())
+                else:
+                    loop.run_until_complete(_memory_bridge.shutdown())
+                print("[server] Memory-bridge shutdown complete", file=sys.stderr)
+            except Exception as e:
+                print(f"[server] WARNING: Memory-bridge shutdown error: {e}", file=sys.stderr)
+
         try:
             _model = None
             _processor = None

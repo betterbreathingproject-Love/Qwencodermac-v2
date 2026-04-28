@@ -21,6 +21,14 @@ const { getApiKeys } = require('./projects')
 const compactor = require('./compactor')
 const config = require('./config')
 
+// Memory client — gracefully degrades if memory backend is unavailable
+let memoryClient = null
+try {
+  memoryClient = require('./memory-client.js')
+} catch (_) {
+  // memory-client.js not available — memory features disabled
+}
+
 // ── Python path resolution (reuse pattern from main/ipc-server.js) ────────────
 function _findPythonPath() {
   for (const p of [
@@ -1250,6 +1258,28 @@ function streamSSE(url, body) {
   })
 }
 
+/**
+ * Detect recall phrases in a user message that indicate the user wants
+ * to retrieve past context. Returns 'thorough' if recall phrases found,
+ * 'fast' otherwise.
+ * @param {string} message
+ * @returns {'fast'|'thorough'}
+ */
+function detectRecallMode(message) {
+  if (!message || typeof message !== 'string') return 'fast'
+  const recallPhrases = [
+    'remember when',
+    'what did i say about',
+    'last time',
+    'previously',
+  ]
+  const lower = message.toLowerCase()
+  for (const phrase of recallPhrases) {
+    if (lower.includes(phrase)) return 'thorough'
+  }
+  return 'fast'
+}
+
 // ── DirectBridge ──────────────────────────────────────────────────────────────
 
 class DirectBridge {
@@ -1434,6 +1464,16 @@ class DirectBridge {
     let consecutivePlanningNudges = 0  // Track how many times we've nudged for planning-only responses
     let _lastTodos = null  // Track the latest todo list for completion checking
     let _textOnlyTurns = 0  // Track consecutive text-only responses for safety valve
+
+    // ── Memory: session start ─────────────────────────────────────────────────
+    const _sessionId = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    if (memoryClient) {
+      memoryClient.archiveRecord('session_start', { session_id: _sessionId }, 'Session started', {
+        agentName: this._agentRole || 'main-agent',
+        sessionId: _sessionId,
+      }).catch(() => {})
+    }
+
     for (let turn = 0; turn < effectiveMaxTurns; turn++) {
       if (this._aborted) return
 
@@ -1448,6 +1488,8 @@ class DirectBridge {
 
       // Retry on transient connection errors (ECONNRESET, ECONNREFUSED)
       let completion = null
+      let _archivedCount = 0
+      let _archiveStatus = 'skipped'
 
       // Compress context if it's getting too large — trigger compaction early
       // (at the compaction threshold) to give the compactor room to work before
@@ -1457,6 +1499,26 @@ class DirectBridge {
         // Preserve the user's original request so compaction can't erase the task
         const originalUserMsg = messages.find(m => m.role === 'user')
         const originalRequest = originalUserMsg?.content?.slice(0, 500) || ''
+
+        // ── Memory: archive messages before compaction ────────────────────
+        if (memoryClient) {
+          try {
+            const messagesToArchive = messages.slice(0, Math.max(0, messages.length - 4))
+            for (const msg of messagesToArchive) {
+              if (msg.content && msg.content.length > 0) {
+                await memoryClient.archiveRecord('pre_compaction', msg.content, msg.content.slice(0, 200), {
+                  agentName: this._agentRole || 'main-agent',
+                  sessionId: _sessionId,
+                  turnNumber: turn,
+                })
+                _archivedCount++
+              }
+            }
+            _archiveStatus = 'ok'
+          } catch (_archiveErr) {
+            _archiveStatus = 'error'
+          }
+        }
 
         try {
           const result = await compactor.compressMessages(pythonPath, messages, { dedup: true, keepRecent: 4 })
@@ -1491,6 +1553,45 @@ class DirectBridge {
           messages.length = 0
           messages.push(...trimmed)
           this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Post-compaction trim: ${before} → ${messages.length} messages (~${estimateMessagesTokens(messages)} tokens)` })
+        }
+      }
+
+      // ── Memory: emit memory-archive event after compaction ────────────────
+      if (_archiveStatus !== 'skipped') {
+        this.send('qwen-event', { type: 'memory-archive', archivedCount: _archivedCount, status: _archiveStatus })
+      }
+
+      // ── Memory: pre-LLM retrieval ─────────────────────────────────────────
+      // Retrieve relevant context from memory before each LLM call.
+      // Use 'thorough' mode when user message contains recall phrases.
+      if (memoryClient) {
+        try {
+          const userMsg = messages.filter(m => m.role === 'user').pop()
+          const userText = typeof userMsg?.content === 'string' ? userMsg.content : ''
+          const recallMode = detectRecallMode(userText)
+          const memBudget = parseInt(process.env.MEMORY_CONTEXT_BUDGET || '2048', 10)
+          const memResult = await memoryClient.retrieve(userText, {
+            mode: recallMode,
+            agentName: this._agentRole || 'main-agent',
+            topK: 10,
+          })
+          if (memResult && memResult.results && memResult.results.length > 0) {
+            // Build memory context string
+            const memLines = memResult.results.map(r => `[${r.source}] ${r.content}`).join('\n')
+            const memContextMsg = {
+              role: 'system',
+              content: `[Memory Context]\n${memLines}`,
+            }
+            // Inject immediately before the last user message
+            const lastUserIdx = messages.map(m => m.role).lastIndexOf('user')
+            if (lastUserIdx >= 0) {
+              messages.splice(lastUserIdx, 0, memContextMsg)
+            } else {
+              messages.push(memContextMsg)
+            }
+          }
+        } catch (_) {
+          // Memory retrieval failed — continue without context
         }
       }
 
@@ -1579,6 +1680,21 @@ class DirectBridge {
             },
           },
         })
+      }
+
+      // ── Memory: post-turn async fact extraction ───────────────────────────
+      // Fire-and-forget extraction — must not block the agent loop
+      if (memoryClient && text && text.length > 0) {
+        memoryClient.extractTurn(text, this._agentRole || 'main-agent', _sessionId).catch(() => {})
+      }
+
+      // ── Memory: archive assistant decisions ───────────────────────────────
+      if (memoryClient && text && text.length > 50) {
+        const summary = text.slice(0, 200)
+        memoryClient.archiveRecord('decision', text, summary, {
+          agentName: this._agentRole || 'main-agent',
+          sessionId: _sessionId,
+        }).catch(() => {})
       }
 
       // Guard: empty completion — server returned nothing (0 tokens, no text, no tools).
@@ -1967,6 +2083,29 @@ class DirectBridge {
         const isError = !!result.error
         let content = result.error || result.result
 
+        // ── Memory: archive tool call ─────────────────────────────────────
+        if (memoryClient) {
+          const argsSummary = JSON.stringify(fnArgs).slice(0, 200)
+          const resultSize = (content || '').length
+          const archivePayload = {
+            tool: fnName,
+            args_summary: argsSummary,
+            result_status: isError ? 'error' : 'success',
+            result_size_bytes: resultSize,
+          }
+          // Truncate result to 10000 chars for archiving
+          const archiveContent = (content || '').length > 10000
+            ? (content || '').slice(0, 10000)
+            : (content || '')
+          const truncated = (content || '').length > 10000
+          if (truncated) archivePayload.truncated = true
+
+          memoryClient.archiveRecord('tool_call', { ...archivePayload, result: archiveContent }, `${fnName}: ${argsSummary.slice(0, 100)}`, {
+            agentName: this._agentRole || 'main-agent',
+            sessionId: _sessionId,
+          }).catch(() => {})
+        }
+
         // Prepend speculative edit message if available
         if (speculativeMsg && content) {
           content = speculativeMsg + content
@@ -2125,6 +2264,14 @@ class DirectBridge {
         // Check if the model called task_complete — end the session
         if (fnName === 'task_complete' && !isError) {
           const summary = fnArgs.summary || text || 'Task completed.'
+          // ── Memory: session end ─────────────────────────────────────────
+          if (memoryClient) {
+            memoryClient.archiveRecord('session_end', { session_id: _sessionId, summary }, 'Session ended', {
+              agentName: this._agentRole || 'main-agent',
+              sessionId: _sessionId,
+            }).catch(() => {})
+            memoryClient._httpRequest?.('POST', '/memory/session/enrich', { session_id: _sessionId }, 5000).catch(() => {})
+          }
           this.send('qwen-event', {
             type: 'result',
             subtype: 'success',
