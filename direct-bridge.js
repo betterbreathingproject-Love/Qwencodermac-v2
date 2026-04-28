@@ -1142,6 +1142,23 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         const v = validatePath(args.path)
         if (v.error) return v
         const p = v.resolved
+
+        // Guard: reject writes containing truncation artifacts — these mean the model
+        // hit its output token limit mid-generation and the content is incomplete.
+        // Writing truncated content to disk corrupts the file silently.
+        const TRUNCATION_MARKERS = [
+          '[TRUNCATED — original length',
+          '... [truncated',
+          '\n\n[compressed:',
+          '[lines 1-',
+          'call read_file again with start_line=',
+        ]
+        for (const marker of TRUNCATION_MARKERS) {
+          if (args.content.includes(marker)) {
+            return { error: `write_file rejected: content contains truncation artifact "${marker.slice(0, 40)}". The content is incomplete — the model hit its token limit mid-write. Split the write into smaller chunks (under 200 lines each) and write them separately.` }
+          }
+        }
+
         const dir = path.dirname(p)
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
         fs.writeFileSync(p, args.content, 'utf-8')
@@ -1154,6 +1171,15 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         if (v.error) return v
         const p = v.resolved
         if (!fs.existsSync(p)) return { error: `File not found: ${args.path}` }
+
+        // Guard: reject edits where new_string contains truncation artifacts
+        const _TRUNC_MARKERS = ['[TRUNCATED — original length', '... [truncated', '\n\n[compressed:', 'call read_file again with start_line=']
+        for (const marker of _TRUNC_MARKERS) {
+          if (args.new_string.includes(marker)) {
+            return { error: `edit_file rejected: new_string contains truncation artifact. Content is incomplete — split into smaller edits.` }
+          }
+        }
+
         const content = fs.readFileSync(p, 'utf-8')
         if (!content.includes(args.old_string)) return { error: `old_string not found in ${args.path}. Make sure it matches exactly. Tip: re-read the file with read_file first to get the current content, then use the exact text from that read.` }
         const count = content.split(args.old_string).length - 1
