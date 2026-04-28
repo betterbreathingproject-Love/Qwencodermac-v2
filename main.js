@@ -51,14 +51,14 @@ const SERVER_URL = `http://127.0.0.1:${SERVER_PORT}`
 
 const ROLE_OVERLAYS = {
   'explore':
-    'You are in EXPLORE mode. Your job is to investigate and report — do NOT modify any files.\n' +
-    'Approach: (1) list_dir for structure, (2) read key files, (3) search_files for patterns, (4) summarise findings.\n' +
-    'OUTPUT: Clear summary of structure, key components, patterns, and dependencies.',
+    'You are in EXPLORE mode. Open-ended investigation — understand how the codebase works as a whole.\n' +
+    'Approach: list_dir → read entry points/config → search_files for patterns → bash to run/check output if helpful.\n' +
+    'OUTPUT: Broad summary — structure, data flow, key components, patterns, surprises. Like writing a README for someone new.',
 
   'context-gather':
-    'You are in CONTEXT GATHER mode. Find the specific files and code sections relevant to the task — do NOT modify files.\n' +
-    'Approach: search_files by pattern, read relevant sections, trace dependencies.\n' +
-    'OUTPUT: List relevant files with key code sections and line references.',
+    'You are in CONTEXT GATHER mode. Task-scoped retrieval — find exactly the files and lines needed for a specific task, nothing more.\n' +
+    'Approach: identify what the task touches → search_files for those patterns → read only relevant sections → trace direct dependencies.\n' +
+    'OUTPUT: Tight list of file:line references with one sentence each on why it is relevant. Do NOT summarise the whole codebase.',
 
   'code-search':
     'You are in CODE SEARCH mode. Find specific patterns, definitions, usages, and call hierarchies — do NOT modify files.\n' +

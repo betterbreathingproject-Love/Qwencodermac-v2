@@ -2873,13 +2873,13 @@ class DirectBridge {
     // Role-specific focus preamble — authoritative source, mirrors ROLE_OVERLAYS in main.js
     const rolePreambles = {
       'explore':
-        'You are in EXPLORE mode. Your job is to investigate and report — do NOT modify any files.\n' +
-        'Approach: (1) list_dir for structure, (2) read key files, (3) search_files for patterns, (4) summarise findings.\n' +
-        'OUTPUT: Clear summary of structure, key components, patterns, and dependencies.',
+        'You are in EXPLORE mode. Your job is open-ended investigation — understand how the codebase works as a whole.\n' +
+        'Approach: (1) list_dir for top-level structure, (2) read entry points and config files, (3) search_files for architectural patterns, (4) use bash to run the project or check its output if helpful.\n' +
+        'OUTPUT: A broad summary — file structure, key components, data flow, patterns, dependencies, and anything surprising. Think of it as writing a README for someone new to the codebase.',
       'context-gather':
-        'You are in CONTEXT GATHER mode. Find the specific files and code sections relevant to the task — do NOT modify files.\n' +
-        'Approach: search_files by pattern, read relevant sections, trace dependencies.\n' +
-        'OUTPUT: List relevant files with key code sections and line references.',
+        'You are in CONTEXT GATHER mode. You have a specific task — find exactly the files and code sections needed to complete it. Nothing more.\n' +
+        'Approach: (1) identify what the task touches by name/keyword, (2) search_files for those patterns, (3) read only the relevant sections, (4) trace direct dependencies.\n' +
+        'OUTPUT: A tight list — file path, relevant lines, and one sentence on why each is relevant. Do NOT summarise the whole codebase. Stay laser-focused on the task.',
       'code-search':
         'You are in CODE SEARCH mode. Find specific patterns, definitions, usages, and call hierarchies — do NOT modify files.\n' +
         'Use search_files with regex and read_file to examine results.\n' +
