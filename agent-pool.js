@@ -14,12 +14,12 @@ const DEFAULT_TIMEOUT = 600000; // 10 minutes
  * Each key is a subagent type name, value is an array of keywords.
  */
 const CATEGORY_KEYWORDS = {
-  'explore': ['explore', 'understand', 'analyze', 'overview', 'structure', 'how does', 'explain'],
-  'context-gather': ['context', 'gather', 'find relevant', 'related files', 'dependencies', 'what files'],
-  'code-search': ['search', 'find', 'grep', 'locate', 'lookup', 'ast', 'query', 'where is', 'usage'],
-  'requirements': ['requirement', 'requirements', 'spec', 'specification', 'user story', 'acceptance'],
-  'design': ['design', 'architecture', 'diagram', 'interface', 'schema', 'model', 'plan'],
-  'implementation': ['implement', 'code', 'build', 'create', 'write', 'develop', 'refactor', 'fix', 'bug', 'add', 'update', 'modify', 'change', 'set up', 'configure', 'install'],
+  'explore': ['explore', 'understand', 'analyze', 'overview', 'structure', 'how does', 'explain', 'investigate', 'audit', 'review'],
+  'context-gather': ['context', 'gather', 'find relevant', 'related files', 'dependencies', 'what files', 'identify files'],
+  'code-search': ['search', 'find', 'grep', 'locate', 'lookup', 'ast', 'query', 'where is', 'usage', 'references'],
+  'requirements': ['requirement', 'requirements', 'spec', 'specification', 'user story', 'acceptance', 'define', 'criteria'],
+  'design': ['design', 'architecture', 'diagram', 'interface', 'schema', 'model', 'plan', 'structure', 'layout', 'api design'],
+  'implementation': ['implement', 'code', 'build', 'create', 'write', 'develop', 'refactor', 'fix', 'bug', 'add', 'update', 'modify', 'change', 'set up', 'configure', 'install', 'upgrade', 'migrate', 'integrate', 'wire', 'connect', 'replace', 'rewrite', 'patch', 'extend', 'enable', 'disable', 'render', 'display', 'handle', 'parse', 'generate', 'emit', 'register', 'initialise', 'initialize'],
 };
 
 // --- AgentPool ---
@@ -115,8 +115,8 @@ class AgentPool extends EventEmitter {
       if (explicitCategory && this._types.has(explicitCategory)) {
         matched = this._types.get(explicitCategory);
       } else {
-        // Match keywords in title
-        const titleLower = (task.title || '').toLowerCase();
+        // Match keywords in title and description
+        const titleLower = ((task.title || '') + ' ' + (task.description || '')).toLowerCase();
         let bestMatch = null;
         let bestScore = 0;
 
