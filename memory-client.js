@@ -291,11 +291,16 @@ async function assistRouteTask(taskTitle, taskDescription = '') {
     const task = taskDescription ? `${taskTitle}\n${taskDescription}` : taskTitle
     const body = { task_type: 'route_task', payload: { task } }
     const result = await httpRequest('POST', '/memory/assist', body, 8000)
+    console.log('[assistRouteTask] raw response:', JSON.stringify(result))
     if (!result) return null
-    if (result.degraded) return null  // no extraction model — fall back to keywords
+    if (result.degraded) {
+      console.log('[assistRouteTask] degraded:', result.reason)
+      return null
+    }
     if (result.result && typeof result.result === 'string') return result.result
     return null
-  } catch (_) {
+  } catch (err) {
+    console.warn('[assistRouteTask] error:', err.message)
     return null
   }
 }

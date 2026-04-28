@@ -265,8 +265,13 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
   if (!agentRole && _memoryClientForRouting?.assistRouteTask) {
     try {
       const routed = await _memoryClientForRouting.assistRouteTask(prompt.slice(0, 200))
+      console.log('[qwen-run] assistRouteTask result:', routed, '→ resolvedRole:', routed || 'general')
       if (routed) resolvedRole = routed
-    } catch (_) { /* degrade silently */ }
+    } catch (err) {
+      console.warn('[qwen-run] assistRouteTask failed:', err.message)
+    }
+  } else {
+    console.log('[qwen-run] routing skipped — agentRole:', agentRole, 'hasClient:', !!_memoryClientForRouting?.assistRouteTask)
   }
 
   // Apply resolved agent role

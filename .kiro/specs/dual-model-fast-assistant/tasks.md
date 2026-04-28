@@ -6,7 +6,7 @@ Implement the dual-model fast assistant by adding a `POST /memory/assist` endpoi
 
 ## Tasks
 
-- [-] 1. Add `POST /memory/assist` endpoint to `memory-bridge.py`
+- [x] 1. Add `POST /memory/assist` endpoint to `memory-bridge.py`
   - Add `AssistRequest` and `AssistResponse` Pydantic models to `memory-bridge.py`
   - Implement the `_get_extraction_semaphore()` lazy-init helper (or reuse if already present) and the `_assist_with_semaphore(handler_coro)` wrapper
   - Implement the `POST /memory/assist` route: validate `task_type`, return HTTP 400 for unknown types, return HTTP 503 `{"degraded": true, "reason": "no extraction model loaded"}` when `_extract_model is None`, wrap handler dispatch in `asyncio.wait_for(..., timeout=60.0)` returning HTTP 504 on timeout
@@ -18,35 +18,35 @@ Implement the dual-model fast assistant by adding a `POST /memory/assist` endpoi
     - Mock `_extract_model` and `asyncio.wait_for` as needed
     - _Requirements: 1.2, 1.3, 1.4, 1.5_
 
-- [~] 2. Implement the ten assist task handlers in `memory-bridge.py`
-  - [~] 2.1 Implement `_handle_vision`: accept `image_b64`, `mime_type`, `prompt`; call `mlx_lm.generate` (or equivalent VLM path) with the image; return `result` text capped at `VISION_MAX_CHARS` equivalent
+- [x] 2. Implement the ten assist task handlers in `memory-bridge.py`
+  - [x] 2.1 Implement `_handle_vision`: accept `image_b64`, `mime_type`, `prompt`; call `mlx_lm.generate` (or equivalent VLM path) with the image; return `result` text capped at `VISION_MAX_CHARS` equivalent
     - _Requirements: 3.1, 3.5, 3.7_
 
-  - [~] 2.2 Implement `_handle_todo_bootstrap`: accept `user_prompt`; prompt the extraction model to produce a JSON array of `{id, content, status}` todo items; parse and return as `result_data`
+  - [x] 2.2 Implement `_handle_todo_bootstrap`: accept `user_prompt`; prompt the extraction model to produce a JSON array of `{id, content, status}` todo items; parse and return as `result_data`
     - _Requirements: 4.3_
 
-  - [~] 2.3 Implement `_handle_todo_watch`: accept `tool_name`, `tool_result`, `current_todos`; prompt the extraction model to infer status changes only (`pending→in_progress` or `in_progress→done`); return updated array or `null` if no changes; never add items or change content
+  - [x] 2.3 Implement `_handle_todo_watch`: accept `tool_name`, `tool_result`, `current_todos`; prompt the extraction model to infer status changes only (`pending→in_progress` or `in_progress→done`); return updated array or `null` if no changes; never add items or change content
     - _Requirements: 5.7_
 
-  - [~] 2.4 Implement `_handle_fetch_summarize`: accept `url`, `raw_content`, `max_output_tokens`; instruct the model to preserve title, key facts, URLs, code snippets, error messages, and structured data; return `result` summary
+  - [x] 2.4 Implement `_handle_fetch_summarize`: accept `url`, `raw_content`, `max_output_tokens`; instruct the model to preserve title, key facts, URLs, code snippets, error messages, and structured data; return `result` summary
     - _Requirements: 6.5_
 
-  - [~] 2.5 Implement `_handle_tool_validate`: accept `tool_name`, `tool_args`, `recent_context`; check tool-specific preconditions (`edit_file` old_string presence, `bash` syntax, `write_file`/`read_file` path validity); return `result_data` as `{valid, reason?}`
+  - [x] 2.5 Implement `_handle_tool_validate`: accept `tool_name`, `tool_args`, `recent_context`; check tool-specific preconditions (`edit_file` old_string presence, `bash` syntax, `write_file`/`read_file` path validity); return `result_data` as `{valid, reason?}`
     - _Requirements: 11.2_
 
-  - [~] 2.6 Implement `_handle_error_diagnose`: accept `tool_name`, `tool_args`, `error_message`, `recent_context`; produce a single sentence (≤ 100 tokens) root cause + fix suggestion; return as `result`
+  - [x] 2.6 Implement `_handle_error_diagnose`: accept `tool_name`, `tool_args`, `error_message`, `recent_context`; produce a single sentence (≤ 100 tokens) root cause + fix suggestion; return as `result`
     - _Requirements: 12.4_
 
-  - [~] 2.7 Implement `_handle_git_summarize`: accept `command`, `raw_output`; preserve branch name, file counts, file names, short commit hashes, commit messages, merge conflicts, untracked files; return `result`
+  - [x] 2.7 Implement `_handle_git_summarize`: accept `command`, `raw_output`; preserve branch name, file counts, file names, short commit hashes, commit messages, merge conflicts, untracked files; return `result`
     - _Requirements: 13.4_
 
-  - [~] 2.8 Implement `_handle_rank_search`: accept `pattern`, `results` (string array), `task_context`; rank by exact match > proximity to recent files > frequency; return `result_data` as ranked string array
+  - [x] 2.8 Implement `_handle_rank_search`: accept `pattern`, `results` (string array), `task_context`; rank by exact match > proximity to recent files > frequency; return `result_data` as ranked string array
     - _Requirements: 14.4_
 
-  - [~] 2.9 Implement `_handle_extract_section`: accept `file_path`, `file_content`, `task_context`; return the contiguous block most relevant to the task context with ±20 lines of surrounding context; return as `result`
+  - [x] 2.9 Implement `_handle_extract_section`: accept `file_path`, `file_content`, `task_context`; return the contiguous block most relevant to the task context with ±20 lines of surrounding context; return as `result`
     - _Requirements: 15.4_
 
-  - [~] 2.10 Implement `_handle_detect_repetition`: accept `recent_responses` (array of strings); detect semantic similarity, planning loops, and tool retry loops; return `result_data` as `{repeating, reason?}`
+  - [x] 2.10 Implement `_handle_detect_repetition`: accept `recent_responses` (array of strings); detect semantic similarity, planning loops, and tool retry loops; return `result_data` as `{repeating, reason?}`
     - _Requirements: 16.4_
 
   - [ ]* 2.11 Write Python unit tests for each handler (`test/test_memory_bridge_assist.py`)

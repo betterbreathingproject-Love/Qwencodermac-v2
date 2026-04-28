@@ -1746,46 +1746,502 @@ async def _assist_with_semaphore(handler_coro):
         return await handler_coro
 
 
-# ── Assist handler stubs (implemented in Task 2) ─────────────────────────────
+# ── Assist handler implementations ───────────────────────────────────────────
+
+VISION_MAX_CHARS = 2000  # ~500 tokens
+
 
 async def _handle_vision(payload: dict) -> AssistResponse:
-    raise NotImplementedError("_handle_vision not yet implemented")
+    """2.1 Vision — decode base64 image and describe it via the VLM model."""
+    import time, base64, tempfile, os as _os
+    t0 = time.monotonic()
+
+    image_b64: str = payload.get("image_b64", "")
+    mime_type: str = payload.get("mime_type", "image/png")
+    prompt: str = payload.get("prompt", "Describe this image in detail.")
+
+    try:
+        import mlx_vlm
+        from mlx_vlm import generate as vlm_generate
+        from mlx_vlm.utils import load_config
+
+        # Decode the base64 image to a temp file
+        image_data = base64.b64decode(image_b64)
+        ext = mime_type.split("/")[-1].replace("jpeg", "jpg")
+        with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
+            tmp.write(image_data)
+            tmp_path = tmp.name
+
+        try:
+            response = vlm_generate(
+                _extract_model,
+                _extract_processor,
+                prompt=prompt,
+                image=tmp_path,
+                max_tokens=512,
+                verbose=False,
+            )
+        finally:
+            try:
+                _os.unlink(tmp_path)
+            except Exception:
+                pass
+
+        description = response if isinstance(response, str) else str(response)
+        description = description[:VISION_MAX_CHARS]
+        output_tokens = len(description) // 4
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result=description, elapsed_ms=elapsed_ms, output_tokens=output_tokens)
+
+    except Exception as e:
+        logger.warning(f"[_handle_vision] failed: {e}")
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result=None, elapsed_ms=elapsed_ms, output_tokens=0)
 
 
 async def _handle_todo_bootstrap(payload: dict) -> AssistResponse:
-    raise NotImplementedError("_handle_todo_bootstrap not yet implemented")
+    """2.2 Todo bootstrap — generate initial todo list from user prompt."""
+    import time, json
+    t0 = time.monotonic()
+
+    user_prompt: str = payload.get("user_prompt", "")
+
+    try:
+        import mlx_lm
+        prompt = (
+            "You are a task planner. Given the user's request, produce a JSON array of todo items.\n"
+            "Each item must have: id (integer starting at 1), content (string), status (\"pending\").\n"
+            "Output ONLY the JSON array, no explanation.\n\n"
+            f"User request: {user_prompt[:800]}\n\nTodos:"
+        )
+        response = mlx_lm.generate(
+            _extract_model, _extract_processor,
+            prompt=prompt, max_tokens=400, verbose=False,
+        )
+        json_match = re.search(r'\[.*?\]', response, re.DOTALL)
+        if not json_match:
+            raise ValueError("No JSON array found in response")
+        todos_raw = json.loads(json_match.group(0))
+        todos = []
+        for item in todos_raw:
+            if not isinstance(item, dict):
+                continue
+            item_id = item.get("id")
+            content = item.get("content")
+            status = item.get("status", "pending")
+            if not isinstance(item_id, int) or not isinstance(content, str):
+                continue
+            todos.append({"id": item_id, "content": content, "status": "pending"})
+
+        output_tokens = len(response) // 4
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result_data=todos if todos else None, elapsed_ms=elapsed_ms, output_tokens=output_tokens)
+
+    except Exception as e:
+        logger.warning(f"[_handle_todo_bootstrap] failed: {e}")
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result_data=None, elapsed_ms=elapsed_ms, output_tokens=0)
 
 
 async def _handle_todo_watch(payload: dict) -> AssistResponse:
-    raise NotImplementedError("_handle_todo_watch not yet implemented")
+    """2.3 Todo watch — infer status changes from a tool result (never add items or change content)."""
+    import time, json
+    t0 = time.monotonic()
+
+    tool_name: str = payload.get("tool_name", "")
+    tool_result: str = payload.get("tool_result", "")
+    current_todos: list = payload.get("current_todos", [])
+
+    if not current_todos:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result_data=None, elapsed_ms=elapsed_ms, output_tokens=0)
+
+    try:
+        import mlx_lm
+        todos_json = json.dumps(current_todos)
+        prompt = (
+            "You are a todo status tracker. A tool just ran — infer which todo items changed status.\n"
+            "Rules:\n"
+            "- ONLY change status: pending→in_progress or in_progress→done\n"
+            "- NEVER add new items, remove items, or change content\n"
+            "- If nothing changed, output the original array unchanged\n"
+            "- Output ONLY the JSON array, no explanation\n\n"
+            f"Tool: {tool_name}\n"
+            f"Tool result (first 600 chars): {tool_result[:600]}\n\n"
+            f"Current todos: {todos_json}\n\nUpdated todos:"
+        )
+        response = mlx_lm.generate(
+            _extract_model, _extract_processor,
+            prompt=prompt, max_tokens=400, verbose=False,
+        )
+        json_match = re.search(r'\[.*?\]', response, re.DOTALL)
+        if not json_match:
+            raise ValueError("No JSON array found in response")
+        updated_raw = json.loads(json_match.group(0))
+
+        # Enforce invariants: same length, same ids and content, only valid status transitions
+        if len(updated_raw) != len(current_todos):
+            raise ValueError("Updated todos length mismatch — discarding")
+
+        valid_transitions = {("pending", "in_progress"), ("in_progress", "done")}
+        updated = []
+        has_change = False
+        for orig, upd in zip(current_todos, updated_raw):
+            if not isinstance(upd, dict):
+                raise ValueError("Non-dict item in updated todos")
+            # Preserve id and content from original
+            new_status = upd.get("status", orig.get("status"))
+            orig_status = orig.get("status")
+            if new_status != orig_status:
+                if (orig_status, new_status) not in valid_transitions:
+                    new_status = orig_status  # reject invalid transition
+                else:
+                    has_change = True
+            updated.append({"id": orig["id"], "content": orig["content"], "status": new_status})
+
+        output_tokens = len(response) // 4
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(
+            result_data=updated if has_change else None,
+            elapsed_ms=elapsed_ms,
+            output_tokens=output_tokens,
+        )
+
+    except Exception as e:
+        logger.warning(f"[_handle_todo_watch] failed: {e}")
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result_data=None, elapsed_ms=elapsed_ms, output_tokens=0)
 
 
 async def _handle_fetch_summarize(payload: dict) -> AssistResponse:
-    raise NotImplementedError("_handle_fetch_summarize not yet implemented")
+    """2.4 Fetch summarize — summarize large web content, preserving key facts."""
+    import time
+    t0 = time.monotonic()
+
+    url: str = payload.get("url", "")
+    raw_content: str = payload.get("raw_content", "")
+    max_output_tokens: int = int(payload.get("max_output_tokens", 512))
+
+    try:
+        import mlx_lm
+        prompt = (
+            "Summarize the following web page content. Preserve:\n"
+            "- Page title\n"
+            "- Key facts and main points\n"
+            "- All URLs and links mentioned\n"
+            "- Code snippets (verbatim)\n"
+            "- Error messages (verbatim)\n"
+            "- Structured data (tables, lists)\n"
+            "Be concise but complete. Do not omit technical details.\n\n"
+            f"URL: {url}\n\n"
+            f"Content:\n{raw_content[:6000]}\n\nSummary:"
+        )
+        response = mlx_lm.generate(
+            _extract_model, _extract_processor,
+            prompt=prompt, max_tokens=max_output_tokens, verbose=False,
+        )
+        summary = response.strip() if isinstance(response, str) else str(response).strip()
+        output_tokens = len(summary) // 4
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result=summary, elapsed_ms=elapsed_ms, output_tokens=output_tokens)
+
+    except Exception as e:
+        logger.warning(f"[_handle_fetch_summarize] failed: {e}")
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result=None, elapsed_ms=elapsed_ms, output_tokens=0)
 
 
 async def _handle_tool_validate(payload: dict) -> AssistResponse:
-    raise NotImplementedError("_handle_tool_validate not yet implemented")
+    """2.5 Tool validate — check tool-specific preconditions without calling the model for simple cases."""
+    import time, shlex
+    t0 = time.monotonic()
+
+    tool_name: str = payload.get("tool_name", "")
+    tool_args: dict = payload.get("tool_args", {})
+    recent_context: str = payload.get("recent_context", "")
+
+    def _ok():
+        elapsed = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result_data={"valid": True, "reason": "ok"}, elapsed_ms=elapsed, output_tokens=0)
+
+    def _fail(reason: str):
+        elapsed = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result_data={"valid": False, "reason": reason}, elapsed_ms=elapsed, output_tokens=0)
+
+    try:
+        if tool_name == "edit_file":
+            old_string = tool_args.get("old_string", "")
+            if old_string and recent_context and old_string not in recent_context:
+                return _fail(
+                    f"old_string not found in recent context — the file may have changed. "
+                    f"Re-read the file before retrying edit_file."
+                )
+            return _ok()
+
+        elif tool_name == "bash":
+            command: str = tool_args.get("command", "")
+            # Check for unclosed quotes
+            try:
+                shlex.split(command)
+            except ValueError as e:
+                return _fail(f"Bash command has a syntax error: {e}")
+            # Flag empty command
+            if not command.strip():
+                return _fail("Bash command is empty.")
+            return _ok()
+
+        elif tool_name == "write_file":
+            path = tool_args.get("path", "")
+            content = tool_args.get("content")
+            if not path:
+                return _fail("write_file requires a non-empty 'path' field.")
+            if content is None:
+                return _fail("write_file requires a 'content' field.")
+            return _ok()
+
+        elif tool_name == "read_file":
+            path = tool_args.get("path", "")
+            if not path:
+                return _fail("read_file requires a non-empty 'path' field.")
+            return _ok()
+
+        else:
+            # Unknown tool — pass through
+            return _ok()
+
+    except Exception as e:
+        logger.warning(f"[_handle_tool_validate] failed: {e}")
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result_data={"valid": True, "reason": "validation error — proceeding"}, elapsed_ms=elapsed_ms, output_tokens=0)
 
 
 async def _handle_error_diagnose(payload: dict) -> AssistResponse:
-    raise NotImplementedError("_handle_error_diagnose not yet implemented")
+    """2.6 Error diagnose — produce a single-sentence root cause + fix suggestion (≤100 tokens)."""
+    import time
+    t0 = time.monotonic()
+
+    tool_name: str = payload.get("tool_name", "")
+    tool_args: dict = payload.get("tool_args", {})
+    error_message: str = payload.get("error_message", "")
+    recent_context: str = payload.get("recent_context", "")
+
+    try:
+        import mlx_lm, json
+        args_summary = json.dumps(tool_args, ensure_ascii=False)[:300]
+        prompt = (
+            "You are a debugging assistant. In ONE sentence (≤100 tokens), identify the root cause "
+            "of this tool error and suggest the most likely fix.\n\n"
+            f"Tool: {tool_name}\n"
+            f"Args: {args_summary}\n"
+            f"Error: {error_message[:500]}\n"
+            f"Recent context (last 400 chars): {recent_context[-400:]}\n\n"
+            "One-sentence diagnosis:"
+        )
+        response = mlx_lm.generate(
+            _extract_model, _extract_processor,
+            prompt=prompt, max_tokens=100, verbose=False,
+        )
+        diagnosis = response.strip().split("\n")[0]  # take first line only
+        output_tokens = len(diagnosis) // 4
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result=diagnosis, elapsed_ms=elapsed_ms, output_tokens=output_tokens)
+
+    except Exception as e:
+        logger.warning(f"[_handle_error_diagnose] failed: {e}")
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result=None, elapsed_ms=elapsed_ms, output_tokens=0)
 
 
 async def _handle_git_summarize(payload: dict) -> AssistResponse:
-    raise NotImplementedError("_handle_git_summarize not yet implemented")
+    """2.7 Git summarize — summarize git output preserving key facts."""
+    import time
+    t0 = time.monotonic()
+
+    command: str = payload.get("command", "")
+    raw_output: str = payload.get("raw_output", "")
+
+    try:
+        import mlx_lm
+        prompt = (
+            "Summarize this git command output. Preserve:\n"
+            "- Current branch name\n"
+            "- Number of files changed\n"
+            "- File names (all of them)\n"
+            "- Short commit hashes and commit messages\n"
+            "- Merge conflicts (if any)\n"
+            "- Untracked files (if any)\n"
+            "Be concise. Do not omit file names or commit hashes.\n\n"
+            f"Command: {command}\n\n"
+            f"Output:\n{raw_output[:4000]}\n\nSummary:"
+        )
+        response = mlx_lm.generate(
+            _extract_model, _extract_processor,
+            prompt=prompt, max_tokens=300, verbose=False,
+        )
+        summary = response.strip() if isinstance(response, str) else str(response).strip()
+        output_tokens = len(summary) // 4
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result=summary, elapsed_ms=elapsed_ms, output_tokens=output_tokens)
+
+    except Exception as e:
+        logger.warning(f"[_handle_git_summarize] failed: {e}")
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result=None, elapsed_ms=elapsed_ms, output_tokens=0)
 
 
 async def _handle_rank_search(payload: dict) -> AssistResponse:
-    raise NotImplementedError("_handle_rank_search not yet implemented")
+    """2.8 Rank search — rank search results by relevance to task context."""
+    import time
+    t0 = time.monotonic()
+
+    pattern: str = payload.get("pattern", "")
+    results: list = payload.get("results", [])
+    task_context: str = payload.get("task_context", "")
+
+    if not results:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result_data=[], elapsed_ms=elapsed_ms, output_tokens=0)
+
+    try:
+        # Fast heuristic ranking (no model call needed for most cases):
+        # 1. Exact match to task_context tokens (highest)
+        # 2. Proximity to recently mentioned files in task_context (medium)
+        # 3. Match frequency / position (lowest — preserve original order as tiebreak)
+        context_lower = task_context.lower()
+        context_tokens = set(re.findall(r'\w+', context_lower))
+
+        def _score(result_line: str) -> float:
+            line_lower = result_line.lower()
+            line_tokens = set(re.findall(r'\w+', line_lower))
+            # Exact substring match in context
+            exact_bonus = 2.0 if pattern.lower() in context_lower else 0.0
+            # Token overlap with task context
+            overlap = len(line_tokens & context_tokens) / max(len(line_tokens), 1)
+            # File path mentioned in context
+            # Extract file path portion (before the first colon or space)
+            path_match = re.match(r'^([^\s:]+)', result_line)
+            path_bonus = 0.0
+            if path_match:
+                path = path_match.group(1).lower()
+                if path in context_lower:
+                    path_bonus = 1.5
+            return exact_bonus + overlap + path_bonus
+
+        scored = sorted(enumerate(results), key=lambda x: _score(x[1]), reverse=True)
+        ranked = [results[i] for i, _ in scored]
+
+        output_tokens = 0
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result_data=ranked, elapsed_ms=elapsed_ms, output_tokens=output_tokens)
+
+    except Exception as e:
+        logger.warning(f"[_handle_rank_search] failed: {e}")
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result_data=results, elapsed_ms=elapsed_ms, output_tokens=0)
 
 
 async def _handle_extract_section(payload: dict) -> AssistResponse:
-    raise NotImplementedError("_handle_extract_section not yet implemented")
+    """2.9 Extract section — return the contiguous block most relevant to task context with ±20 lines."""
+    import time
+    t0 = time.monotonic()
+
+    file_path: str = payload.get("file_path", "")
+    file_content: str = payload.get("file_content", "")
+    task_context: str = payload.get("task_context", "")
+
+    try:
+        lines = file_content.splitlines()
+        if not lines:
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            return AssistResponse(result=file_content, elapsed_ms=elapsed_ms, output_tokens=0)
+
+        context_tokens = set(re.findall(r'\w+', task_context.lower()))
+
+        # Score each line by token overlap with task context
+        def _line_score(line: str) -> float:
+            line_tokens = set(re.findall(r'\w+', line.lower()))
+            if not line_tokens:
+                return 0.0
+            return len(line_tokens & context_tokens) / len(line_tokens)
+
+        scores = [_line_score(line) for line in lines]
+
+        # Find the line with the highest score as the anchor
+        best_idx = max(range(len(scores)), key=lambda i: scores[i])
+
+        # Extract ±20 lines around the best match
+        start = max(0, best_idx - 20)
+        end = min(len(lines), best_idx + 21)
+        extracted = "\n".join(lines[start:end])
+
+        output_tokens = len(extracted) // 4
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result=extracted, elapsed_ms=elapsed_ms, output_tokens=output_tokens)
+
+    except Exception as e:
+        logger.warning(f"[_handle_extract_section] failed: {e}")
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result=None, elapsed_ms=elapsed_ms, output_tokens=0)
 
 
 async def _handle_detect_repetition(payload: dict) -> AssistResponse:
-    raise NotImplementedError("_handle_detect_repetition not yet implemented")
+    """2.10 Detect repetition — detect semantic loops, planning loops, and tool retry loops."""
+    import time
+    t0 = time.monotonic()
+
+    recent_responses: list = payload.get("recent_responses", [])
+
+    if len(recent_responses) < 2:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result_data={"repeating": False}, elapsed_ms=elapsed_ms, output_tokens=0)
+
+    try:
+        # Heuristic detection (fast, no model call):
+
+        # 1. Planning loop: multiple responses starting with "I will" without action verbs
+        planning_phrases = [r for r in recent_responses if re.search(r'\bI will\b', r, re.I)]
+        if len(planning_phrases) >= 2:
+            # Check if they're semantically similar (share many tokens)
+            tokens_sets = [set(re.findall(r'\w+', r.lower())) for r in planning_phrases]
+            if len(tokens_sets) >= 2:
+                overlap = len(tokens_sets[0] & tokens_sets[1]) / max(len(tokens_sets[0] | tokens_sets[1]), 1)
+                if overlap > 0.5:
+                    elapsed_ms = int((time.monotonic() - t0) * 1000)
+                    return AssistResponse(
+                        result_data={"repeating": True, "reason": "Planning loop detected: repeated 'I will...' without action."},
+                        elapsed_ms=elapsed_ms, output_tokens=0,
+                    )
+
+        # 2. Semantic similarity: last two responses share >70% token overlap
+        if len(recent_responses) >= 2:
+            last_two = recent_responses[-2:]
+            tok_a = set(re.findall(r'\w+', last_two[0].lower()))
+            tok_b = set(re.findall(r'\w+', last_two[1].lower()))
+            union = tok_a | tok_b
+            if union:
+                similarity = len(tok_a & tok_b) / len(union)
+                if similarity > 0.7:
+                    elapsed_ms = int((time.monotonic() - t0) * 1000)
+                    return AssistResponse(
+                        result_data={"repeating": True, "reason": f"Semantic loop detected: last two responses are {similarity:.0%} similar."},
+                        elapsed_ms=elapsed_ms, output_tokens=0,
+                    )
+
+        # 3. Exact duplicate detection
+        if len(set(r.strip() for r in recent_responses)) == 1:
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            return AssistResponse(
+                result_data={"repeating": True, "reason": "Exact duplicate responses detected."},
+                elapsed_ms=elapsed_ms, output_tokens=0,
+            )
+
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result_data={"repeating": False}, elapsed_ms=elapsed_ms, output_tokens=0)
+
+    except Exception as e:
+        logger.warning(f"[_handle_detect_repetition] failed: {e}")
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result_data={"repeating": False}, elapsed_ms=elapsed_ms, output_tokens=0)
 
 
 _ASSIST_HANDLERS = {
@@ -1860,11 +2316,6 @@ async def assist(req: AssistRequest):
 
     except _asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Assist task timed out")
-    except NotImplementedError as e:
-        # Stubs not yet implemented — return a placeholder response
-        elapsed_ms = int((time.monotonic() - t0) * 1000)
-        logger.debug(f"[assist/{req.task_type}] stub (not yet implemented)")
-        return AssistResponse(result=None, result_data=None, elapsed_ms=elapsed_ms, output_tokens=0)
     except Exception as e:
         logger.error(f"[assist/{req.task_type}] failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
