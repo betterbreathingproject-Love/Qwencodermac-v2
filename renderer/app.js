@@ -1741,11 +1741,13 @@ async function sendAgentMode(prompt, opts = {}) {
             renderTaskGraph(parsed)
             saveWorkflowState() // persist task graph path for session restore
 
-            const todos = Object.values(parsed.nodes).map(n => ({
-              id: n.id,
-              content: n.title,
-              status: n.status === 'not_started' ? 'pending' : n.status,
-            }))
+            const todos = Object.values(parsed.nodes)
+              .filter(n => n.title && n.title.trim())
+              .map(n => ({
+                id: n.id,
+                content: n.title,
+                status: n.status === 'not_started' ? 'pending' : n.status,
+              }))
             if (todos.length > 0) updateTodoPanel(todos, 'done')
           }
 
@@ -1886,14 +1888,17 @@ async function sendAgentMode(prompt, opts = {}) {
                 stopPromptProgress()
                 orchToolName = ev.name || ''
                 _agentToolCount++
-                // Route update_todos to the todo panel instead of showing a tool block
+                // Route update_todos: when a task graph is active, the graph is the
+                // source of truth — suppress agent update_todos to avoid overwriting it.
                 if (ev.name === 'update_todos' && ev.input?.todos) {
-                  const mapped = ev.input.todos.map(t => ({
-                    id: t.id,
-                    content: t.content || t.title || t.text || '',
-                    status: t.status === 'done' ? 'completed' : t.status === 'in_progress' ? 'in_progress' : 'pending',
-                  }))
-                  updateTodoPanel(mapped, 'running')
+                  if (!currentTaskGraph) {
+                    const mapped = ev.input.todos.map(t => ({
+                      id: t.id,
+                      content: t.content || t.title || t.text || '',
+                      status: t.status === 'done' ? 'completed' : t.status === 'in_progress' ? 'in_progress' : 'pending',
+                    }))
+                    updateTodoPanel(mapped, 'running')
+                  }
                   updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Updating progress...' })
                   scrollOutput()
                   break
@@ -2955,30 +2960,26 @@ if (window.app.onTaskStatusEvent) {
         if (currentTasksPath) loadTaskGraph(currentTasksPath).catch(() => {})
       }
     }
-    // Also update the todo panel if it's showing items
+    // Also update the todo panel to reflect task graph status.
+    // Seed from task graph nodes if the panel is empty, otherwise update in place.
+    const statusMap = { 'in_progress': 'in_progress', 'completed': 'completed', 'failed': 'pending', 'not_started': 'pending' }
+    const todoStatus = statusMap[evt.status] || evt.status
+
     if (currentTodos.length > 0) {
-      const statusMap = { 'in_progress': 'in_progress', 'completed': 'completed', 'failed': 'pending', 'not_started': 'pending' }
-      const todoStatus = statusMap[evt.status] || evt.status
-      const updated = currentTodos.map(t => {
-        if (String(t.id) === String(evt.nodeId)) {
-          return { ...t, status: todoStatus }
-        }
-        return t
-      })
-
-      // Show status change in chat (read from updated array, not stale currentTodos)
-      const todo = updated.find(t => String(t.id) === String(evt.nodeId))
-      const label = todo ? todo.content : `Task ${evt.nodeId}`
-      if (evt.status === 'in_progress') {
-        const agentTag = evt.agentType && evt.agentType !== 'general' ? ` [${evt.agentType}]` : ''
-        appendMsg('system', `🔄 Task ${evt.nodeId}${agentTag}: ${esc(label)}`)
-      } else if (evt.status === 'completed') {
-        appendMsg('system', `✅ Task ${evt.nodeId}: ${esc(label)}`)
-      } else if (evt.status === 'failed') {
-        appendMsg('system', `❌ Task ${evt.nodeId}: ${esc(label)}${evt.error ? ' — ' + esc(evt.error) : ''}`)
-      }
-
+      const updated = currentTodos.map(t =>
+        String(t.id) === String(evt.nodeId) ? { ...t, status: todoStatus } : t
+      )
       updateTodoPanel(updated, 'done')
+    } else if (currentTaskGraph && currentTaskGraph.nodes) {
+      // Panel is empty — seed it from the full task graph
+      const todos = Object.values(currentTaskGraph.nodes)
+        .filter(n => n.title && n.title.trim())
+        .map(n => ({
+          id: n.id,
+          content: n.title,
+          status: statusMap[n.status] || 'pending',
+        }))
+      if (todos.length > 0) updateTodoPanel(todos, 'done')
     }
   })
 }
@@ -3688,11 +3689,13 @@ async function _launchOrchestrator(tasksPath, taskCount) {
     renderTaskGraph(parsed)
     saveWorkflowState()
 
-    const todos = Object.values(parsed.nodes).map(n => ({
-      id: n.id,
-      content: n.title,
-      status: n.status === 'not_started' ? 'pending' : n.status,
-    }))
+    const todos = Object.values(parsed.nodes)
+      .filter(n => n.title && n.title.trim())
+      .map(n => ({
+        id: n.id,
+        content: n.title,
+        status: n.status === 'not_started' ? 'pending' : n.status,
+      }))
     if (todos.length > 0) updateTodoPanel(todos, 'done')
   }
 
@@ -3855,14 +3858,17 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         stopPromptProgress()
         orchToolName = ev.name || ''
         _agentToolCount++
-        // Route update_todos to the todo panel instead of showing a tool block
+        // Route update_todos: when a task graph is active, suppress agent update_todos
+        // so the task graph remains the single source of truth for the todo panel.
         if (ev.name === 'update_todos' && ev.input?.todos) {
-          const mapped = ev.input.todos.map(t => ({
-            id: t.id,
-            content: t.content || t.title || t.text || '',
-            status: t.status === 'done' ? 'completed' : t.status === 'in_progress' ? 'in_progress' : 'pending',
-          }))
-          updateTodoPanel(mapped, 'running')
+          if (!currentTaskGraph) {
+            const mapped = ev.input.todos.map(t => ({
+              id: t.id,
+              content: t.content || t.title || t.text || '',
+              status: t.status === 'done' ? 'completed' : t.status === 'in_progress' ? 'in_progress' : 'pending',
+            }))
+            updateTodoPanel(mapped, 'running')
+          }
           updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Updating progress...' })
           scrollOutput()
           break
