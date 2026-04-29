@@ -47,6 +47,7 @@ class Orchestrator extends EventEmitter {
     this._tasksFilePath = options.tasksFilePath || null;
     this._specContext = options.specContext || '';
     this._lspManager = options.lspManager || null;
+    this._projectDir = options.projectDir || null;
     this._onStatusChange = options.onStatusChange || null;
     this._onError = options.onError || null;
     this._onComplete = options.onComplete || null;
@@ -243,6 +244,10 @@ class Orchestrator extends EventEmitter {
       }
 
       const task = { ...node, status: 'in_progress', specContext: specContextWithMemory };
+      // Inject project directory as cwd so agents run in the right folder
+      if (this._projectDir && !task.cwd) {
+        task.cwd = this._projectDir;
+      }
 
       // Inject a compact summary of predecessor task outputs so the agent
       // knows what's already been done without carrying full transcripts.
@@ -313,7 +318,7 @@ class Orchestrator extends EventEmitter {
     try {
       const startTime = Date.now();
       const result = await this._agentPool.dispatch(
-        { ...node, specContext: this._specContext },
+        { ...node, specContext: this._specContext, cwd: this._projectDir || node.cwd },
         this._context
       );
       const duration = Date.now() - startTime;

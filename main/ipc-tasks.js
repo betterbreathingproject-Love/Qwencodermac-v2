@@ -72,6 +72,13 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
         tasksFilePath: filePath,
         specContext,
         lspManager: getLspManager ? getLspManager() : null,
+        // Pass the project directory so agents run in the right cwd.
+        // Derive from getCurrentProject() first; fall back to walking up from specDir.
+        projectDir: getCurrentProject() || (() => {
+          // specDir is .maccoder/specs/<name>/ — project root is 3 levels up
+          const p = require('path')
+          return p.resolve(specDir, '..', '..', '..')
+        })(),
       })
       orchestratorInstance.on('task-status-event', (evt) => {
         getMainWindow()?.webContents.send('task-status-event', evt)
