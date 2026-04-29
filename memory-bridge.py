@@ -2071,7 +2071,7 @@ async def _handle_tool_validate(payload: dict) -> AssistResponse:
 
 async def _handle_error_diagnose(payload: dict) -> AssistResponse:
     """2.6 Error diagnose — produce a single-sentence root cause + fix suggestion (≤100 tokens)."""
-    import time
+    import time, re
     t0 = time.monotonic()
 
     tool_name: str = payload.get("tool_name", "")
@@ -2079,17 +2079,37 @@ async def _handle_error_diagnose(payload: dict) -> AssistResponse:
     error_message: str = payload.get("error_message", "")
     recent_context: str = payload.get("recent_context", "")
 
+    # Fast-path: for well-known OS-level errors, return a grounded diagnosis
+    # directly without calling the model — avoids hallucination on clear errors.
+    _FAST_PATTERNS = [
+        (r"No such file or directory", "The path does not exist — check the directory name and ensure it has been created before running this command."),
+        (r"Permission denied", "The process lacks permission to access this path — check file/directory permissions."),
+        (r"command not found", "The command is not installed or not on PATH — install it or use its full path."),
+        (r"Is a directory", "A directory was given where a file was expected — provide a file path instead."),
+        (r"Not a directory", "A file was given where a directory was expected — provide a directory path instead."),
+        (r"File exists", "The target file already exists — remove it first or use a different destination path."),
+        (r"Connection refused", "The server is not running or is not listening on the expected port — start the server first."),
+        (r"Broken pipe", "The receiving process closed before all data was written — check that the downstream command is running correctly."),
+    ]
+    for pattern, diagnosis in _FAST_PATTERNS:
+        if re.search(pattern, error_message, re.IGNORECASE):
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            return AssistResponse(result=diagnosis, elapsed_ms=elapsed_ms, output_tokens=len(diagnosis) // 4)
+
     try:
         import mlx_lm, json
         args_summary = json.dumps(tool_args, ensure_ascii=False)[:300]
+        # Keep the prompt tightly grounded in the literal error text.
+        # Instruct the model NOT to invent causes — it must quote or paraphrase
+        # the actual error message as the basis for its diagnosis.
         prompt = (
-            "You are a debugging assistant. In ONE sentence (≤100 tokens), identify the root cause "
-            "of this tool error and suggest the most likely fix.\n\n"
+            "You are a debugging assistant. Read the EXACT error message below carefully.\n"
+            "In ONE sentence (≤80 tokens), state what the error message says went wrong and "
+            "suggest the most likely fix. Do NOT invent causes that are not in the error text.\n\n"
             f"Tool: {tool_name}\n"
             f"Args: {args_summary}\n"
-            f"Error: {error_message[:500]}\n"
-            f"Recent context (last 400 chars): {recent_context[-400:]}\n\n"
-            "One-sentence diagnosis:"
+            f"Exact error message: {error_message[:500]}\n\n"
+            "One-sentence diagnosis (based only on the error message above):"
         )
         response = mlx_lm.generate(
             _extract_model, _extract_processor,

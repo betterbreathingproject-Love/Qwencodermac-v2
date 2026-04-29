@@ -1362,7 +1362,22 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
               resolve({ result: stdout || '(no output)' })
             } else {
               const combined = (stdout + '\n' + stderr).trim()
-              resolve({ error: `Command failed (exit ${code}):\n${combined || 'Unknown error'}` })
+              // When stderr is suppressed (e.g. 2>/dev/null) and stdout is empty,
+              // provide a more actionable hint rather than the opaque "Unknown error".
+              let errorDetail = combined
+              if (!errorDetail) {
+                // Check if the command references a path that doesn't exist
+                const pathMatch = args.command.match(/"([^"]+)"/)
+                if (pathMatch) {
+                  const fs2 = require('fs')
+                  const candidatePath = pathMatch[1]
+                  if (!fs2.existsSync(candidatePath)) {
+                    errorDetail = `No such file or directory: ${candidatePath}`
+                  }
+                }
+                if (!errorDetail) errorDetail = 'Command exited with non-zero status and produced no output (stderr may have been suppressed with 2>/dev/null)'
+              }
+              resolve({ error: `Command failed (exit ${code}):\n${errorDetail}` })
             }
           })
           proc.on('error', (err) => {
