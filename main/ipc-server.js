@@ -39,6 +39,16 @@ function getServerScript(appDir) {
 // ── server lifecycle ──────────────────────────────────────────────────────────
 let serverProcess = null
 let _serverStopping = false
+let _lastLoadedModelPath = null  // track last loaded model for post-crash reload
+let _crashRestartTimer = null    // debounce crash restarts
+
+/**
+ * Record the last successfully loaded model path so it can be reloaded
+ * automatically after a crash restart.
+ */
+function setLastLoadedModel(modelPath) {
+  _lastLoadedModelPath = modelPath
+}
 
 function startServer(port, appDir, mainWindow) {
   if (serverProcess) return
@@ -63,16 +73,91 @@ function startServer(port, appDir, mainWindow) {
   serverProcess.stderr.on('data', d => {
     mainWindow?.webContents.send('server-log', d.toString().trim())
   })
-  serverProcess.on('exit', (code) => {
+  serverProcess.on('exit', (code, signal) => {
     serverProcess = null
-    console.log(`[main] Server exited with code ${code}`)
+    const isCrash = !_serverStopping && (code !== 0 || signal === 'SIGSEGV' || signal === 'SIGABRT' || signal === 'SIGBUS')
+    console.log(`[main] Server exited — code: ${code}, signal: ${signal}, crash: ${isCrash}`)
     mainWindow?.webContents.send('server-status', { running: false })
-    if (!_serverStopping && code !== 0 && code !== null) {
-      console.log(`[main] Server crashed (code ${code}), restarting in 2s...`)
-      mainWindow?.webContents.send('server-log', `⚠️ Server crashed (code ${code}), restarting...`)
-      setTimeout(() => { if (!_serverStopping) startServer(port, appDir, mainWindow) }, 2000)
+
+    if (isCrash) {
+      // Debounce: cancel any pending restart before scheduling a new one
+      if (_crashRestartTimer) { clearTimeout(_crashRestartTimer); _crashRestartTimer = null }
+
+      const reason = signal || `exit code ${code}`
+      console.log(`[main] Server crashed (${reason}), performing full recovery in 5s...`)
+      mainWindow?.webContents.send('server-log', `⚠️ Server crashed (${reason}) — restarting in 5s...`)
+      mainWindow?.webContents.send('server-crashed', { reason, willRestart: true })
+
+      // Wait 5s for Metal/GPU memory to be fully released before restarting.
+      // A SIGSEGV from MLX leaves GPU memory in an undefined state — starting
+      // too quickly causes an immediate second crash.
+      _crashRestartTimer = setTimeout(async () => {
+        _crashRestartTimer = null
+        if (_serverStopping) return
+
+        // Kill any zombie process still holding the port
+        killStaleServer(port)
+
+        mainWindow?.webContents.send('server-log', '🔄 Restarting server...')
+        startServer(port, appDir, mainWindow)
+
+        // Wait for the server to be ready, then reload the last model
+        const ok = await waitForServer(`http://127.0.0.1:${port}`)
+        if (ok && _lastLoadedModelPath) {
+          mainWindow?.webContents.send('server-log', `🔄 Reloading model: ${_lastLoadedModelPath.split('/').pop()}...`)
+          mainWindow?.webContents.send('server-crashed', { reason, willRestart: false, reloadingModel: true })
+          _reloadModel(port, _lastLoadedModelPath, mainWindow, appDir)
+        } else if (ok) {
+          mainWindow?.webContents.send('server-status', { running: true })
+        }
+      }, 5000)
     }
   })
+}
+
+/**
+ * Reload a model after a crash restart. Fires calibration and fast-model
+ * load on success, same as the normal load-model IPC handler.
+ */
+async function _reloadModel(port, modelPath, mainWindow, appDir) {
+  const http = require('http')
+  const body = JSON.stringify({ model_path: modelPath })
+  try {
+    const result = await new Promise((resolve) => {
+      const req = http.request({
+        hostname: '127.0.0.1', port, path: '/admin/load', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+      }, res => {
+        let d = ''; res.on('data', c => d += c)
+        res.on('end', () => { try { resolve(JSON.parse(d)) } catch { resolve({ status: 'ok' }) } })
+        res.on('error', () => resolve({ error: 'Response error' }))
+      })
+      req.on('error', err => resolve({ error: err.message }))
+      req.setTimeout(120000, () => { req.destroy(); resolve({ error: 'Model load timed out' }) })
+      req.write(body); req.end()
+    })
+
+    if (result.error) {
+      console.error(`[main] Post-crash model reload failed: ${result.error}`)
+      mainWindow?.webContents.send('server-log', `❌ Model reload failed: ${result.error}`)
+      mainWindow?.webContents.send('server-status', { running: true })
+    } else {
+      const modelName = modelPath.split('/').pop()
+      console.log(`[main] Post-crash model reload succeeded: ${modelName}`)
+      mainWindow?.webContents.send('server-log', `✅ Model reloaded: ${modelName}`)
+      mainWindow?.webContents.send('server-status', { running: true, reloaded: true, modelId: result.model_id || modelName })
+
+      // Re-run calibration and reload fast model
+      runCalibration(`http://127.0.0.1:${port}`, port, mainWindow, modelPath)
+      const config = require('../config')
+      const memClient = require('../memory-client.js')
+      memClient._httpRequest('POST', '/memory/extractor/load', { model_path: config.DEFAULT_FAST_MODEL }, 60000)
+        .catch(() => {})
+    }
+  } catch (err) {
+    console.error(`[main] Post-crash model reload error: ${err.message}`)
+    mainWindow?.webContents.send('server-status', { running: true })
+  }
 }
 
 function stopServer() {
@@ -247,6 +332,7 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
 
     // Trigger calibration and auto-load extraction model after successful model load
     if (!result.error) {
+      _lastLoadedModelPath = modelPath  // remember for post-crash reload
       runCalibration(serverUrl(), serverPort(), getMainWindow(), modelPath)
 
       // Auto-load the dedicated fast extraction model (fire-and-forget)
@@ -352,4 +438,4 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
   })
 }
 
-module.exports = { register, startServer, stopServer, restartServer, waitForServer, killStaleServer, findPython, runCalibration, getCalibrationProfile, isCalibrating, clearCalibration }
+module.exports = { register, startServer, stopServer, restartServer, waitForServer, killStaleServer, findPython, runCalibration, getCalibrationProfile, isCalibrating, clearCalibration, setLastLoadedModel }

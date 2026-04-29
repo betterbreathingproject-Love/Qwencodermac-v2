@@ -79,6 +79,19 @@ window.addEventListener('DOMContentLoaded', async () => {
       _setStartupStage('server-ready')
       refreshStatus().then(() => _tryAutoLoad())
     }
+    // After a crash restart, the model was reloaded automatically — update UI
+    if (s.running && s.reloaded && s.modelId) {
+      setLoadedModel(s.modelId)
+      appendMsg('system', `✅ Server recovered — model reloaded: ${_formatModelName(s.modelId)}`)
+    }
+  })
+
+  // Show a visible banner when the server crashes and is recovering
+  window.app.onServerCrashed?.((s) => {
+    if (s.willRestart) {
+      appendMsg('system', `⚠️ MLX server crashed (${s.reason || 'unknown'}) — restarting in 5s and reloading model...`)
+      setServerStatus(false)
+    }
   })
   await refreshStatus()
   await _tryAutoLoad()

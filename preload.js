@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld('app', {
   openExternal:   (u)       => ipcRenderer.invoke('open-external', u),
   onServerLog:    (cb)      => ipcRenderer.on('server-log', (_, m) => cb(m)),
   onServerStatus: (cb)      => ipcRenderer.on('server-status', (_, s) => cb(s)),
+  onServerCrashed:(cb)      => ipcRenderer.on('server-crashed', (_, s) => cb(s)),
 
   // projects
   listProjects:   ()        => ipcRenderer.invoke('list-projects'),

@@ -1834,8 +1834,10 @@ class DirectBridge {
           const isSseError = /SSE error from server/.test(msg)
           if ((isTransient || isServerError || isSseError) && attempt < 7) {
             const reason = isServerError ? msg.match(/HTTP \d+/)?.[0] || 'server error' : code
-            // Exponential backoff: 5s, 6s, 9s, 12s, 15s, 15s, 15s, 15s
-            const delay = Math.min(5 + attempt * 3, 15)
+            // Backoff schedule designed to survive a full crash+restart+model-reload cycle:
+            // attempt 0→1: 5s, 1→2: 8s, 2→3: 12s, 3→4: 15s, 4→5: 20s, 5→6: 25s, 6→7: 30s
+            // Total max wait: ~115s — enough for 5s crash delay + server start + model reload
+            const delay = attempt < 2 ? 5 + attempt * 3 : Math.min(12 + (attempt - 2) * 5, 30)
             this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Server not ready (${reason}), retrying in ${delay}s... (${attempt + 1}/7)` })
             // Sleep in 1s increments so we can check _aborted
             for (let w = 0; w < delay && !this._aborted; w++) {
