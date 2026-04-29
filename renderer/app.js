@@ -1955,7 +1955,7 @@ async function sendAgentMode(prompt, opts = {}) {
             if (currentTasksPath) loadTaskGraph(currentTasksPath).catch(() => {})
           })
 
-          window.app.taskGraphExecute(tasksPath).then(r => {
+          window.app.taskGraphExecute(tasksPath, currentProject).then(r => {
             console.log('[orchestrator] Result:', r)
             if (r.error) appendMsg('system', `⚠️ Orchestrator error: ${r.error}`)
           }).catch(err => {
@@ -2750,7 +2750,7 @@ async function taskGraphRun() {
     if (!currentTaskGraph) { appendMsg('system', '❌ No task graph found at ' + tasksPath); return }
   }
 
-  const result = await window.app.taskGraphExecute(tasksPath)
+  const result = await window.app.taskGraphExecute(tasksPath, currentProject)
   if (result.error) { appendMsg('system', '❌ ' + result.error); return }
   document.getElementById('tgPauseBtn').style.display = 'inline-block'
   document.getElementById('tgAbortBtn').style.display = 'inline-block'
@@ -3759,7 +3759,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
     if (currentTasksPath) loadTaskGraph(currentTasksPath).catch(() => {})
   })
 
-  window.app.taskGraphExecute(tasksPath).then(r => {
+  window.app.taskGraphExecute(tasksPath, currentProject).then(r => {
     console.log('[orchestrator] Result:', r)
     if (r.error) appendMsg('system', `⚠️ Orchestrator error: ${r.error}`)
   }).catch(err => {

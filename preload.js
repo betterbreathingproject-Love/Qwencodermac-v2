@@ -103,7 +103,7 @@ contextBridge.exposeInMainWorld('app', {
 
   // task graph
   taskGraphParse:   (f)     => ipcRenderer.invoke('task-graph-parse', f),
-  taskGraphExecute: (f)     => ipcRenderer.invoke('task-graph-execute', f),
+  taskGraphExecute: (f, p)  => ipcRenderer.invoke('task-graph-execute', f, p),
   taskGraphPause:   ()      => ipcRenderer.invoke('task-graph-pause'),
   taskGraphResume:  ()      => ipcRenderer.invoke('task-graph-resume'),
   taskGraphStatus:  ()      => ipcRenderer.invoke('task-graph-status'),

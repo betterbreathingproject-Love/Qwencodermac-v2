@@ -45,7 +45,7 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
     } catch (e) { return { error: e.message } }
   })
 
-  ipcMain.handle('task-graph-execute', async (_, filePath) => {
+  ipcMain.handle('task-graph-execute', async (_, filePath, explicitProjectDir) => {
     if (!isNonEmptyString(filePath)) return { error: 'filePath is required' }
     try {
       const md = await fsp.readFile(filePath, 'utf-8')
@@ -76,12 +76,12 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
         }
       } catch (_) { /* spec context is optional */ }
 
-      // Derive project directory: prefer stored targetProjectDir, fall back to 3 levels up
-      const projectDir = targetProjectDir || (() => {
+      // Derive project directory: prefer explicit param from renderer, then config, then path walk
+      const projectDir = explicitProjectDir || targetProjectDir || (() => {
         const p = require('path')
         return p.resolve(specDir, '..', '..', '..')
       })()
-      console.log('[orchestrator] projectDir:', projectDir, '(from config:', !!targetProjectDir, ')')
+      console.log('[orchestrator] projectDir:', projectDir, '(explicit:', !!explicitProjectDir, 'config:', !!targetProjectDir, ')')
 
       orchestratorInstance = new Orchestrator({
         taskGraph: graph,
