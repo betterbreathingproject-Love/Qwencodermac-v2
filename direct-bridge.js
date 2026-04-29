@@ -1359,16 +1359,35 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
             killed = true
             proc.kill('SIGKILL')
           }, timeoutMs)
+
+          // Heartbeat: if no new output for 60s, notify the user the command is still running.
+          // Prevents the UI from looking frozen during long installs/builds.
+          let lastOutputAt = Date.now()
+          const heartbeatInterval = setInterval(() => {
+            const silentSecs = Math.round((Date.now() - lastOutputAt) / 1000)
+            if (silentSecs >= 60) {
+              const elapsedTotal = Math.round((Date.now() - (lastOutputAt - silentSecs * 1000 + silentSecs * 1000)) / 1000)
+              this.send('qwen-event', {
+                type: 'bash-waiting',
+                command: args.command.slice(0, 80),
+                elapsedSecs: silentSecs,
+                timeoutSecs: timeoutMs / 1000,
+              })
+            }
+          }, 60000)
           proc.stdout.on('data', (chunk) => {
             stdout += chunk.toString()
+            lastOutputAt = Date.now()
             if (stdout.length > 2 * 1024 * 1024) { killed = true; proc.kill('SIGKILL') }
           })
           proc.stderr.on('data', (chunk) => {
             stderr += chunk.toString()
+            lastOutputAt = Date.now()
             if (stderr.length > 2 * 1024 * 1024) { killed = true; proc.kill('SIGKILL') }
           })
           proc.on('close', (code) => {
             clearTimeout(timer)
+            clearInterval(heartbeatInterval)
             if (killed) {
               resolve({ error: `Command timed out or exceeded output limit (${timeoutMs / 1000}s):\n${(stdout + '\n' + stderr).trim().slice(0, 2000)}` })
             } else if (code === 0) {
@@ -1395,6 +1414,7 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
           })
           proc.on('error', (err) => {
             clearTimeout(timer)
+            clearInterval(heartbeatInterval)
             resolve({ error: `Failed to spawn command: ${err.message}` })
           })
           // Close stdin immediately — we don't send input
@@ -3256,7 +3276,7 @@ ${cwd}
 - ALWAYS use tools to read, write, and execute. Never output code or file contents as plain text — the user cannot use it.
 - edit_file: ALWAYS re-read the file with read_file in the same turn before editing. Compressed history may have stale content.
 - write_file: keep each call under 300 lines. For larger files, write the first chunk then use bash with heredoc to append.
-- bash: prefer single focused commands. Check exit codes in the output. For installs and builds (npm install, pip install, swift build, xcodebuild), the timeout is 5 minutes — use them directly. Always add non-interactive flags to suppress prompts: `npm init -y`, `pip install --no-input`, `brew install --no-interaction`.
+- bash: prefer single focused commands. Check exit codes in the output. For installs and builds (npm install, pip install, swift build, xcodebuild), the timeout is 5 minutes — use them directly. Always add non-interactive flags to suppress prompts: npm init -y, pip install --no-input, brew install --no-interaction.
 - search_files: use regex patterns. Narrow with path/include filters to avoid noise.
 - NEVER output meta-commentary like "[Response interrupted by Fast assistant]", "[Summarized by fast model]", or any bracketed system annotations. These are injected automatically — do not reproduce or reference them in your text responses.
 

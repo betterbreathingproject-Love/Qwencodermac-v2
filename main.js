@@ -579,6 +579,11 @@ function createWindow() {
         telegramBot.sendMessage(chatId, text).catch(() => {})
       }
     }
+    // Notify when a command has been running silently for a long time
+    if (data.type === 'bash-waiting') {
+      const msg = `⏳ Command still running (${data.elapsedSecs}s with no output):\n\`${data.command}\`\nTimeout in ${data.timeoutSecs - data.elapsedSecs}s`
+      telegramBot.sendMessage(chatId, msg).catch(() => {})
+    }
   })
 
   // ── Mini App IPC handlers ──

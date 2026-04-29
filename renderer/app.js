@@ -1653,6 +1653,23 @@ async function sendAgentMode(prompt, opts = {}) {
         }
         break
       }
+      case 'bash-waiting': {
+        // Command has been running silently for >60s — show a waiting notice
+        const remaining = ev.timeoutSecs - ev.elapsedSecs
+        const waitMsg = `⏳ Still running (${ev.elapsedSecs}s, no output) — <code>${esc(ev.command)}</code> — timeout in ${remaining}s`
+        setActivity(waitMsg + ' <span class="activity-dot">●</span>')
+        const toolsEl2 = document.getElementById(respId+'-tools')
+        if (toolsEl2) {
+          // Update or create a waiting notice — replace previous one if it exists
+          let waitEl = toolsEl2.querySelector('.bash-waiting-notice')
+          if (!waitEl) {
+            toolsEl2.insertAdjacentHTML('beforeend', `<div class="bash-waiting-notice msg-system" style="color:var(--yellow);font-size:11px">${waitMsg}</div>`)
+          } else {
+            waitEl.innerHTML = waitMsg
+          }
+        }
+        break
+      }
       case 'system':
         if (ev.subtype === 'debug') {
           setActivity(`🔍 ${esc(ev.data)} <span class="activity-dot">●</span>`)
@@ -2007,6 +2024,23 @@ async function sendAgentMode(prompt, opts = {}) {
                 if (orchTaskBlockId && ev.message) {
                   const toolsEl = document.getElementById(orchTaskBlockId + '-tools')
                   if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--muted);font-size:10px;opacity:0.7">${esc(ev.message)}</div>`)
+                }
+                break
+              }
+              case 'bash-waiting': {
+                const remaining = ev.timeoutSecs - ev.elapsedSecs
+                const waitMsg = `⏳ Still running (${ev.elapsedSecs}s, no output) — <code>${esc(ev.command)}</code> — timeout in ${remaining}s`
+                setOrchActivity(waitMsg + ' <span class="activity-dot">●</span>')
+                if (orchTaskBlockId) {
+                  const toolsEl = document.getElementById(orchTaskBlockId + '-tools')
+                  if (toolsEl) {
+                    let waitEl = toolsEl.querySelector('.bash-waiting-notice')
+                    if (!waitEl) {
+                      toolsEl.insertAdjacentHTML('beforeend', `<div class="bash-waiting-notice msg-system" style="color:var(--yellow);font-size:11px">${waitMsg}</div>`)
+                    } else {
+                      waitEl.innerHTML = waitMsg
+                    }
+                  }
                 }
                 break
               }
