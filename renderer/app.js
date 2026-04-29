@@ -3230,6 +3230,198 @@ async function viewInlineSpecArtifact(phase) {
   document.getElementById('inlineSpecArtifactBody').innerHTML = renderMd(artifacts[phase])
 }
 
+// ── shared spec phase streaming core ─────────────────────────────────────────
+// Used by both generateInlineSpecPhase and generateSpecPhase (sidebar).
+// Returns the cleaned content string, or null on failure/interrupt.
+async function _streamSpecPhase(phase, specRespId) {
+  const phaseLabel = phase.charAt(0).toUpperCase() + phase.slice(1)
+
+  // Switch Send button to Stop — same as vibe mode
+  const sendBtn = document.getElementById('sendBtn')
+  let _specInterrupted = false
+  if (sendBtn) {
+    sendBtn.disabled = false
+    sendBtn.innerHTML = '<span class="spinner"></span>Stop'
+    sendBtn.className = 'btn-send btn-stop'
+    sendBtn.onclick = () => {
+      _specInterrupted = true
+      window.app.offStream()
+      _finishSpecGeneration(specRespId, phaseLabel, null, true)
+    }
+  }
+
+  // Fire fast assistant acknowledgement — same as vibe
+  window.app.assistChatReply(`Generate ${phaseLabel} for spec "${currentSpecName}"`, 'general').then(reply => {
+    if (!reply || _specInterrupted) return
+    const fastEl = document.getElementById(specRespId + '-fast')
+    if (fastEl) {
+      fastEl.insertAdjacentHTML('beforeend', `<div class="fast-reply-badge"><span class="fast-reply-icon">⚡</span><span class="fast-reply-model">Fast Assistant</span><span class="fast-reply-text">${esc(reply)}</span></div>`)
+      scrollOutput()
+    }
+  }).catch(() => {})
+
+  const artifacts = await window.app.specArtifacts(currentSpecDir)
+  let ctx = ''
+  if (currentProject) {
+    ctx = await window.app.buildContext(currentProject) || ''
+  }
+
+  let prompt
+  const desc = artifacts.requirements?.match(/## Description\n([\s\S]*?)(?=\n##|\n$|$)/)?.[1]?.trim() || ''
+  if (phase === 'requirements') {
+    prompt = SPEC_PROMPTS.requirements(currentSpecName, desc, ctx)
+  } else if (phase === 'design') {
+    prompt = SPEC_PROMPTS.design(currentSpecName, artifacts.requirements || '', ctx)
+  } else if (phase === 'tasks') {
+    prompt = SPEC_PROMPTS.tasks(currentSpecName, artifacts.requirements || '', artifacts.design || '')
+  }
+
+  const content = await new Promise((resolve, reject) => {
+    let accumulated = ''
+    let tokenCount = 0
+    let inputTokens = 0
+    let outputTokens = 0
+    let serverTps = null
+    let startTime = null
+
+    // Debounced markdown rendering
+    let _mdRenderTimer = null
+    let _mdDirty = false
+    function scheduleRender() {
+      _mdDirty = true
+      if (_mdRenderTimer) return
+      _mdRenderTimer = requestAnimationFrame(() => {
+        _mdRenderTimer = null
+        if (_mdDirty) {
+          _mdDirty = false
+          const thinkContent = extractThinking(accumulated)
+          if (thinkContent) {
+            const thinkEl = document.getElementById(specRespId + '-think')
+            if (thinkEl) thinkEl.style.display = ''
+            const thinkBody = document.getElementById(specRespId + '-think-body')
+            if (thinkBody) thinkBody.textContent = thinkContent + '▌'
+          }
+          let displayText = accumulated.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+          const openThink = accumulated.lastIndexOf('<think>')
+          const closeThink = accumulated.lastIndexOf('</think>')
+          if (openThink > closeThink) displayText = accumulated.slice(0, openThink).trim()
+          const textEl = document.getElementById(specRespId + '-text')
+          if (textEl && displayText) textEl.innerHTML = renderMd(displayText, true) + '<span class="cursor">▌</span>'
+          // Update activity line
+          const actEl = document.getElementById(specRespId + '-activity')
+          if (actEl) {
+            const tks = serverTps || _calcTks(tokenCount, startTime)
+            actEl.innerHTML = `✍️ Generating ${phaseLabel} — ${outputTokens} tokens${tks ? ' · ' + tks + ' tk/s' : ''} <span class="activity-dot">●</span>`
+            actEl.classList.remove('hidden')
+          }
+          scrollOutput()
+        }
+      })
+    }
+
+    // Simulated prompt-eval progress while waiting for first token
+    let promptProgress = 0
+    let promptElapsed = 0
+    const promptTimer = setInterval(() => {
+      promptElapsed += 200
+      promptProgress = 90 * (1 - Math.exp(-promptElapsed / 6000))
+      updateAgentStatsBar({ state: 'prompt-eval', inputTokens, outputTokens, progress: promptProgress, activity: `Spec ${phaseLabel}: evaluating prompt...` })
+      const actEl = document.getElementById(specRespId + '-activity')
+      if (actEl) { actEl.innerHTML = `📊 Processing prompt... ${Math.round(promptProgress)}% <span class="activity-dot">●</span>`; actEl.classList.remove('hidden') }
+    }, 200)
+
+    updateAgentStatsBar({ state: 'prompt-eval', progress: 0, activity: `Spec ${phaseLabel}: evaluating prompt...` })
+
+    window.app.offStream()
+
+    window.app.onStreamChunk((parsed) => {
+      if (_specInterrupted) return
+      if (!startTime) {
+        startTime = Date.now()
+        clearInterval(promptTimer)
+      }
+      const delta = parsed.choices?.[0]?.delta?.content
+      if (delta) {
+        accumulated += delta
+        tokenCount++
+        outputTokens = tokenCount
+        const tks = serverTps || _calcTks(tokenCount, startTime)
+        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks, activity: `Spec ${phaseLabel}: generating...` })
+        scheduleRender()
+      }
+    })
+
+    window.app.onStreamStats((stats) => {
+      if (_specInterrupted) return
+      inputTokens = stats.prompt_tokens || inputTokens
+      outputTokens = stats.completion_tokens || outputTokens || tokenCount
+      if (stats.generation_tps) serverTps = stats.generation_tps
+      const promptTps = stats.prompt_tps || null
+      const peakMemory = stats.peak_memory_gb || null
+      updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks: serverTps, promptTps, peakMemory, activity: `Spec ${phaseLabel}: generating...` })
+    })
+
+    window.app.onStreamDone(() => {
+      clearInterval(promptTimer)
+      window.app.offStream()
+      resolve(accumulated)
+    })
+
+    window.app.onStreamError((err) => {
+      clearInterval(promptTimer)
+      window.app.offStream()
+      reject(new Error(err))
+    })
+
+    window.app.chatStream({
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 4096,
+    })
+  })
+
+  // Restore Send button
+  if (sendBtn && !_specInterrupted) {
+    sendBtn.disabled = false
+    sendBtn.innerHTML = 'Send ↵'
+    sendBtn.className = 'btn-send'
+    sendBtn.onclick = () => sendAgent()
+  }
+
+  return _specInterrupted ? null : content
+}
+
+// Finalize a spec response block after streaming ends
+function _finishSpecGeneration(specRespId, phaseLabel, content, interrupted) {
+  const actEl = document.getElementById(specRespId + '-activity')
+  if (actEl) actEl.classList.add('hidden')
+
+  const thinkBody = document.getElementById(specRespId + '-think-body')
+  if (thinkBody && thinkBody.textContent.endsWith('▌')) {
+    thinkBody.textContent = thinkBody.textContent.slice(0, -1)
+  }
+
+  const textEl = document.getElementById(specRespId + '-text')
+  if (textEl) {
+    // Remove trailing cursor
+    const cursor = textEl.querySelector('.cursor')
+    if (cursor) cursor.remove()
+  }
+
+  if (interrupted) {
+    const statusEl = document.getElementById(specRespId + '-status')
+    if (statusEl) statusEl.textContent = `⏹ ${phaseLabel} generation stopped`
+    updateAgentStatsBar({ state: 'done', activity: `Spec ${phaseLabel}: stopped` })
+    // Restore Send button
+    const sendBtn = document.getElementById('sendBtn')
+    if (sendBtn) {
+      sendBtn.disabled = false
+      sendBtn.innerHTML = 'Send ↵'
+      sendBtn.className = 'btn-send'
+      sendBtn.onclick = () => sendAgent()
+    }
+  }
+}
+
 async function generateInlineSpecPhase(phase) {
   if (!currentSpecDir || !loadedModelId || specGenerating) return
   specGenerating = true
@@ -3257,11 +3449,12 @@ async function generateInlineSpecPhase(phase) {
     el.querySelectorAll('details[open]').forEach(d => d.removeAttribute('open'))
   })
 
-  // Create a live chat message block for streaming output
+  // Create a live chat message block — same structure as vibe response blocks
   const specRespId = 'spec-resp-' + Date.now()
   const out = document.getElementById('agentOutput')
   out.insertAdjacentHTML('beforeend', `<div class="msg-block spec-phase-block" id="${specRespId}">
     <div class="msg-system" id="${specRespId}-status">📐 Generating ${phaseLabel} for "${esc(currentSpecName)}"...</div>
+    <div id="${specRespId}-fast"></div>
     <details class="msg-thinking" id="${specRespId}-think" style="display:none" open>
       <summary>🧠 Thinking</summary>
       <div class="msg-thinking-body" id="${specRespId}-think-body"></div>
@@ -3270,169 +3463,65 @@ async function generateInlineSpecPhase(phase) {
       <summary>📄 ${phaseLabel} output</summary>
       <div class="msg-text" id="${specRespId}-text"></div>
     </details>
+    <div class="msg-activity" id="${specRespId}-activity">📐 Preparing ${phaseLabel}... <span class="activity-dot">●</span></div>
   </div>`)
   scrollOutput()
 
+  let content = null
   try {
-    const artifacts = await window.app.specArtifacts(currentSpecDir)
-    let ctx = ''
-    if (currentProject) {
-      ctx = await window.app.buildContext(currentProject) || ''
-    }
-
-    let prompt
-    const desc = artifacts.requirements?.match(/## Description\n([\s\S]*?)(?=\n##|\n$|$)/)?.[1]?.trim() || ''
-    if (phase === 'requirements') {
-      prompt = SPEC_PROMPTS.requirements(currentSpecName, desc, ctx)
-    } else if (phase === 'design') {
-      prompt = SPEC_PROMPTS.design(currentSpecName, artifacts.requirements || '', ctx)
-    } else if (phase === 'tasks') {
-      prompt = SPEC_PROMPTS.tasks(currentSpecName, artifacts.requirements || '', artifacts.design || '')
-    }
-
-    // Use streaming chat for real-time stats bar + chat output
-    const content = await new Promise((resolve, reject) => {
-      let accumulated = ''
-      let tokenCount = 0
-      let inputTokens = 0
-      let outputTokens = 0
-      let serverTps = null
-      let startTime = null
-
-      // Debounced markdown rendering to avoid O(n²) re-render on every delta
-      let _mdRenderTimer = null
-      let _mdDirty = false
-      function scheduleRender() {
-        _mdDirty = true
-        if (_mdRenderTimer) return
-        _mdRenderTimer = requestAnimationFrame(() => {
-          _mdRenderTimer = null
-          if (_mdDirty) {
-            _mdDirty = false
-            // Show thinking content in the thinking section
-            const thinkContent = extractThinking(accumulated)
-            if (thinkContent) {
-              const thinkEl = document.getElementById(specRespId + '-think')
-              if (thinkEl) thinkEl.style.display = ''
-              const thinkBody = document.getElementById(specRespId + '-think-body')
-              if (thinkBody) thinkBody.textContent = thinkContent + '▌'
-            }
-            // Strip thinking tags from main display
-            let displayText = accumulated.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
-            const openThink = accumulated.lastIndexOf('<think>')
-            const closeThink = accumulated.lastIndexOf('</think>')
-            if (openThink > closeThink) displayText = accumulated.slice(0, openThink).trim()
-            const textEl = document.getElementById(specRespId + '-text')
-            if (textEl && displayText) textEl.innerHTML = renderMd(displayText, true) + '<span class="cursor">▌</span>'
-            scrollOutput()
-          }
-        })
-      }
-
-      // Simulated prompt-eval progress while waiting for first token
-      let promptProgress = 0
-      let promptElapsed = 0
-      const promptTimer = setInterval(() => {
-        promptElapsed += 200
-        promptProgress = 90 * (1 - Math.exp(-promptElapsed / 6000))
-        updateAgentStatsBar({ state: 'prompt-eval', inputTokens, outputTokens, progress: promptProgress, activity: `Spec ${phaseLabel}: evaluating prompt...` })
-      }, 200)
-
-      updateAgentStatsBar({ state: 'prompt-eval', progress: 0, activity: `Spec ${phaseLabel}: evaluating prompt...` })
-
-      window.app.offStream()
-
-      window.app.onStreamChunk((parsed) => {
-        if (!startTime) {
-          startTime = Date.now()
-          clearInterval(promptTimer)
-        }
-        const delta = parsed.choices?.[0]?.delta?.content
-        if (delta) {
-          accumulated += delta
-          tokenCount++
-          outputTokens = tokenCount
-          const tks = serverTps || _calcTks(tokenCount, startTime)
-          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks, activity: `Spec ${phaseLabel}: generating...` })
-          scheduleRender()
-        }
-      })
-
-      window.app.onStreamStats((stats) => {
-        inputTokens = stats.prompt_tokens || inputTokens
-        outputTokens = stats.completion_tokens || outputTokens || tokenCount
-        if (stats.generation_tps) serverTps = stats.generation_tps
-        const promptTps = stats.prompt_tps || null
-        const peakMemory = stats.peak_memory_gb || null
-        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks: serverTps, promptTps, peakMemory, activity: `Spec ${phaseLabel}: generating...` })
-      })
-
-      window.app.onStreamDone(() => {
-        clearInterval(promptTimer)
-        window.app.offStream()
-        resolve(accumulated)
-      })
-
-      window.app.onStreamError((err) => {
-        clearInterval(promptTimer)
-        window.app.offStream()
-        reject(new Error(err))
-      })
-
-      window.app.chatStream({
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 4096,
-      })
-    })
-
-    // Finalize the chat block with rendered markdown (no cursor)
-    const statusEl = document.getElementById(specRespId + '-status')
-    const textEl = document.getElementById(specRespId + '-text')
-
-    // Finalize thinking section — remove trailing cursor
-    const thinkBody = document.getElementById(specRespId + '-think-body')
-    if (thinkBody && thinkBody.textContent.endsWith('▌')) {
-      thinkBody.textContent = thinkBody.textContent.slice(0, -1)
-    }
-
-    if (!content) {
-      if (statusEl) statusEl.textContent = `❌ Spec ${phaseLabel} generation failed: empty response`
-      appendMsg('system', `❌ Spec generation failed: empty response`)
-      updateAgentStatsBar({ state: 'done', activity: 'Spec generation failed' })
-    } else {
-      // Strip <think> tags
-      let cleaned = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
-      // Strip plain-text thinking preamble — everything before the first markdown heading
-      if (!/^#/m.test(cleaned.split('\n')[0]) && /^#/m.test(cleaned)) {
-        cleaned = cleaned.slice(cleaned.search(/^#/m)).trim()
-      }
-
-      // Update chat block with final rendered content
-      if (statusEl) statusEl.textContent = `✅ ${phaseLabel} generated for "${currentSpecName}"`
-      if (textEl) textEl.innerHTML = renderMd(cleaned)
-
-      await window.app.specSaveArtifact(currentSpecDir, phase, cleaned)
-      await window.app.specAdvance(currentSpecDir)
-      updateAgentStatsBar({ state: 'done', activity: `Spec ${phaseLabel}: complete` })
-      viewInlineSpecArtifact(phase)
-
-      // If tasks were generated, write Tasks.md and load into task graph
-      if (phase === 'tasks' && currentProject) {
-        const tasksPath = currentProject + '/.maccoder/specs/' + currentSpecName + '/tasks.md'
-        try {
-          await loadTaskGraph(tasksPath)
-          showPanel('tasks', document.querySelector('[data-panel="tasks"]'))
-          appendMsg('system', `📋 Tasks loaded into task graph.`)
-        } catch (e) {
-          // task graph load is best-effort
-        }
-      }
-    }
+    content = await _streamSpecPhase(phase, specRespId)
   } catch (e) {
     const statusEl = document.getElementById(specRespId + '-status')
     if (statusEl) statusEl.textContent = `❌ Error: ${e.message}`
-    appendMsg('system', `❌ Error: ${e.message}`)
     updateAgentStatsBar({ state: 'done', activity: 'Spec generation failed' })
+    _finishSpecGeneration(specRespId, phaseLabel, null, false)
+    if (btn) { btn.classList.remove('generating') }
+    specGenerating = false
+    await refreshInlineSpecStepper()
+    return
+  }
+
+  _finishSpecGeneration(specRespId, phaseLabel, content, content === null)
+
+  if (content === null) {
+    // Interrupted — restore buttons
+    if (btn) { btn.classList.remove('generating') }
+    specGenerating = false
+    await refreshInlineSpecStepper()
+    return
+  }
+
+  const statusEl = document.getElementById(specRespId + '-status')
+  const textEl = document.getElementById(specRespId + '-text')
+
+  if (!content) {
+    if (statusEl) statusEl.textContent = `❌ Spec ${phaseLabel} generation failed: empty response`
+    appendMsg('system', `❌ Spec generation failed: empty response`)
+    updateAgentStatsBar({ state: 'done', activity: 'Spec generation failed' })
+  } else {
+    // Strip <think> tags and preamble
+    let cleaned = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+    if (!/^#/m.test(cleaned.split('\n')[0]) && /^#/m.test(cleaned)) {
+      cleaned = cleaned.slice(cleaned.search(/^#/m)).trim()
+    }
+
+    if (statusEl) statusEl.textContent = `✅ ${phaseLabel} generated for "${currentSpecName}"`
+    if (textEl) textEl.innerHTML = renderMd(cleaned)
+
+    await window.app.specSaveArtifact(currentSpecDir, phase, cleaned)
+    await window.app.specAdvance(currentSpecDir)
+    updateAgentStatsBar({ state: 'done', activity: `Spec ${phaseLabel}: complete` })
+    viewInlineSpecArtifact(phase)
+
+    // If tasks were generated, load into task graph
+    if (phase === 'tasks' && currentProject) {
+      const tasksPath = currentProject + '/.maccoder/specs/' + currentSpecName + '/tasks.md'
+      try {
+        await loadTaskGraph(tasksPath)
+        showPanel('tasks', document.querySelector('[data-panel="tasks"]'))
+        appendMsg('system', `📋 Tasks loaded into task graph.`)
+      } catch (e) { /* best-effort */ }
+    }
   }
 
   if (btn) { btn.classList.remove('generating') }
@@ -3684,8 +3773,8 @@ async function startInlineSpecImplementation() {
   const artifacts = await window.app.specArtifacts(currentSpecDir)
   if (!artifacts.tasks) { appendMsg('system', '⚠️ Generate tasks first.'); return }
 
-  // Load task graph into the sidebar panel first
-  const tasksPath = currentProject + '/.maccoder/specs/' + currentSpecName + '/tasks.md'
+  // Use the spec dir directly — works for both .kiro/specs/ and .maccoder/specs/
+  const tasksPath = currentSpecDir + '/tasks.md'
   try {
     await loadTaskGraph(tasksPath)
     renderSpecTaskProgress()
@@ -3879,7 +3968,6 @@ async function generateSpecPhase(phase) {
   if (status) { status.textContent = 'Generating...'; status.className = 'spec-step-status generating' }
   if (dot) { dot.className = 'spec-step-dot generating' }
 
-  // Show agent stats bar immediately
   const phaseLabel = phase.charAt(0).toUpperCase() + phase.slice(1)
   updateAgentStatsBar({ state: 'initializing', activity: `Spec: preparing ${phaseLabel}...` })
 
@@ -3888,11 +3976,12 @@ async function generateSpecPhase(phase) {
     el.querySelectorAll('details[open]').forEach(d => d.removeAttribute('open'))
   })
 
-  // Create a live chat message block for streaming output
+  // Create a live chat message block — same structure as vibe response blocks
   const specRespId = 'spec-side-resp-' + Date.now()
   const out = document.getElementById('agentOutput')
   out.insertAdjacentHTML('beforeend', `<div class="msg-block spec-phase-block" id="${specRespId}">
     <div class="msg-system" id="${specRespId}-status">📐 Generating ${phaseLabel} for "${esc(currentSpecName)}"...</div>
+    <div id="${specRespId}-fast"></div>
     <details class="msg-thinking" id="${specRespId}-think" style="display:none" open>
       <summary>🧠 Thinking</summary>
       <div class="msg-thinking-body" id="${specRespId}-think-body"></div>
@@ -3901,155 +3990,52 @@ async function generateSpecPhase(phase) {
       <summary>📄 ${phaseLabel} output</summary>
       <div class="msg-text" id="${specRespId}-text"></div>
     </details>
+    <div class="msg-activity" id="${specRespId}-activity">📐 Preparing ${phaseLabel}... <span class="activity-dot">●</span></div>
   </div>`)
   scrollOutput()
 
+  let content = null
   try {
-    const artifacts = await window.app.specArtifacts(currentSpecDir)
-    let ctx = ''
-    if (currentProject) {
-      ctx = await window.app.buildContext(currentProject) || ''
-    }
-
-    let prompt
-    const desc = artifacts.requirements?.match(/## Description\n([\s\S]*?)(?=\n##|\n$|$)/)?.[1]?.trim() || ''
-    if (phase === 'requirements') {
-      prompt = SPEC_PROMPTS.requirements(currentSpecName, desc, ctx)
-    } else if (phase === 'design') {
-      prompt = SPEC_PROMPTS.design(currentSpecName, artifacts.requirements || '', ctx)
-    } else if (phase === 'tasks') {
-      prompt = SPEC_PROMPTS.tasks(currentSpecName, artifacts.requirements || '', artifacts.design || '')
-    }
-
-    // Use streaming chat for real-time stats bar + chat output
-    const content = await new Promise((resolve, reject) => {
-      let accumulated = ''
-      let tokenCount = 0
-      let inputTokens = 0
-      let outputTokens = 0
-      let serverTps = null
-      let startTime = null
-
-      // Debounced markdown rendering
-      let _mdRenderTimer = null
-      let _mdDirty = false
-      function scheduleRender() {
-        _mdDirty = true
-        if (_mdRenderTimer) return
-        _mdRenderTimer = requestAnimationFrame(() => {
-          _mdRenderTimer = null
-          if (_mdDirty) {
-            _mdDirty = false
-            // Show thinking content in the thinking section
-            const thinkContent = extractThinking(accumulated)
-            if (thinkContent) {
-              const thinkEl = document.getElementById(specRespId + '-think')
-              if (thinkEl) thinkEl.style.display = ''
-              const thinkBody = document.getElementById(specRespId + '-think-body')
-              if (thinkBody) thinkBody.textContent = thinkContent + '▌'
-            }
-            let displayText = accumulated.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
-            const openThink = accumulated.lastIndexOf('<think>')
-            const closeThink = accumulated.lastIndexOf('</think>')
-            if (openThink > closeThink) displayText = accumulated.slice(0, openThink).trim()
-            const textEl = document.getElementById(specRespId + '-text')
-            if (textEl && displayText) textEl.innerHTML = renderMd(displayText, true) + '<span class="cursor">▌</span>'
-            scrollOutput()
-          }
-        })
-      }
-
-      // Simulated prompt-eval progress while waiting for first token
-      let promptProgress = 0
-      let promptElapsed = 0
-      const promptTimer = setInterval(() => {
-        promptElapsed += 200
-        promptProgress = 90 * (1 - Math.exp(-promptElapsed / 6000))
-        updateAgentStatsBar({ state: 'prompt-eval', inputTokens, outputTokens, progress: promptProgress, activity: `Spec ${phaseLabel}: evaluating prompt...` })
-      }, 200)
-
-      updateAgentStatsBar({ state: 'prompt-eval', progress: 0, activity: `Spec ${phaseLabel}: evaluating prompt...` })
-
-      window.app.offStream()
-
-      window.app.onStreamChunk((parsed) => {
-        if (!startTime) {
-          startTime = Date.now()
-          clearInterval(promptTimer)
-        }
-        const delta = parsed.choices?.[0]?.delta?.content
-        if (delta) {
-          accumulated += delta
-          tokenCount++
-          outputTokens = tokenCount
-          const tks = serverTps || _calcTks(tokenCount, startTime)
-          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks, activity: `Spec ${phaseLabel}: generating...` })
-          scheduleRender()
-        }
-      })
-
-      window.app.onStreamStats((stats) => {
-        inputTokens = stats.prompt_tokens || inputTokens
-        outputTokens = stats.completion_tokens || outputTokens || tokenCount
-        if (stats.generation_tps) serverTps = stats.generation_tps
-        const promptTps = stats.prompt_tps || null
-        const peakMemory = stats.peak_memory_gb || null
-        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks: serverTps, promptTps, peakMemory, activity: `Spec ${phaseLabel}: generating...` })
-      })
-
-      window.app.onStreamDone(() => {
-        clearInterval(promptTimer)
-        window.app.offStream()
-        resolve(accumulated)
-      })
-
-      window.app.onStreamError((err) => {
-        clearInterval(promptTimer)
-        window.app.offStream()
-        reject(new Error(err))
-      })
-
-      window.app.chatStream({
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 4096,
-      })
-    })
-
-    // Finalize the chat block
-    const statusEl = document.getElementById(specRespId + '-status')
-    const textEl = document.getElementById(specRespId + '-text')
-
-    // Finalize thinking section — remove trailing cursor
-    const thinkBody = document.getElementById(specRespId + '-think-body')
-    if (thinkBody && thinkBody.textContent.endsWith('▌')) {
-      thinkBody.textContent = thinkBody.textContent.slice(0, -1)
-    }
-
-    if (!content) {
-      if (statusEl) statusEl.textContent = `❌ Spec ${phaseLabel} generation failed: empty response`
-      updateAgentStatsBar({ state: 'done', activity: 'Spec generation failed' })
-    } else {
-      // Strip thinking tags if present
-      let cleaned = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
-      // Strip plain-text thinking preamble before first markdown heading
-      if (!/^#/m.test(cleaned.split('\n')[0]) && /^#/m.test(cleaned)) {
-        cleaned = cleaned.slice(cleaned.search(/^#/m)).trim()
-      }
-
-      // Update chat block with final rendered content
-      if (statusEl) statusEl.textContent = `✅ ${phaseLabel} generated for "${currentSpecName}"`
-      if (textEl) textEl.innerHTML = renderMd(cleaned)
-
-      await window.app.specSaveArtifact(currentSpecDir, phase, cleaned)
-      // Advance phase
-      await window.app.specAdvance(currentSpecDir)
-      updateAgentStatsBar({ state: 'done', activity: `Spec ${phaseLabel}: complete` })
-      viewSpecArtifact(phase)
-    }
+    content = await _streamSpecPhase(phase, specRespId)
   } catch (e) {
     const statusEl = document.getElementById(specRespId + '-status')
     if (statusEl) statusEl.textContent = `❌ Error: ${e.message}`
     updateAgentStatsBar({ state: 'done', activity: 'Spec generation failed' })
+    _finishSpecGeneration(specRespId, phaseLabel, null, false)
+    if (btn) { btn.classList.remove('generating') }
+    specGenerating = false
+    await refreshSpecStepper()
+    return
+  }
+
+  _finishSpecGeneration(specRespId, phaseLabel, content, content === null)
+
+  if (content === null) {
+    if (btn) { btn.classList.remove('generating') }
+    specGenerating = false
+    await refreshSpecStepper()
+    return
+  }
+
+  const statusEl = document.getElementById(specRespId + '-status')
+  const textEl = document.getElementById(specRespId + '-text')
+
+  if (!content) {
+    if (statusEl) statusEl.textContent = `❌ Spec ${phaseLabel} generation failed: empty response`
+    updateAgentStatsBar({ state: 'done', activity: 'Spec generation failed' })
+  } else {
+    let cleaned = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+    if (!/^#/m.test(cleaned.split('\n')[0]) && /^#/m.test(cleaned)) {
+      cleaned = cleaned.slice(cleaned.search(/^#/m)).trim()
+    }
+
+    if (statusEl) statusEl.textContent = `✅ ${phaseLabel} generated for "${currentSpecName}"`
+    if (textEl) textEl.innerHTML = renderMd(cleaned)
+
+    await window.app.specSaveArtifact(currentSpecDir, phase, cleaned)
+    await window.app.specAdvance(currentSpecDir)
+    updateAgentStatsBar({ state: 'done', activity: `Spec ${phaseLabel}: complete` })
+    viewSpecArtifact(phase)
   }
 
   if (btn) { btn.classList.remove('generating') }
@@ -4066,8 +4052,8 @@ async function startSpecImplementation() {
   // Switch to agent tab
   switchMainTab('agent', document.querySelector('[data-tab="agent"]'))
 
-  // Load task graph into sidebar
-  const tasksPath = currentProject + '/.maccoder/specs/' + currentSpecName + '/tasks.md'
+  // Use the spec dir directly — works for both .kiro/specs/ and .maccoder/specs/
+  const tasksPath = currentSpecDir + '/tasks.md'
   try {
     await loadTaskGraph(tasksPath)
     renderSpecTaskProgress()
