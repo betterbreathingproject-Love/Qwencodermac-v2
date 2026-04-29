@@ -240,7 +240,7 @@ const ctx = {
   getServerPort: () => SERVER_PORT,
   getCurrentProject: () => currentProject,
   setCurrentProject: (p) => {
-    currentProject = p
+    currentProject = typeof p === 'string' ? p.trim() : p
     // Start or restart LSP for the new project directory
     if (lspManager) {
       const status = lspManager.getStatus().status
@@ -275,6 +275,8 @@ try { _memoryClientForRouting = require('./memory-client.js') } catch (_) {}
 ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, model, images, conversationHistory, samplingParams, taskGraphPath }) => {
   if (!qwenBridge) return { error: 'not ready' }
   if (typeof prompt !== 'string' || !prompt.trim()) return { error: 'prompt is required' }
+  // Trim cwd to guard against trailing spaces from file pickers or stored project paths
+  if (typeof cwd === 'string') cwd = cwd.trim()
 
   // Use small model to pick the best agent role for this prompt (if no explicit role given)
   let resolvedRole = agentRole || 'general'

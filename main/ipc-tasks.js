@@ -91,10 +91,10 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
       } catch (_) { /* spec context is optional */ }
 
       // Derive project directory: prefer explicit param from renderer, then config, then path walk
-      const projectDir = explicitProjectDir || targetProjectDir || (() => {
+      const projectDir = (explicitProjectDir || targetProjectDir || (() => {
         const p = require('path')
         return p.resolve(specDir, '..', '..', '..')
-      })()
+      })()).trim()  // trim trailing spaces/newlines that can sneak in from file paths
       console.log('[orchestrator] projectDir:', projectDir, '(explicit:', !!explicitProjectDir, 'config:', !!targetProjectDir, ')')
 
       // Abort any previously running orchestrator before starting a new one.
