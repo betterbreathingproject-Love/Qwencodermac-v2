@@ -3370,15 +3370,20 @@ async function _streamSpecPhase(phase, specRespId) {
     }
   }
 
-  // Fire fast assistant acknowledgement — same as vibe
-  window.app.assistChatReply(`Generate ${phaseLabel} for spec "${currentSpecName}"`, 'general').then(reply => {
-    if (!reply || _specInterrupted) return
-    const fastEl = document.getElementById(specRespId + '-fast')
-    if (fastEl) {
-      fastEl.insertAdjacentHTML('beforeend', `<div class="fast-reply-badge"><span class="fast-reply-icon">⚡</span><span class="fast-reply-model">Fast Assistant</span><span class="fast-reply-text">${esc(reply)}</span></div>`)
-      scrollOutput()
-    }
-  }).catch(() => {})
+  // Fire fast assistant acknowledgement before main model starts — await to prevent
+  // concurrent Metal inference (fire-and-forget caused SIGABRT).
+  if (!_specInterrupted) {
+    try {
+      const reply = await window.app.assistChatReply(`Generate ${phaseLabel} for spec "${currentSpecName}"`, 'general')
+      if (reply && !_specInterrupted) {
+        const fastEl = document.getElementById(specRespId + '-fast')
+        if (fastEl) {
+          fastEl.insertAdjacentHTML('beforeend', `<div class="fast-reply-badge"><span class="fast-reply-icon">⚡</span><span class="fast-reply-model">Fast Assistant</span><span class="fast-reply-text">${esc(reply)}</span></div>`)
+          scrollOutput()
+        }
+      }
+    } catch (_) {}
+  }
 
   const artifacts = await window.app.specArtifacts(currentSpecDir)
   let ctx = ''
