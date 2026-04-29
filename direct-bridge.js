@@ -2490,7 +2490,16 @@ class DirectBridge {
         }
 
         const truncateLimit = fnName === 'read_file' ? config.READ_FILE_TRUNCATE : config.TOOL_OUTPUT_TRUNCATE
-        if (content && content.length > truncateLimit) {
+
+        // Navigational tools (list_dir, search, grep) get a higher limit and skip
+        // the expensive Python compressor — their output is structural data the agent
+        // needs intact for project navigation. Simple truncation is better than lossy
+        // compression that destroys directory/search structure.
+        const NAV_TOOLS = ['list_dir', 'search_files', 'grep_search', 'lsp_get_symbols', 'lsp_get_references']
+        const isNavTool = NAV_TOOLS.includes(fnName)
+        const effectiveLimit = isNavTool ? Math.max(truncateLimit, 40000) : truncateLimit
+
+        if (content && content.length > effectiveLimit) {
 
           // File extract — run on raw content BEFORE compression so the fast model
           // sees the full file and can pick the most relevant section intelligently.
@@ -2508,7 +2517,19 @@ class DirectBridge {
           }
 
           // Re-check after extraction — may now be within limits
-          if (content.length > truncateLimit) {
+          if (content.length > effectiveLimit) {
+            // Nav tools: skip Python compressor, just truncate cleanly at line boundaries
+            if (isNavTool) {
+              const lines = content.split('\n')
+              let charCount = 0
+              let cutLine = lines.length
+              for (let i = 0; i < lines.length; i++) {
+                charCount += lines[i].length + 1
+                if (charCount > effectiveLimit) { cutLine = i; break }
+              }
+              content = lines.slice(0, cutLine).join('\n') +
+                `\n\n... [${lines.length - cutLine} more entries — use a more specific path or pattern to narrow results]`
+            } else {
             const contentType = detectContentType(fnName, content)
             let compressed = false
             try {
@@ -2532,11 +2553,12 @@ class DirectBridge {
             if (!compressed) {
               // Count total lines so the agent knows how to page through the file
               const totalLines = content.split('\n').length
-              const shownLines = content.slice(0, truncateLimit).split('\n').length
-              content = content.slice(0, truncateLimit) +
+              const shownLines = content.slice(0, effectiveLimit).split('\n').length
+              content = content.slice(0, effectiveLimit) +
                 `\n\n... [file truncated — showing lines 1-${shownLines} of ~${totalLines} total. ` +
                 `Call read_file with start_line=${shownLines + 1} to read the next section.]`
             }
+            } // end non-nav-tool compression
           }
         }
 
