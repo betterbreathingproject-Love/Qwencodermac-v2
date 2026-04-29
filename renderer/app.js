@@ -2068,13 +2068,17 @@ async function sendAgentMode(prompt, opts = {}) {
             // is empty at the start of a spec run, making [].every(...) vacuously true.
             const graphNodes = currentTaskGraph ? Object.values(currentTaskGraph.nodes) : []
             const allDone = graphNodes.length > 0
-              ? graphNodes.every(n => n.status === 'completed' || n.status === 'skipped')
+              ? graphNodes.every(n => n.status === 'completed' || n.status === 'skipped' || n.status === 'failed')
               : false
-            document.getElementById(orchId + '-status').textContent = allDone ? '✅ All tasks completed' : '⚠️ Orchestrator stopped'
+            const anyFailed = graphNodes.some(n => n.status === 'failed')
+            document.getElementById(orchId + '-status').textContent = allDone
+              ? (anyFailed ? '✅ Done (some tasks failed)' : '✅ All tasks completed')
+              : '⚠️ Orchestrator stopped'
             // Hide the orchestrator-level activity line
             const orchActEl = document.getElementById(orchId + '-activity')
             if (orchActEl) orchActEl.classList.add('hidden')
-            if (allDone) appendMsg('system', '🎉 All tasks completed!')
+            if (allDone && !anyFailed) appendMsg('system', '🎉 All tasks completed!')
+            else if (allDone && anyFailed) appendMsg('system', '✅ Done — some tasks failed and were skipped.')
             if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
             saveChatSnapshot()
             agentFinished = true
@@ -4031,13 +4035,17 @@ async function _launchOrchestrator(tasksPath, taskCount) {
     // is empty at the start of a spec run, making [].every(...) vacuously true.
     const graphNodes = currentTaskGraph ? Object.values(currentTaskGraph.nodes) : []
     const allDone = graphNodes.length > 0
-      ? graphNodes.every(n => n.status === 'completed' || n.status === 'skipped')
+      ? graphNodes.every(n => n.status === 'completed' || n.status === 'skipped' || n.status === 'failed')
       : false
-    document.getElementById(orchId + '-status').textContent = allDone ? '✅ All tasks completed' : '⚠️ Orchestrator stopped'
+    const anyFailed = graphNodes.some(n => n.status === 'failed')
+    document.getElementById(orchId + '-status').textContent = allDone
+      ? (anyFailed ? '✅ Done (some tasks failed)' : '✅ All tasks completed')
+      : '⚠️ Orchestrator stopped'
     // Hide the orchestrator-level activity line
     const orchActEl = document.getElementById(orchId + '-activity')
     if (orchActEl) orchActEl.classList.add('hidden')
-    if (allDone) appendMsg('system', '🎉 All tasks completed!')
+    if (allDone && !anyFailed) appendMsg('system', '🎉 All tasks completed!')
+    else if (allDone && anyFailed) appendMsg('system', '✅ Done — some tasks failed and were skipped.')
     if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
     saveChatSnapshot()
     agentFinished = true

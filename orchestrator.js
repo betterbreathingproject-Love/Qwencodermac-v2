@@ -452,8 +452,10 @@ class Orchestrator extends EventEmitter {
     this._updateNodeStatus(nodeId, 'failed');
     if (this._onError) this._onError(nodeId, error);
     this.emit('task-error', { nodeId, error: errMsg });
-    // Pause execution on failure
-    this._setState('paused');
+    // Don't pause the whole orchestrator on a single task failure —
+    // mark it failed and let the run loop continue with remaining tasks.
+    // The loop will skip nodes whose only blocker is a failed dependency.
+    await this._runLoop();
   }
 
   // --- Branch evaluation ---

@@ -414,12 +414,14 @@ function getNextExecutableNodes(graph) {
   for (const [, node] of graph.nodes) {
     if (node.status !== 'not_started') continue;
 
-    const allDepsCompleted = node.dependencies.every((depId) => {
+    const allDepsResolved = node.dependencies.every((depId) => {
       const dep = graph.nodes.get(depId);
-      return dep && dep.status === 'completed';
+      // A dependency is resolved if it completed, was skipped, or failed —
+      // failed deps should not permanently block their dependents.
+      return dep && (dep.status === 'completed' || dep.status === 'skipped' || dep.status === 'failed');
     });
 
-    if (allDepsCompleted) {
+    if (allDepsResolved) {
       result.push(node);
     }
   }
