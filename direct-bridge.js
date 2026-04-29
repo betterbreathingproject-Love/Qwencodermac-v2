@@ -1569,6 +1569,9 @@ class DirectBridge {
     let _lastTodos = null  // Track the latest todo list for completion checking
     let _bootstrapDone = false  // Track whether todo bootstrap has fired
     let _textOnlyTurns = 0  // Track consecutive text-only responses for safety valve
+    // After a compaction pass, skip memory re-injection for a few turns so we
+    // don't immediately re-inflate the context we just compressed.
+    let _postCompactionCooldown = 0
 
     // ── Memory: session start ─────────────────────────────────────────────────
     const _sessionId = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -1659,6 +1662,9 @@ class DirectBridge {
           messages.push(...trimmed)
           this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Post-compaction trim: ${before} → ${messages.length} messages (~${estimateMessagesTokens(messages)} tokens)` })
         }
+        // Suppress memory re-injection for the next 3 turns so we don't
+        // immediately re-inflate the context we just compressed.
+        _postCompactionCooldown = 3
       }
 
       // ── Memory: emit memory-archive event after compaction ────────────────
@@ -1671,9 +1677,12 @@ class DirectBridge {
       // Use 'thorough' mode when user message contains recall phrases.
       // Skip injection if context is already above 70% of the compaction threshold
       // to avoid re-inflating right after a compaction pass.
+      // Also skip for _postCompactionCooldown turns after a compaction to let
+      // the context stabilise before adding more.
+      if (_postCompactionCooldown > 0) _postCompactionCooldown--
       const _currentTokens = estimateMessagesTokens(messages)
       const _memInjectBudget = Math.floor(effectiveCompactionThreshold * 0.70)
-      if (memoryClient && _currentTokens < _memInjectBudget) {
+      if (memoryClient && _currentTokens < _memInjectBudget && _postCompactionCooldown === 0) {
         try {
           const userMsg = messages.filter(m => m.role === 'user').pop()
           const userText = typeof userMsg?.content === 'string' ? userMsg.content : ''

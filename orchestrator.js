@@ -218,15 +218,23 @@ class Orchestrator extends EventEmitter {
       const startTime = Date.now();
 
       // ── Memory: pre-dispatch retrieval ───────────────────────────────────
-      let specContextWithMemory = this._specContext
+      // Trim specContext to a per-step budget so large spec documents don't
+      // bloat every task's initial prompt. The full spec is available via
+      // memory retrieval if the agent needs it.
+      const SPEC_CONTEXT_BUDGET = 2000 // chars (~500 tokens)
+      const trimmedSpecContext = this._specContext && this._specContext.length > SPEC_CONTEXT_BUDGET
+        ? this._specContext.slice(0, SPEC_CONTEXT_BUDGET) + '\n\n... [spec truncated — full context available via memory retrieval]'
+        : this._specContext
+
+      let specContextWithMemory = trimmedSpecContext
       if (memoryClient) {
         try {
           const taskQuery = `${node.title || node.text || node.id} ${node.description || ''}`.trim()
           const memResult = await memoryClient.retrieve(taskQuery, { mode: 'fast', topK: 5 })
           if (memResult && memResult.results && memResult.results.length > 0) {
             const memLines = memResult.results.map(r => `[${r.source}] ${r.content}`).join('\n')
-            specContextWithMemory = this._specContext
-              ? `${this._specContext}\n\n[Memory Context]\n${memLines}`
+            specContextWithMemory = trimmedSpecContext
+              ? `${trimmedSpecContext}\n\n[Memory Context]\n${memLines}`
               : `[Memory Context]\n${memLines}`
           }
         } catch (_) {
@@ -235,6 +243,16 @@ class Orchestrator extends EventEmitter {
       }
 
       const task = { ...node, status: 'in_progress', specContext: specContextWithMemory };
+
+      // Inject a compact summary of predecessor task outputs so the agent
+      // knows what's already been done without carrying full transcripts.
+      // Cap each predecessor summary at 300 chars to keep the prompt lean.
+      const predecessorSummary = this._buildPredecessorSummary(node)
+      if (predecessorSummary) {
+        task.specContext = task.specContext
+          ? `${task.specContext}\n\n${predecessorSummary}`
+          : predecessorSummary
+      }
 
       // Inject LSP safe-edit instructions for implementation agents when LSP is ready
       const selectedType = this._agentPool?.selectType?.(node);
@@ -433,6 +451,56 @@ class Orchestrator extends EventEmitter {
     if (condition === 'true') return true;
     if (condition === 'false') return false;
     return false;
+  }
+
+  // --- Predecessor summary ---
+
+  /**
+   * Build a compact summary of completed predecessor tasks for a given node.
+   * This gives the dispatched agent just enough context about what's already
+   * been done without carrying full conversation transcripts.
+   *
+   * @param {object} node - TaskNode being dispatched
+   * @returns {string|null} Formatted predecessor summary, or null if none
+   */
+  _buildPredecessorSummary(node) {
+    const SUMMARY_PER_TASK = 300 // chars per predecessor output
+    const MAX_PREDECESSORS = 5   // cap to avoid bloat on wide graphs
+
+    // Collect direct parents and their ancestors up to 2 levels
+    const predecessorIds = new Set()
+    const addParents = (n, depth) => {
+      if (depth <= 0 || !n) return
+      if (n.parent) {
+        predecessorIds.add(n.parent)
+        const parent = this._graph.nodes.get(n.parent)
+        addParents(parent, depth - 1)
+      }
+      // Also include nodes that this node depends on (deps array if present)
+      if (Array.isArray(n.deps)) {
+        for (const depId of n.deps) {
+          predecessorIds.add(depId)
+        }
+      }
+    }
+    addParents(node, 2)
+
+    const lines = []
+    let count = 0
+    for (const predId of predecessorIds) {
+      if (count >= MAX_PREDECESSORS) break
+      const result = this._results.get(predId)
+      if (!result || !result.output) continue
+      const predNode = this._graph.nodes.get(predId)
+      const title = predNode?.title || predNode?.text || predId
+      const snippet = result.output.slice(0, SUMMARY_PER_TASK)
+      const truncated = result.output.length > SUMMARY_PER_TASK ? '…' : ''
+      lines.push(`[Completed: ${title}]\n${snippet}${truncated}`)
+      count++
+    }
+
+    if (lines.length === 0) return null
+    return `[Prior step results]\n${lines.join('\n\n')}`
   }
 
   // --- Routable siblings ---
