@@ -1889,16 +1889,19 @@ class DirectBridge {
         }
       }
 
-      // Todo bootstrap — fire-and-forget before first LLM call
+      // Todo bootstrap — await before first LLM call to prevent concurrent Metal inference.
+      // Running fire-and-forget caused SIGABRT: fast model and main model both hit Metal
+      // simultaneously. Awaiting serializes them via the server's inference semaphore.
       if (assistClient && assistClient.TODO_BOOTSTRAP_ENABLED && turn === 0) {
         const userPrompt = messages.filter(m => m.role === 'user').pop()?.content || ''
         if (typeof userPrompt === 'string' && userPrompt) {
-          assistClient.assistTodoBootstrap(userPrompt).then(todos => {
+          try {
+            const todos = await assistClient.assistTodoBootstrap(userPrompt)
             if (todos && !_bootstrapDone) {
               this.send('qwen-event', { type: 'fast-assist', task: 'todo_bootstrap', label: '⚡ Fast Assistant — generated initial todo list', detail: `${todos.length} items` })
               this.send('qwen-event', { type: 'todo-bootstrap', todos })
             }
-          }).catch(() => {})
+          } catch (_) {}
         }
       }
 
@@ -2175,21 +2178,19 @@ class DirectBridge {
           }
         }
 
-        // Assist-based repetition detection — fire-and-forget (supplements existing string-matching)
-        // Only injects a system message if the turn counter hasn't advanced, to avoid
-        // corrupting the messages array mid-turn with a stale async result.
+        // Assist-based repetition detection — await to prevent concurrent Metal inference
         if (assistClient && text) {
           lastTextResponses.push(text.slice(0, 500))
           if (lastTextResponses.length > 3) lastTextResponses.shift()
           if (lastTextResponses.length >= 2) {
             const _responsesSnapshot = [...lastTextResponses]
             const _turnAtDetection = turn
-            assistClient.assistDetectRepetition(_responsesSnapshot).then(result => {
+            try {
+              const result = await assistClient.assistDetectRepetition(_responsesSnapshot)
               if (result && result.repeating && turn === _turnAtDetection) {
-                // Only inject if we're still on the same turn (not mid-next-turn)
                 messages.push({ role: 'system', content: `[Repetition detected: ${result.reason || 'semantic loop'}] Please take a different approach or use a tool to make progress.` })
               }
-            }).catch(() => {})
+            } catch (_) {}
           }
         }
 
@@ -2434,16 +2435,16 @@ class DirectBridge {
 
         // Tool pre-validation — advisory check via fast model (non-blocking).
         // The 0.8B model can flag suspicious tool calls but does NOT have veto power
-        // over the main model. A false-positive rejection would interrupt the agent.
-        // We log the warning and emit a debug event but always proceed with execution.
+        // Await tool validation to prevent concurrent Metal inference.
+        // Advisory only — we log the warning but always proceed with execution.
         if (assistClient && VALIDATED_TOOLS.has(fnName)) {
           const recentContext = messages.slice(-6).map(m => typeof m.content === 'string' ? m.content : '').join('\n')
-          assistClient.assistValidateTool(fnName, fnArgs, recentContext).then(validation => {
+          try {
+            const validation = await assistClient.assistValidateTool(fnName, fnArgs, recentContext)
             if (validation && !validation.valid) {
-              // Advisory only — warn but do not block
               this.send('qwen-event', { type: 'fast-assist', task: 'tool_validate', label: `⚡ Fast Assistant — tool warning: ${fnName}`, detail: validation.reason || 'flagged' })
             }
-          }).catch(() => {})
+          } catch (_) {}
         }
 
         // Execute
@@ -2727,11 +2728,11 @@ class DirectBridge {
           } catch { /* non-blocking — don't fail the tool call */ }
         }
 
-        // Todo watch — fire-and-forget after each tool result
-        // When a todo transitions to in_progress, re-route via small model to pick the best agent role
+        // Todo watch — await after each tool result to prevent concurrent Metal inference
         if (assistClient && assistClient.TODO_WATCH_ENABLED && _lastTodos) {
           const _todosSnapshot = _lastTodos  // capture current reference
-          assistClient.assistTodoWatch(fnName, content, _todosSnapshot).then(async updated => {
+          try {
+            const updated = await assistClient.assistTodoWatch(fnName, content, _todosSnapshot)
             if (updated && hasStatusChanges(updated, _todosSnapshot)) {
               _lastTodos = updated  // update the tracked todos
               this.send('qwen-event', { type: 'todo-watch', todos: updated })
@@ -2760,7 +2761,7 @@ class DirectBridge {
                 }
               }
             }
-          }).catch(() => {})
+          } catch (_) {}
         }
 
         // Add tool result to messages (model gets stripped content)

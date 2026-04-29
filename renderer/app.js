@@ -3695,6 +3695,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
 
   window.app.offQwenEvents()
   window.app.offOrchestratorCompleted()  // clear any stale listener from a previous run
+  let orchToolName = ''
   let orchTaskBlockId = null
   let orchTaskText = ''
   let orchTaskCount = 0
