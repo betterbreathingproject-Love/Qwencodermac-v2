@@ -1679,10 +1679,12 @@ class DirectBridge {
       // to avoid re-inflating right after a compaction pass.
       // Also skip for _postCompactionCooldown turns after a compaction to let
       // the context stabilise before adding more.
+      // Cooldown check: skip this turn if cooling down, then decrement for next turn.
+      const _memSkipCooldown = _postCompactionCooldown > 0
       if (_postCompactionCooldown > 0) _postCompactionCooldown--
       const _currentTokens = estimateMessagesTokens(messages)
       const _memInjectBudget = Math.floor(effectiveCompactionThreshold * 0.70)
-      if (memoryClient && _currentTokens < _memInjectBudget && _postCompactionCooldown === 0) {
+      if (memoryClient && _currentTokens < _memInjectBudget && !_memSkipCooldown) {
         try {
           const userMsg = messages.filter(m => m.role === 'user').pop()
           const userText = typeof userMsg?.content === 'string' ? userMsg.content : ''

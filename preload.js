@@ -143,25 +143,26 @@ contextBridge.exposeInMainWorld('app', {
   onCalibrationStatus:   (cb) => ipcRenderer.on('calibration-status', (_, d) => cb(d)),
   offCalibrationStatus:  ()   => ipcRenderer.removeAllListeners('calibration-status'),
 
-  // Memory extraction model
-  loadExtractionModel:  (modelPath) => ipcRenderer.invoke('memory-extractor-load', modelPath),
-  unloadExtractionModel:()          => ipcRenderer.invoke('memory-extractor-unload'),
-  getMemoryStatus:      ()          => ipcRenderer.invoke('memory-status'),
+  // Memory — extraction model + fast assist
+  loadExtractionModel:   (modelPath) => ipcRenderer.invoke('memory-extractor-load', modelPath),
+  unloadExtractionModel: ()          => ipcRenderer.invoke('memory-extractor-unload'),
+  getMemoryStatus:       ()          => ipcRenderer.invoke('memory-status'),
+  assistChatReply:       (msg, role) => ipcRenderer.invoke('assist-chat-reply', msg, role),
+
+  // Memory bank — archive viewer, KG query, stats
+  memoryArchiveSearch:   (q, limit)  => ipcRenderer.invoke('memory-archive-search', q, limit),
+  memoryArchiveEvents:   (limit)     => ipcRenderer.invoke('memory-archive-events', limit),
+  memoryKgQuery:         (entity)    => ipcRenderer.invoke('memory-kg-query', entity),
+  memoryStats:           ()          => ipcRenderer.invoke('memory-stats'),
 
   // Telegram
-  telegramPair:      ()     => ipcRenderer.invoke('telegram-pair'),
-  telegramStatus:    ()     => ipcRenderer.invoke('telegram-status'),
+  telegramPair:      ()      => ipcRenderer.invoke('telegram-pair'),
+  telegramStatus:    ()      => ipcRenderer.invoke('telegram-status'),
   telegramStart:     (token) => ipcRenderer.invoke('telegram-start', token),
-  telegramStop:      ()     => ipcRenderer.invoke('telegram-stop'),
-  telegramGetToken:  ()     => ipcRenderer.invoke('telegram-get-token'),
+  telegramStop:      ()      => ipcRenderer.invoke('telegram-stop'),
+  telegramGetToken:  ()      => ipcRenderer.invoke('telegram-get-token'),
   onTelegramUnavailable: (cb) => ipcRenderer.on('telegram-unavailable', (_, d) => cb(d)),
   offTelegramUnavailable: () => ipcRenderer.removeAllListeners('telegram-unavailable'),
-
-  // Memory extraction model
-  loadExtractionModel:  (modelPath) => ipcRenderer.invoke('memory-extractor-load', modelPath),
-  unloadExtractionModel:()          => ipcRenderer.invoke('memory-extractor-unload'),
-  getMemoryStatus:      ()          => ipcRenderer.invoke('memory-status'),
-  assistChatReply:      (msg, role) => ipcRenderer.invoke('assist-chat-reply', msg, role),
 
   // Mini App
   miniappStart:      ()     => ipcRenderer.invoke('miniapp-start'),

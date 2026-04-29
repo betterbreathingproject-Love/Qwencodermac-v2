@@ -319,6 +319,37 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
       return null
     }
   })
+
+  // ── Memory bank — archive viewer, KG query, stats ─────────────────────────
+  ipcMain.handle('memory-archive-search', async (_, query, limit) => {
+    try {
+      const memClient = require('../memory-client.js')
+      return await memClient.archiveSearch(query || '', { limit: limit || 50 })
+    } catch (_) { return [] }
+  })
+
+  ipcMain.handle('memory-archive-events', async (_, limit) => {
+    try {
+      const memClient = require('../memory-client.js')
+      const result = await memClient._httpRequest('GET', `/memory/archive/events?limit=${limit || 50}`, null, 5000)
+      return Array.isArray(result) ? result : (result?.events || [])
+    } catch (_) { return [] }
+  })
+
+  ipcMain.handle('memory-kg-query', async (_, entity) => {
+    try {
+      const memClient = require('../memory-client.js')
+      return await memClient.kgQueryEntity(entity || '')
+    } catch (_) { return [] }
+  })
+
+  ipcMain.handle('memory-stats', async () => {
+    try {
+      const memClient = require('../memory-client.js')
+      const result = await memClient._httpRequest('GET', '/memory/stats', null, 5000)
+      return result || null
+    } catch (_) { return null }
+  })
 }
 
 module.exports = { register, startServer, stopServer, restartServer, waitForServer, killStaleServer, findPython, runCalibration, getCalibrationProfile, isCalibrating, clearCalibration }

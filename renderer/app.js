@@ -5054,3 +5054,174 @@ async function agentRoleGenerate() {
 }
 
 // Load roles when the Agents tab is opened — hooked into switchMainTab above
+
+// ── Memory Bank Tab ───────────────────────────────────────────────────────────
+
+let _memoryLoaded = false
+
+/**
+ * Format a UTC timestamp string into a short human-readable form.
+ */
+function _memFmtTime(ts) {
+  if (!ts) return ''
+  try {
+    const d = new Date(ts)
+    const now = new Date()
+    const diffMs = now - d
+    if (diffMs < 60000) return 'just now'
+    if (diffMs < 3600000) return Math.floor(diffMs / 60000) + 'm ago'
+    if (diffMs < 86400000) return Math.floor(diffMs / 3600000) + 'h ago'
+    return d.toLocaleDateString()
+  } catch { return '' }
+}
+
+/**
+ * Format bytes into a human-readable size string.
+ */
+function _memFmtBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(1024))
+  return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i]
+}
+
+/**
+ * Render a list of archive events into the feed element.
+ */
+function _memRenderFeed(events) {
+  const feed = document.getElementById('memoryFeed')
+  if (!feed) return
+  if (!events || events.length === 0) {
+    feed.innerHTML = '<div class="memory-empty">No archive events found</div>'
+    return
+  }
+  feed.innerHTML = events.map(ev => {
+    const type = ev.event_type || ev.type || 'unknown'
+    const summary = ev.summary || (typeof ev.payload === 'string' ? ev.payload.slice(0, 120) : JSON.stringify(ev.payload || '').slice(0, 120))
+    const agent = ev.agent_name ? `<span class="memory-event-agent">${ev.agent_name}</span>` : ''
+    const time = _memFmtTime(ev.timestamp)
+    return `<div class="memory-event">
+      <div class="memory-event-header">
+        <span class="memory-event-type ${type}">${type.replace(/_/g, ' ')}</span>
+        ${agent}
+        <span class="memory-event-time">${time}</span>
+      </div>
+      <div class="memory-event-summary" title="${(summary || '').replace(/"/g, '&quot;')}">${summary || '—'}</div>
+    </div>`
+  }).join('')
+}
+
+/**
+ * Render KG triples into the results panel.
+ */
+function _memRenderTriples(triples) {
+  const el = document.getElementById('memoryKgResults')
+  if (!el) return
+  if (!triples || triples.length === 0) {
+    el.innerHTML = '<div class="memory-empty">No triples found for this entity</div>'
+    return
+  }
+  el.innerHTML = triples.map(t => {
+    const validUntil = t.valid_until ? `<div class="memory-triple-time">valid until ${_memFmtTime(t.valid_until)}</div>` : ''
+    return `<div class="memory-triple">
+      <span class="memory-triple-subject">${t.subject || '?'}</span>
+      <span class="memory-triple-predicate">${t.predicate || '?'}</span>
+      <span class="memory-triple-object">${t.object || '?'}</span>
+      ${validUntil}
+    </div>`
+  }).join('')
+}
+
+/**
+ * Load and render memory stats + recent archive events.
+ */
+async function memoryRefresh() {
+  if (!window.app) return
+  const btn = document.getElementById('memoryRefreshBtn')
+  if (btn) btn.textContent = '…'
+
+  try {
+    // Stats
+    if (window.app.memoryStats) {
+      const stats = await window.app.memoryStats()
+      if (stats) {
+        const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val }
+        set('memStatTriplesVal', (stats.kg_triples ?? '—').toLocaleString())
+        set('memStatVectorsVal', (stats.vector_count ?? '—').toLocaleString())
+        set('memStatArchiveVal', (stats.archive_events ?? '—').toLocaleString())
+        set('memStatSizeVal', stats.archive_size_bytes != null ? _memFmtBytes(stats.archive_size_bytes) : '—')
+      }
+    }
+
+    // Recent events
+    if (window.app.memoryArchiveEvents) {
+      const events = await window.app.memoryArchiveEvents(100)
+      _memRenderFeed(events)
+    }
+  } catch (err) {
+    const feed = document.getElementById('memoryFeed')
+    if (feed) feed.innerHTML = `<div class="memory-empty">Memory backend unavailable — load a model to enable memory</div>`
+  } finally {
+    if (btn) btn.textContent = '↻ Refresh'
+    _memoryLoaded = true
+  }
+}
+
+/**
+ * Search the archive by keyword.
+ */
+let _memSearchTimer = null
+function memorySearch(query) {
+  clearTimeout(_memSearchTimer)
+  _memSearchTimer = setTimeout(async () => {
+    if (!window.app || !window.app.memoryArchiveSearch) return
+    try {
+      if (!query || query.trim().length < 2) {
+        // Empty search — reload recent events
+        const events = await window.app.memoryArchiveEvents(100)
+        _memRenderFeed(events)
+        return
+      }
+      const results = await window.app.memoryArchiveSearch(query.trim(), 50)
+      _memRenderFeed(results)
+    } catch (_) {}
+  }, 300)
+}
+
+/**
+ * Query the knowledge graph for an entity.
+ */
+async function memoryKgQuery() {
+  const input = document.getElementById('memoryKgInput')
+  const entity = input?.value?.trim()
+  if (!entity || !window.app || !window.app.memoryKgQuery) return
+  const el = document.getElementById('memoryKgResults')
+  if (el) el.innerHTML = '<div class="memory-empty">Querying…</div>'
+  try {
+    const triples = await window.app.memoryKgQuery(entity)
+    _memRenderTriples(triples)
+  } catch (_) {
+    if (el) el.innerHTML = '<div class="memory-empty">Query failed — memory backend may be unavailable</div>'
+  }
+}
+
+// Allow Enter key in KG input to trigger query
+document.addEventListener('DOMContentLoaded', () => {
+  const kgInput = document.getElementById('memoryKgInput')
+  if (kgInput) {
+    kgInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') memoryKgQuery()
+    })
+  }
+})
+
+// Auto-load memory data when the tab is first opened
+// Hook into switchMainTab — called when user clicks the Memory tab
+const _origSwitchMainTab = typeof switchMainTab === 'function' ? switchMainTab : null
+// We patch via the tab onclick directly — switchMainTab is defined in app.js
+// so we wrap it after definition by overriding the global
+if (typeof window !== 'undefined') {
+  window._memoryTabAutoLoad = function() {
+    if (!_memoryLoaded) memoryRefresh()
+  }
+}
