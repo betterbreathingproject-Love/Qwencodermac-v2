@@ -1034,6 +1034,31 @@ async function sendAgentMode(prompt, opts = {}) {
   updateStatusBar('initializing', { progress: -1, activity: 'Starting agent...' })
   updateAgentStatsBar({ state: 'initializing', progress: -1, activity: 'Starting agent...' })
 
+  // ── Crash-safe session persistence ───────────────────────────────────────
+  // Save the in-progress assistant response every 15s so a crash doesn't
+  // lose the full generation. The final save on session-end overwrites this.
+  let _autoSaveTimer = null
+  function _startAutoSave() {
+    if (_autoSaveTimer) return
+    _autoSaveTimer = setInterval(() => {
+      if (!activeProjectId || !activeSessionId) return
+      const partial = allTextSegments.filter(Boolean).join('\n\n')
+      if (partial && partial.length > 50) {
+        // Save as a draft — prefixed so it's identifiable if the session ends abruptly
+        window.app.appendSessionMsg(activeProjectId, activeSessionId, {
+          role: 'assistant',
+          content: partial,
+          draft: true,
+          ts: Date.now(),
+        }).catch(() => {})
+      }
+    }, 15000)
+  }
+  function _stopAutoSave() {
+    if (_autoSaveTimer) { clearInterval(_autoSaveTimer); _autoSaveTimer = null }
+  }
+  _startAutoSave()
+
   // Helper: update the bottom activity line in the chat (always visible)
   function setActivity(html) {
     const el = document.getElementById(respId + '-activity')
@@ -1473,6 +1498,7 @@ async function sendAgentMode(prompt, opts = {}) {
         break
       case 'session-end':
         document.getElementById(respId+'-status').textContent = '✅ Agent finished'
+        _stopAutoSave()  // stop crash-safe auto-save — we're about to do the real save
         // Reset role dropdown back to general so next message starts fresh
         _currentAgentType = null
         { const sel = document.getElementById('roleSelect'); if (sel) sel.value = 'general' }

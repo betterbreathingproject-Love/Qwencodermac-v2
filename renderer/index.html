@@ -357,6 +357,7 @@
         <button class="ed-tab" data-tab="calibration" onclick="switchMainTab('calibration',this)">📊 Calibration</button>
         <button class="ed-tab" data-tab="agents" onclick="switchMainTab('agents',this)">🤖 Agents</button>
         <button class="ed-tab" data-tab="memory" onclick="switchMainTab('memory',this);if(!_memoryLoaded)memoryRefresh()">🧠 Memory</button>
+        <button class="ed-tab" data-tab="about" onclick="switchMainTab('about',this)">💙 About</button>
       </div>
 
       <!-- AGENT TAB -->
@@ -642,6 +643,43 @@
                 <div class="memory-empty">Enter an entity name to query the knowledge graph</div>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ABOUT TAB -->
+      <div class="main-panel" id="mt-about">
+        <div class="about-layout">
+          <div class="about-hero">
+            <div class="about-logo">🤖</div>
+            <div class="about-title">QwenCoder Mac Studio</div>
+            <div class="about-subtitle">Local AI-assisted coding for Apple Silicon — no cloud, no API keys, no limits.</div>
+          </div>
+          <div class="about-section">
+            <div class="about-section-title">Open Source — Built on the shoulders of giants</div>
+            <div class="about-section-body">This project would not exist without the following open source projects. Thank you to every contributor.</div>
+          </div>
+          <div class="about-grid">
+            <div class="about-card"><div class="about-card-icon">⚡</div><div class="about-card-content"><div class="about-card-name"><a href="https://github.com/ml-explore/mlx" target="_blank">MLX</a></div><div class="about-card-desc">Apple's array framework for machine learning on Apple Silicon. Powers all local inference.</div><div class="about-card-license">MIT · Apple</div></div></div>
+            <div class="about-card"><div class="about-card-icon">🧠</div><div class="about-card-content"><div class="about-card-name"><a href="https://github.com/ml-explore/mlx-lm" target="_blank">mlx-lm</a></div><div class="about-card-desc">LLM inference and fine-tuning with MLX. Handles text-only models and tool calling.</div><div class="about-card-license">MIT · Apple</div></div></div>
+            <div class="about-card"><div class="about-card-icon">👁</div><div class="about-card-content"><div class="about-card-name"><a href="https://github.com/Blaizzy/mlx-vlm" target="_blank">mlx-vlm</a></div><div class="about-card-desc">Vision-language model inference with MLX. Enables image analysis and screenshot understanding.</div><div class="about-card-license">MIT · Prince Canuma</div></div></div>
+            <div class="about-card"><div class="about-card-icon">🗄</div><div class="about-card-content"><div class="about-card-name"><a href="https://github.com/jaylfc/taosmd" target="_blank">taosmd</a></div><div class="about-card-desc">Framework-agnostic AI memory system. 97% accuracy on LongMemEval-S. KnowledgeGraph, VectorMemory, and Zero-Loss Archive.</div><div class="about-card-license">MIT · jaylfc</div></div></div>
+            <div class="about-card"><div class="about-card-icon">🔌</div><div class="about-card-content"><div class="about-card-name"><a href="https://github.com/fastapi/fastapi" target="_blank">FastAPI</a></div><div class="about-card-desc">Modern Python web framework. Powers the local inference server at port 8090.</div><div class="about-card-license">MIT · Sebastián Ramírez</div></div></div>
+            <div class="about-card"><div class="about-card-icon">🖥</div><div class="about-card-content"><div class="about-card-name"><a href="https://github.com/electron/electron" target="_blank">Electron</a></div><div class="about-card-desc">Cross-platform desktop apps with web technologies. The shell that wraps everything together.</div><div class="about-card-license">MIT · OpenJS Foundation</div></div></div>
+            <div class="about-card"><div class="about-card-icon">🎭</div><div class="about-card-content"><div class="about-card-name"><a href="https://github.com/microsoft/playwright" target="_blank">Playwright</a></div><div class="about-card-desc">Browser automation for agent tool use. Enables web browsing, screenshots, and UI testing.</div><div class="about-card-license">Apache 2.0 · Microsoft</div></div></div>
+            <div class="about-card"><div class="about-card-icon">🔍</div><div class="about-card-content"><div class="about-card-name"><a href="https://github.com/ast-grep/ast-grep" target="_blank">ast-grep</a></div><div class="about-card-desc">Structural code search and rewriting. Powers the AST-based code search tool.</div><div class="about-card-license">MIT · Herrington Darkholme</div></div></div>
+            <div class="about-card"><div class="about-card-icon">📐</div><div class="about-card-content"><div class="about-card-name"><a href="https://github.com/UKPLab/sentence-transformers" target="_blank">sentence-transformers</a></div><div class="about-card-desc">Semantic text embeddings. Powers vector memory search with all-MiniLM-L6-v2.</div><div class="about-card-license">Apache 2.0 · UKP Lab</div></div></div>
+            <div class="about-card"><div class="about-card-icon">🚀</div><div class="about-card-content"><div class="about-card-name"><a href="https://github.com/tanavc1/local-llm-autotune" target="_blank">local-llm-autotune</a></div><div class="about-card-desc">Local LLM inference optimizer. Inspired the dynamic KV sizing, smart cache clearing, and prefill batching in our MLX server.</div><div class="about-card-license">MIT · tanavc1</div></div></div>
+            <div class="about-card"><div class="about-card-icon">🔬</div><div class="about-card-content"><div class="about-card-name"><a href="https://github.com/dubzzz/fast-check" target="_blank">fast-check</a></div><div class="about-card-desc">Property-based testing for JavaScript. Used for correctness verification of all core modules.</div><div class="about-card-license">MIT · Nicolas Dubien</div></div></div>
+            <div class="about-card"><div class="about-card-icon">🤗</div><div class="about-card-content"><div class="about-card-name"><a href="https://github.com/huggingface/transformers" target="_blank">Transformers</a></div><div class="about-card-desc">State-of-the-art ML models. Provides tokenizers and model utilities used throughout the stack.</div><div class="about-card-license">Apache 2.0 · Hugging Face</div></div></div>
+            <div class="about-card"><div class="about-card-icon">🏗</div><div class="about-card-content"><div class="about-card-name"><a href="https://github.com/QwenLM/Qwen3" target="_blank">Qwen3</a></div><div class="about-card-desc">The primary model family. Qwen3-30B-A3B for main inference, Qwen3.5-0.8B for fast assist tasks.</div><div class="about-card-license">Apache 2.0 · Alibaba Cloud</div></div></div>
+            <div class="about-card"><div class="about-card-icon">📡</div><div class="about-card-content"><div class="about-card-name"><a href="https://github.com/paulmillr/chokidar" target="_blank">chokidar</a></div><div class="about-card-desc">File system watcher. Powers live file change detection and project watching.</div><div class="about-card-license">MIT · Paul Miller</div></div></div>
+            <div class="about-card"><div class="about-card-icon">🐍</div><div class="about-card-content"><div class="about-card-name"><a href="https://github.com/pydantic/pydantic" target="_blank">Pydantic</a></div><div class="about-card-desc">Data validation for Python. Used throughout the FastAPI server for request/response models.</div><div class="about-card-license">MIT · Samuel Colvin</div></div></div>
+            <div class="about-card"><div class="about-card-icon">📦</div><div class="about-card-content"><div class="about-card-name"><a href="https://github.com/pallets/jinja" target="_blank">Jinja2</a></div><div class="about-card-desc">Template engine for Python. Renders Qwen chat templates for tool calling support.</div><div class="about-card-license">BSD · Pallets</div></div></div>
+          </div>
+          <div class="about-footer">
+            <div class="about-footer-text">Built with ❤️ for local-first AI development on Apple Silicon.</div>
+            <div class="about-footer-text" style="margin-top:4px;font-size:10px;color:var(--muted)">All trademarks belong to their respective owners.</div>
           </div>
         </div>
       </div>

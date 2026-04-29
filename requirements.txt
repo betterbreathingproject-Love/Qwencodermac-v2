@@ -1,0 +1,40 @@
+# QwenCoder Mac Studio — Python backend dependencies
+# Install with: pip install -r requirements.txt
+#
+# Apple Silicon (M-series) required for MLX inference.
+# Python 3.12+ recommended.
+
+# ── MLX inference (Apple Silicon native) ─────────────────────────────────────
+mlx>=0.30.6
+mlx-lm>=0.31.1          # text-only model inference + tool calling
+mlx-vlm>=0.4.4          # vision-language model inference
+
+# ── FastAPI server ────────────────────────────────────────────────────────────
+fastapi>=0.116.2
+uvicorn>=0.35.0
+pydantic>=2.11.9
+
+# ── Template engine (Jinja2 chat templates for tool calling) ──────────────────
+Jinja2>=3.1.6
+
+# ── Memory system (taosmd — KnowledgeGraph, VectorMemory, Archive) ────────────
+# Install from source: pip install git+https://github.com/jaylfc/taosmd.git
+# Or clone and install: git clone https://github.com/jaylfc/taosmd && pip install -e ./taosmd
+# taosmd is not on PyPI — install manually before starting the server.
+# The server degrades gracefully if taosmd is not installed (memory features disabled).
+
+# ── Embedding model for VectorMemory (sentence-transformers local mode) ───────
+sentence-transformers>=3.4.1
+transformers>=5.3.0
+onnxruntime>=1.24.1      # optional: for ONNX embedding mode (faster than sentence-transformers)
+
+# ── Image processing ──────────────────────────────────────────────────────────
+Pillow>=10.4.0
+
+# ── System utilities ──────────────────────────────────────────────────────────
+numpy>=2.1.3
+psutil>=7.2.2            # memory pressure checks before loading extraction model
+
+# ── Optional: claw-compactor (context compression) ───────────────────────────
+# pip install claw-compactor
+# The server falls back to the built-in JS compactor if not installed.

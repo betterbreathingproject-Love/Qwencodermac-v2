@@ -319,21 +319,26 @@ async def initialize(data_dir: str = "~/.qwencoder/memory/"):
         # Initialize KnowledgeGraph with SQLite backend
         kg_path = str(data_path / "knowledge-graph.db")
         _kg = KnowledgeGraph(kg_path)
+        await _kg.init()
         logger.info(f"KnowledgeGraph initialized: {kg_path}")
 
-        # Initialize VectorMemory with ONNX MiniLM embeddings (all-MiniLM-L6-v2)
+        # Initialize VectorMemory with sentence-transformers (all-MiniLM-L6-v2)
+        # Uses 'local' mode — sentence-transformers is installed and works on Apple Silicon.
+        # Falls back gracefully if the model can't load.
         vm_path = str(data_path / "vector-memory.db")
-        _vm = VectorMemory(vm_path, embed_mode="onnx")
-        logger.info(f"VectorMemory initialized (embed_mode=onnx): {vm_path}")
+        _vm = VectorMemory(vm_path, embed_mode="local")
+        await _vm.init()
+        logger.info(f"VectorMemory initialized (embed_mode=local, all-MiniLM-L6-v2): {vm_path}")
 
         # Initialize Archive with JSONL storage + FTS5 index
         archive_dir = str(data_path / "archive")
         archive_index = str(data_path / "archive-index.db")
         _archive = Archive(archive_dir, index_path=archive_index)
+        await _archive.init()
         logger.info(f"Archive initialized: {archive_dir}")
 
         _initialized = True
-        logger.info("All taosmd memory components initialized successfully")
+        logger.info("✅ taosmd memory components initialized — KG + VectorMemory + Archive ready")
 
     except ImportError:
         logger.warning(
@@ -366,9 +371,9 @@ async def shutdown():
     if _archive is not None:
         try:
             if hasattr(_archive, 'flush'):
-                _archive.flush()
+                await _archive.flush()
             if hasattr(_archive, 'close'):
-                _archive.close()
+                await _archive.close()
             logger.info("Archive flushed and closed")
         except Exception as e:
             logger.error(f"Error flushing Archive: {e}")
@@ -377,7 +382,7 @@ async def shutdown():
     if _kg is not None:
         try:
             if hasattr(_kg, 'close'):
-                _kg.close()
+                await _kg.close()
             logger.info("KnowledgeGraph closed")
         except Exception as e:
             logger.error(f"Error closing KnowledgeGraph: {e}")
@@ -386,7 +391,7 @@ async def shutdown():
     if _vm is not None:
         try:
             if hasattr(_vm, 'close'):
-                _vm.close()
+                await _vm.close()
             logger.info("VectorMemory closed")
         except Exception as e:
             logger.error(f"Error closing VectorMemory: {e}")
@@ -473,9 +478,9 @@ async def get_memory_stats():
     if _kg is not None:
         try:
             if hasattr(_kg, "count"):
-                kg_triples = _kg.count()
+                kg_triples = await _kg.count()
             elif hasattr(_kg, "triple_count"):
-                kg_triples = _kg.triple_count()
+                kg_triples = await _kg.stats()
         except Exception as e:
             logger.warning(f"Failed to get KG triple count: {e}")
 
@@ -484,7 +489,7 @@ async def get_memory_stats():
     if _vm is not None:
         try:
             if hasattr(_vm, "count"):
-                vector_count = _vm.count()
+                vector_count = await _vm.count()
             elif hasattr(_vm, "__len__"):
                 vector_count = len(_vm)
         except Exception as e:
@@ -495,9 +500,9 @@ async def get_memory_stats():
     if _archive is not None:
         try:
             if hasattr(_archive, "count"):
-                archive_events = _archive.count()
+                archive_events = await _archive.count()
             elif hasattr(_archive, "event_count"):
-                archive_events = _archive.event_count()
+                archive_events = await _archive.count()
         except Exception as e:
             logger.warning(f"Failed to get archive event count: {e}")
 
@@ -558,7 +563,7 @@ async def add_triple(req: TripleRequest):
     obj = _fail_closed_filter(req.object)
 
     try:
-        result = _kg.add_triple(
+        result = await _kg.add_triple(
             subject,
             predicate,
             obj,
@@ -566,15 +571,14 @@ async def add_triple(req: TripleRequest):
             valid_until=req.valid_until,
         )
 
-        return TripleResponse(
-            id=result.id,
-            subject=result.subject,
-            predicate=result.predicate,
-            object=result.object,
-            valid_from=result.valid_from,
-            valid_until=result.valid_until,
-            created_at=result.created_at,
-        )
+        # add_triple returns the triple ID string; re-query to get full data
+        triples = await _kg.query_entity(subject)
+        triple = next((t for t in triples if t.get("predicate") == predicate and t.get("object_name") == obj), None)
+        if triple:
+            return _kg_triple_to_response(triple)
+        # Fallback: return minimal response
+        return TripleResponse(id=0, subject=subject, predicate=predicate, object=obj,
+                              valid_from=None, valid_until=None, created_at=datetime.utcnow())
     except Exception as e:
         logger.error(f"Failed to add triple to KnowledgeGraph: {e}")
         raise HTTPException(
@@ -597,17 +601,9 @@ async def query_entity(entity: str):
         )
 
     try:
-        results = _kg.query(entity)
+        results = await _kg.query_entity(entity)
         return [
-            TripleResponse(
-                id=t.id,
-                subject=t.subject,
-                predicate=t.predicate,
-                object=t.object,
-                valid_from=t.valid_from,
-                valid_until=t.valid_until,
-                created_at=t.created_at,
-            )
+            _kg_triple_to_response(t)
             for t in results
         ]
     except Exception as e:
@@ -635,29 +631,21 @@ async def query_temporal(req: TemporalQueryRequest):
 
     try:
         # Get all triples for the entity first
-        all_triples = _kg.query(req.entity)
+        all_triples = await _kg.query_entity(req.entity)
 
         # Filter to only those valid at the requested point in time
         valid_triples = []
         for t in all_triples:
             # valid_from must be <= at_time (or None/unset means always valid from the start)
-            if t.valid_from is not None and t.valid_from > req.at_time:
+            if t.get("valid_from") is not None and t.get("valid_from") > req.at_time.timestamp():
                 continue
             # valid_until must be >= at_time (or None means still valid)
-            if t.valid_until is not None and t.valid_until < req.at_time:
+            if t.get("valid_to") is not None and t.get("valid_to") < req.at_time.timestamp():
                 continue
             valid_triples.append(t)
 
         return [
-            TripleResponse(
-                id=t.id,
-                subject=t.subject,
-                predicate=t.predicate,
-                object=t.object,
-                valid_from=t.valid_from,
-                valid_until=t.valid_until,
-                created_at=t.created_at,
-            )
+            _kg_triple_to_response(t)
             for t in valid_triples
         ]
     except Exception as e:
@@ -688,7 +676,7 @@ async def clear_kg(req: KGClearRequest):
         )
 
     try:
-        _kg.clear()
+        await _kg.clear()
         logger.info("Knowledge Graph cleared by user request")
         return {"ok": True, "message": "Knowledge Graph cleared"}
     except Exception as e:
@@ -733,13 +721,12 @@ async def archive_record(req: ArchiveRecordRequest):
     filtered_summary = _fail_closed_filter(req.summary)
 
     try:
-        record = _archive.record(
+        record = await _archive.record(
             event_type=req.event_type,
-            payload=filtered_payload,
+            data=filtered_payload if isinstance(filtered_payload, dict) else {"content": str(filtered_payload)},
             summary=filtered_summary,
             agent_name=req.agent_name,
-            session_id=req.session_id,
-            turn_number=req.turn_number,
+            app_id=req.session_id,
         )
         return {
             "ok": True,
@@ -769,17 +756,17 @@ async def archive_search(query: str, limit: int = 20):
         )
 
     try:
-        results = _archive.search_fts(query, limit=limit)
+        results = await _archive.search_fts(query, limit=limit)
         return {
             "results": [
                 {
-                    "id": getattr(r, "id", None),
-                    "event_type": getattr(r, "event_type", None),
-                    "payload": getattr(r, "payload", None),
-                    "summary": getattr(r, "summary", None),
-                    "agent_name": getattr(r, "agent_name", None),
-                    "session_id": getattr(r, "session_id", None),
-                    "timestamp": getattr(r, "timestamp", None).isoformat() if getattr(r, "timestamp", None) else None,
+                    "id": r.get("id"),
+                    "event_type": r.get("event_type"),
+                    "payload": _parse_archive_payload(r),
+                    "summary": r.get("summary"),
+                    "agent_name": r.get("agent_name"),
+                    "session_id": r.get("app_id"),
+                    "timestamp": _fmt_archive_ts(r.get("timestamp")),
                 }
                 for r in results
             ],
@@ -807,17 +794,17 @@ async def archive_events(limit: int = 50):
         )
 
     try:
-        results = _archive.recent_events(limit=limit)
+        results = await _archive.query(limit=limit)
         return {
             "events": [
                 {
-                    "id": getattr(r, "id", None),
-                    "event_type": getattr(r, "event_type", None),
-                    "payload": getattr(r, "payload", None),
-                    "summary": getattr(r, "summary", None),
-                    "agent_name": getattr(r, "agent_name", None),
-                    "session_id": getattr(r, "session_id", None),
-                    "timestamp": getattr(r, "timestamp", None).isoformat() if getattr(r, "timestamp", None) else None,
+                    "id": r.get("id"),
+                    "event_type": r.get("event_type"),
+                    "payload": _parse_archive_payload(r),
+                    "summary": r.get("summary"),
+                    "agent_name": r.get("agent_name"),
+                    "session_id": r.get("app_id"),
+                    "timestamp": _fmt_archive_ts(r.get("timestamp")),
                 }
                 for r in results
             ],
@@ -910,7 +897,7 @@ async def vector_add(req: VectorAddRequest):
     filtered_text = _fail_closed_filter(req.text)
 
     try:
-        result = _vm.add(filtered_text, metadata=req.metadata)
+        result = await _vm.add(filtered_text, metadata=req.metadata)
         return {
             "ok": True,
             "id": getattr(result, "id", None),
@@ -940,7 +927,7 @@ async def vector_search(req: VectorSearchRequest):
         )
 
     try:
-        results = _vm.search(req.query, top_k=req.top_k, hybrid=req.hybrid)
+        results = await _vm.search(req.query, top_k=req.top_k, hybrid=req.hybrid)
         return {
             "results": [
                 {
@@ -968,6 +955,57 @@ _DEFAULT_TOKEN_BUDGET = int(os.environ.get("MEMORY_CONTEXT_BUDGET", "2048"))
 def _estimate_tokens(text: str) -> int:
     """Rough token estimate: ~4 chars per token (GPT-style approximation)."""
     return max(1, len(text) // 4)
+
+
+def _kg_triple_to_response(t: dict) -> "TripleResponse":
+    """Convert a taosmd KG result dict to a TripleResponse Pydantic model.
+
+    taosmd returns dicts with keys: id, subject_id, predicate, object_id,
+    object_name, valid_from (float epoch), valid_to (float epoch), created_at.
+    """
+    def _epoch_to_dt(v):
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            from datetime import datetime, timezone
+            return datetime.fromtimestamp(v, tz=timezone.utc)
+        return v
+
+    return TripleResponse(
+        id=0,  # taosmd uses string IDs; use 0 as placeholder
+        subject=t.get("subject_id", ""),
+        predicate=t.get("predicate", ""),
+        object=t.get("object_name") or t.get("object_id", ""),
+        valid_from=_epoch_to_dt(t.get("valid_from")),
+        valid_until=_epoch_to_dt(t.get("valid_to")),
+        created_at=_epoch_to_dt(t.get("created_at")) or datetime.utcnow(),
+    )
+
+
+def _parse_archive_payload(record: dict):
+    """Parse the data_json field from an archive record into a Python object."""
+    import json as _json
+    raw = record.get("data_json") or record.get("payload")
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        try:
+            return _json.loads(raw)
+        except Exception:
+            return raw
+    return raw
+
+
+def _fmt_archive_ts(ts) -> str | None:
+    """Format an archive timestamp (float epoch or datetime) to ISO string."""
+    if ts is None:
+        return None
+    if isinstance(ts, (int, float)):
+        from datetime import datetime, timezone
+        return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+    if hasattr(ts, "isoformat"):
+        return ts.isoformat()
+    return str(ts)
 
 
 def _reciprocal_rank_fusion(result_lists: list[list[dict]], k: int = 60) -> list[dict]:
@@ -1039,11 +1077,11 @@ async def retrieve(req: RetrieveRequest):
             if _kg is None:
                 return []
             try:
-                triples = _kg.query(query_expanded)
+                triples = await _kg.query_entity(query_expanded)
                 return [
                     {
                         "source": "kg",
-                        "content": f"{t.subject} {t.predicate} {t.object}",
+                        "content": f"{t.get("subject_id", "?")} {t.get("predicate", "?")} {t.get("object_name", t.get("object_id", "?"))}",
                         "score": 1.0,
                         "metadata": {
                             "valid_from": t.valid_from.isoformat() if t.valid_from else None,
@@ -1060,7 +1098,7 @@ async def retrieve(req: RetrieveRequest):
             if _vm is None:
                 return []
             try:
-                results = _vm.search(query_expanded, top_k=req.top_k, hybrid=True)
+                results = await _vm.search(query_expanded, top_k=req.top_k, hybrid=True)
                 return [
                     {
                         "source": "vector",
@@ -1078,7 +1116,7 @@ async def retrieve(req: RetrieveRequest):
             if _archive is None:
                 return []
             try:
-                results = _archive.search_fts(query_expanded, limit=req.top_k)
+                results = await _archive.search_fts(query_expanded, limit=req.top_k)
                 return [
                     {
                         "source": "archive",
@@ -1122,7 +1160,7 @@ async def retrieve(req: RetrieveRequest):
         if has_temporal and _archive is not None:
             # Route to archive for temporal queries
             try:
-                results = _archive.search_fts(query_expanded, limit=req.top_k)
+                results = await _archive.search_fts(query_expanded, limit=req.top_k)
                 all_results = [
                     {
                         "source": "archive",
@@ -1144,11 +1182,11 @@ async def retrieve(req: RetrieveRequest):
                 # Extract first entity-like term for KG query
                 entity_match = re.search(r'\b([A-Z][a-zA-Z]{2,})\b', query)
                 if entity_match:
-                    triples = _kg.query(entity_match.group(1))
+                    triples = await _kg.query_entity(entity_match.group(1))
                     kg_items = [
                         {
                             "source": "kg",
-                            "content": f"{t.subject} {t.predicate} {t.object}",
+                            "content": f"{t.get("subject_id", "?")} {t.get("predicate", "?")} {t.get("object_name", t.get("object_id", "?"))}",
                             "score": 0.9,
                             "metadata": None,
                         }
@@ -1161,7 +1199,7 @@ async def retrieve(req: RetrieveRequest):
         if _vm is not None and len(all_results) < req.top_k:
             # Fill remaining slots with vector search
             try:
-                results = _vm.search(query_expanded, top_k=req.top_k - len(all_results), hybrid=True)
+                results = await _vm.search(query_expanded, top_k=req.top_k - len(all_results), hybrid=True)
                 vector_items = [
                     {
                         "source": "vector",
@@ -1368,7 +1406,7 @@ async def extract(req: ExtractRequest):
     if _kg is not None:
         for subject, predicate, obj in regex_triples:
             try:
-                _kg.add_triple(subject, predicate, obj)
+                await _kg.add_triple(subject, predicate, obj)
                 stored_count += 1
             except Exception as e:
                 logger.warning(f"Failed to store regex triple ({subject}, {predicate}, {obj}): {e}")
@@ -1376,7 +1414,7 @@ async def extract(req: ExtractRequest):
     # ── Step 2: Add turn to VectorMemory ─────────────────────────────────────
     if _vm is not None:
         try:
-            _vm.add(filtered_message, metadata={
+            await _vm.add(filtered_message, metadata={
                 "agent_name": req.agent_name,
                 "session_id": req.session_id,
                 "type": "conversation_turn",
@@ -1462,7 +1500,7 @@ async def extract(req: ExtractRequest):
                     for subject, predicate, obj in llm_triples:
                         if subject and predicate and obj:
                             try:
-                                _kg.add_triple(subject, predicate, obj)
+                                await _kg.add_triple(subject, predicate, obj)
                             except Exception as e:
                                 logger.warning(f"Failed to store LLM triple: {e}")
 
@@ -1518,17 +1556,17 @@ async def session_enrich(req: SessionEnrichRequest):
         # Retrieve recent events for this session from the archive
         session_events = []
         try:
-            all_events = _archive.recent_events(limit=100)
+            all_events = await _archive.query(limit=100)
             session_events = [
                 e for e in all_events
-                if getattr(e, "session_id", None) == req.session_id
+                if e.get("app_id") == req.session_id
             ]
         except Exception as e:
             logger.warning(f"Failed to retrieve session events for enrichment: {e}")
 
         # Build session text for analysis
         session_text = " ".join([
-            str(getattr(e, "payload", "")) + " " + str(getattr(e, "summary", ""))
+            str(_parse_archive_payload(e) or "") + " " + str(e.get("summary", ""))
             for e in session_events
         ])[:2000]  # Limit to 2000 chars for analysis
 
@@ -1617,16 +1655,16 @@ async def session_crystallize(req: SessionCrystallizeRequest):
         # Retrieve session events
         session_events = []
         try:
-            all_events = _archive.recent_events(limit=200)
+            all_events = await _archive.query(limit=200)
             session_events = [
                 e for e in all_events
-                if getattr(e, "session_id", None) == req.session_id
+                if e.get("app_id") == req.session_id
             ]
         except Exception as e:
             logger.warning(f"Failed to retrieve session events for crystallization: {e}")
 
         session_text = " ".join([
-            str(getattr(e, "payload", ""))
+            str(_parse_archive_payload(e) or "")
             for e in session_events
         ])[:3000]
 
@@ -1667,7 +1705,7 @@ async def session_crystallize(req: SessionCrystallizeRequest):
                         lesson_triples = _regex_extract_triples(lessons_text)
                         for subject, predicate, obj in lesson_triples:
                             try:
-                                _kg.add_triple(subject, predicate, obj)
+                                await _kg.add_triple(subject, predicate, obj)
                             except Exception as e:
                                 logger.warning(f"Failed to store lesson triple: {e}")
                 else:
