@@ -1926,7 +1926,12 @@ async function sendAgentMode(prompt, opts = {}) {
           window.app.onOrchestratorCompleted(() => {
             window.app.offOrchestratorCompleted()
             window.app.offQwenEvents()
-            const allDone = currentTodos.every(t => t.status === 'completed' || t.status === 'done')
+            // Use task graph node statuses — currentTodos is the chat todo list and
+            // is empty at the start of a spec run, making [].every(...) vacuously true.
+            const graphNodes = currentTaskGraph ? Object.values(currentTaskGraph.nodes) : []
+            const allDone = graphNodes.length > 0
+              ? graphNodes.every(n => n.status === 'completed' || n.status === 'skipped')
+              : false
             document.getElementById(orchId + '-status').textContent = allDone ? '✅ All tasks completed' : '⚠️ Orchestrator stopped'
             if (allDone) appendMsg('system', '🎉 All tasks completed!')
             if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
@@ -3637,7 +3642,12 @@ async function _launchOrchestrator(tasksPath, taskCount) {
   window.app.onOrchestratorCompleted(() => {
     window.app.offOrchestratorCompleted()
     window.app.offQwenEvents()
-    const allDone = currentTodos.every(t => t.status === 'completed' || t.status === 'done')
+    // Use task graph node statuses — currentTodos is the chat todo list and
+    // is empty at the start of a spec run, making [].every(...) vacuously true.
+    const graphNodes = currentTaskGraph ? Object.values(currentTaskGraph.nodes) : []
+    const allDone = graphNodes.length > 0
+      ? graphNodes.every(n => n.status === 'completed' || n.status === 'skipped')
+      : false
     document.getElementById(orchId + '-status').textContent = allDone ? '✅ All tasks completed' : '⚠️ Orchestrator stopped'
     if (allDone) appendMsg('system', '🎉 All tasks completed!')
     if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
