@@ -450,15 +450,34 @@ class Orchestrator extends EventEmitter {
       return;
     }
 
-    // ── Tier 2: Permanent failure, first attempt — retry once with simplified hint ──
+    // ── Tier 2: Permanent failure, first attempt — retry once with enriched hint ──
     // Only applies to non-transient failures on the first permanent failure.
     if (!isTransient && !this._simplifiedRetry.has(nodeId)) {
       this._simplifiedRetry.add(nodeId);
       const node = this._graph.nodes.get(nodeId);
-      const hint = `Previous attempt failed: ${errMsg.slice(0, 200)}. Take a simpler, more focused approach. Break the work into smaller steps. If a file doesn't exist yet, create a minimal version first.`;
+
+      // Classify the error to decide whether a web search would help.
+      // Knowledge-gap errors (unknown API, deprecated method, missing import,
+      // framework-specific issues) benefit from searching docs online.
+      // Path/permission/syntax errors don't — the answer isn't on the web.
+      const isKnowledgeGap = /undefined.*method|no such module|cannot find|unknown.*type|undeclared|not found in scope|deprecated|no member|value of type|protocol.*not conform|import.*failed|linker.*error|framework.*not found|xcodebuild|swift.*error|cannot.*convert|ambiguous.*use|missing.*return|does not have.*member/i.test(errMsg)
+      const isPathError = /no such file|not found.*directory|permission denied|ENOENT|EACCES/i.test(errMsg)
+
+      let hint = `Previous attempt failed: ${errMsg.slice(0, 200)}. Take a simpler, more focused approach. Break the work into smaller steps. If a file doesn't exist yet, create a minimal version first.`
+
+      if (isKnowledgeGap && !isPathError) {
+        // Extract the most useful search terms from the error
+        const searchTerms = errMsg.slice(0, 150).replace(/['"]/g, '').replace(/\s+/g, ' ').trim()
+        hint = `Previous attempt failed with an error that suggests a knowledge gap: "${errMsg.slice(0, 200)}"\n\n` +
+          `Before retrying, use web_search to find the correct API or approach. ` +
+          `Suggested query: "${searchTerms}". ` +
+          `Then use web_fetch to read the relevant documentation page. ` +
+          `Apply what you learn before writing any code.`
+      }
+
       // Inject the hint as a systemPromptSuffix on the node for the retry
       if (node) node._retryHint = hint;
-      this.emit('task-error', { nodeId, error: `${errMsg} (retrying with simplified approach...)` });
+      this.emit('task-error', { nodeId, error: `${errMsg} (retrying${isKnowledgeGap && !isPathError ? ' with web search' : ' with simplified approach'}...)` });
       setTimeout(async () => {
         if (this._state !== 'running') return;
         this._updateNodeStatus(nodeId, 'not_started');
