@@ -1204,6 +1204,15 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         if (v.error) return v
         const p = v.resolved
 
+        // Guard: protect orchestrator-managed files from direct agent writes.
+        // tasks.md is owned by the orchestrator — agents must not overwrite it
+        // directly as this corrupts the task graph (duplicates, wrong statuses).
+        const protectedFiles = ['tasks.md', '.maccoder/tasks.md']
+        const relPath = path.relative(cwd, p)
+        if (protectedFiles.some(f => relPath === f || relPath.endsWith('/' + f) || relPath.endsWith(path.sep + f))) {
+          return { error: `write_file blocked: tasks.md is managed by the orchestrator and must not be written directly. Use update_todos to track progress, or use edit_file to make surgical changes to specific task lines only.` }
+        }
+
         // Guard: reject writes containing truncation artifacts — these mean the model
         // hit its output token limit mid-generation and the content is incomplete.
         // Writing truncated content to disk corrupts the file silently.
