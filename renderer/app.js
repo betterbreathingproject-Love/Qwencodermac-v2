@@ -2882,7 +2882,7 @@ function renderTaskGraph(graph) {
 
   // Only animate the most recently started in_progress node — animating all of them
   // simultaneously creates confusing visual noise when multiple nodes are in_progress.
-  const inProgressIds = ids.filter(id => nodes[id].status === 'in_progress')
+  const inProgressIds = ids.filter(id => nodes[id].status === 'in_progress' && nodes[id]._startTime)
   const animatedNodeId = inProgressIds.reduce((latest, id) => {
     const t = nodes[id]._startTime || 0
     return t >= (nodes[latest]?._startTime || 0) ? id : latest
@@ -2891,18 +2891,21 @@ function renderTaskGraph(graph) {
   container.innerHTML = ids.map(id => {
     const node = nodes[id]
     const indent = (node.depth || 0) * 12
+    // Stale in_progress nodes (loaded from disk, no live _startTime) render as not_started
+    const isLiveInProgress = node.status === 'in_progress' && node._startTime
+    const displayStatus = node.status === 'in_progress' && !node._startTime ? 'not_started' : node.status
     const agentTag = node.agentType && node.agentType !== 'general' ? `<span class="tg-node-agent">${esc(node.agentType)}</span>` : ''
-    const elapsedTag = node.status === 'in_progress'
-      ? `<span class="tg-node-elapsed" data-start="${node._startTime || Date.now()}">0s</span>`
+    const elapsedTag = isLiveInProgress
+      ? `<span class="tg-node-elapsed" data-start="${node._startTime}">0s</span>`
       : ''
-    const activityTag = node.status === 'in_progress'
+    const activityTag = isLiveInProgress
       ? `<span class="tg-node-activity" data-node-id="${id}"></span>`
       : ''
-    // Use animated dot only for the most recently started in_progress node
-    const dotClass = node.status === 'in_progress' && id !== animatedNodeId
+    // Use animated dot only for the most recently started live in_progress node
+    const dotClass = isLiveInProgress && id !== animatedNodeId
       ? 'in_progress static'
-      : node.status
-    return `<div class="tg-node status-${node.status}" data-node-id="${id}" style="padding-left:${8 + indent}px" onclick="showTaskDetail('${id}')">
+      : displayStatus
+    return `<div class="tg-node status-${displayStatus}" data-node-id="${id}" style="padding-left:${8 + indent}px" onclick="showTaskDetail('${id}')">
       <span class="tg-node-dot ${dotClass}"></span>
       <span class="tg-node-id">${esc(id)}</span>
       <span class="tg-node-title">${esc(node.title)}</span>

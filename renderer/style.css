@@ -962,11 +962,6 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   color: var(--blue);
   animation: pulse 1.5s ease-in-out infinite;
 }
-.todo-check.active-static {
-  background: rgba(96,165,250,0.08);
-  border-color: var(--blue);
-  color: var(--blue);
-}
 .todo-id {
   font-size: 10px;
   font-family: 'SF Mono', monospace;
