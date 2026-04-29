@@ -64,11 +64,14 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Show startup overlay immediately — will be dismissed once model loads or skipped
   _initStartupOverlay()
 
-  // Guard: only run autoLoadLastModel once even if both the status event and
-  // the direct refreshStatus call complete (server may already be running)
+  // Guard: only run autoLoadLastModel once the server is up and models are known.
+  // Don't lock out retries if models weren't available yet on the first attempt.
   let _autoLoadRan = false
   async function _tryAutoLoad() {
     if (_autoLoadRan) return
+    // Don't mark as ran if models aren't available yet — the onServerStatus
+    // handler will call us again once the server is up and models are scanned.
+    if (!allModels.length) return
     _autoLoadRan = true
     await autoLoadLastModel()
   }
