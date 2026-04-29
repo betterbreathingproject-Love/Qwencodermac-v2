@@ -2090,6 +2090,9 @@ async def _handle_error_diagnose(payload: dict) -> AssistResponse:
         (r"File exists", "The target file already exists — remove it first or use a different destination path."),
         (r"Connection refused", "The server is not running or is not listening on the expected port — start the server first."),
         (r"Broken pipe", "The receiving process closed before all data was written — check that the downstream command is running correctly."),
+        (r"timed out or exceeded output limit", "The command produced too much output or ran too long — use read_file instead of cat/head/tail for source files, or narrow the command scope."),
+        (r"output limit", "The command output exceeded the 2MB limit — split into smaller commands or use read_file with line ranges instead of cat."),
+        (r"stderr may have been suppressed", "The command failed silently (stderr was redirected to /dev/null) — remove 2>/dev/null to see the real error, or check if the path exists first."),
     ]
     for pattern, diagnosis in _FAST_PATTERNS:
         if re.search(pattern, error_message, re.IGNORECASE):

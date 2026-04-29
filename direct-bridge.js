@@ -1314,6 +1314,14 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         const dangerous = /\b(rm\s+-rf\s+\/|mkfs|dd\s+if=|:(){ :|fork\s*bomb)\b/i
         if (dangerous.test(args.command)) return { error: 'Command blocked for safety' }
 
+        // Redirect cat/head/tail on source files to read_file — bash output is capped
+        // at 2MB and has no line-range support, causing truncation on large files.
+        const catMatch = args.command.trim().match(/^(?:cat|head|tail)\s+"?([^"|&;]+\.(swift|js|ts|py|go|rs|java|kt|cpp|c|h|cs|rb|php|html|css|json|yaml|yml|md|txt|sh|bash|zsh|fish|toml|xml|gradle|plist|pbxproj))"?\s*$/)
+        if (catMatch) {
+          const filePath = catMatch[1].trim()
+          return { error: `Use read_file instead of cat/head/tail for source files. Call: read_file({"path": "${filePath}"})` }
+        }
+
         // Detect background commands (trailing & or nohup) — these never exit so we
         // run them detached and return immediately with a status message.
         const isBackground = /(?:^|;|\|)\s*(?:nohup\s+)?.+\s*&\s*$/.test(args.command.trim())
@@ -3274,6 +3282,7 @@ ${cwd}
 
 ## Tool call rules
 - ALWAYS use tools to read, write, and execute. Never output code or file contents as plain text — the user cannot use it.
+- read_file: use this to read source files — NOT bash/cat. read_file handles large files correctly with line ranges and avoids output limits. Never use cat, head, or tail to read source files.
 - edit_file: ALWAYS re-read the file with read_file in the same turn before editing. Compressed history may have stale content.
 - write_file: keep each call under 300 lines. For larger files, write the first chunk then use bash with heredoc to append.
 - bash: prefer single focused commands. Check exit codes in the output. For installs and builds (npm install, pip install, swift build, xcodebuild), the timeout is 5 minutes — use them directly. Always add non-interactive flags to suppress prompts: npm init -y, pip install --no-input, brew install --no-interaction.
