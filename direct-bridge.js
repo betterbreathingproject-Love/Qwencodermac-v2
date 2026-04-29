@@ -265,13 +265,13 @@ const TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'update_todos',
-      description: 'Update the todo/progress list shown to the user. Use this to track your plan and progress during multi-step tasks. Call at the start to set your plan, then update item statuses as you complete each step. Keeps the user informed of what you are doing and what is left.',
+      description: 'Set or fully replace the todo/progress list. Use at the start of a task to establish your plan. To add, update, or remove individual items from an existing list, use edit_todos instead.',
       parameters: {
         type: 'object',
         properties: {
           todos: {
             type: 'array',
-            description: 'Array of todo items. Each item has id, content, and status.',
+            description: 'Complete list of todo items. Replaces the entire current list.',
             items: {
               type: 'object',
               properties: {
@@ -284,6 +284,48 @@ const TOOL_DEFS = [
           },
         },
         required: ['todos'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'edit_todos',
+      description: 'Surgically modify the existing todo list without replacing it. Use this to: add new items (append), update the status or content of specific items (update), or remove items (remove). Prefer this over update_todos when the list already exists and you only need to change part of it — e.g. when the user asks to add a task, or when you complete one step and want to mark it done.',
+      parameters: {
+        type: 'object',
+        properties: {
+          append: {
+            type: 'array',
+            description: 'New items to add to the end of the list. IDs are assigned automatically — do not include id.',
+            items: {
+              type: 'object',
+              properties: {
+                content: { type: 'string', description: 'Short description of the new task' },
+                status: { type: 'string', enum: ['pending', 'in_progress', 'done'], description: 'Initial status (usually pending)' },
+              },
+              required: ['content', 'status'],
+            },
+          },
+          update: {
+            type: 'array',
+            description: 'Items to update by id. Only the fields you include are changed.',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'number', description: 'ID of the item to update' },
+                content: { type: 'string', description: 'New content (optional)' },
+                status: { type: 'string', enum: ['pending', 'in_progress', 'done'], description: 'New status (optional)' },
+              },
+              required: ['id'],
+            },
+          },
+          remove: {
+            type: 'array',
+            description: 'IDs of items to remove from the list.',
+            items: { type: 'number' },
+          },
+        },
       },
     },
   },
@@ -1481,6 +1523,16 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         const done = todos.filter(t => t.status === 'done' || t.status === 'completed').length
         return { result: `Updated todo list: ${done}/${todos.length} complete` }
       }
+      case 'edit_todos': {
+        // edit_todos is also handled by the renderer — we validate and return a summary.
+        // The renderer picks up the operation from the tool-use event and applies it to currentTodos.
+        const { append = [], update = [], remove = [] } = args
+        const parts = []
+        if (append.length) parts.push(`+${append.length} added`)
+        if (update.length) parts.push(`${update.length} updated`)
+        if (remove.length) parts.push(`${remove.length} removed`)
+        return { result: `Todo list edited: ${parts.join(', ') || 'no changes'}` }
+      }
       case 'task_complete': {
         // Signal that the agent has finished. Return a special marker that
         // the agent loop checks to end the session gracefully.
@@ -2527,6 +2579,33 @@ class DirectBridge {
           _bootstrapDone = true
           _lastTodos = fnArgs.todos || null
         }
+        if (fnName === 'edit_todos') {
+          _bootstrapDone = true
+          // Apply the edit operations to _lastTodos so completion checking stays accurate
+          if (_lastTodos) {
+            let todos = [..._lastTodos]
+            // append
+            if (Array.isArray(fnArgs.append)) {
+              const maxId = todos.reduce((m, t) => Math.max(m, Number(t.id) || 0), 0)
+              fnArgs.append.forEach((item, i) => {
+                todos.push({ id: maxId + i + 1, content: item.content, status: item.status || 'pending' })
+              })
+            }
+            // update
+            if (Array.isArray(fnArgs.update)) {
+              todos = todos.map(t => {
+                const patch = fnArgs.update.find(u => String(u.id) === String(t.id))
+                return patch ? { ...t, ...patch } : t
+              })
+            }
+            // remove
+            if (Array.isArray(fnArgs.remove)) {
+              const removeSet = new Set(fnArgs.remove.map(String))
+              todos = todos.filter(t => !removeSet.has(String(t.id)))
+            }
+            _lastTodos = todos
+          }
+        }
 
         // Speculative edit hook: simulate write_file before executing it
         let speculativeMsg = ''
@@ -3357,6 +3436,13 @@ ${cwd}
 
 ## Progress tracking
 Before starting any multi-step task, call update_todos with all steps as "pending". Mark each "in_progress" when you start it and "done" when complete. Call task_complete when all items are done — this is the ONLY way to end a session.
+
+Use **edit_todos** (not update_todos) when you need to:
+- Add new steps discovered mid-task: edit_todos({"append": [{"content": "New step", "status": "pending"}]})
+- Mark a single item done: edit_todos({"update": [{"id": 3, "status": "done"}]})
+- Remove a step that's no longer needed: edit_todos({"remove": [4]})
+
+Use **update_todos** only to set the initial plan or completely reset the list.
 
 ## Planning
 For complex tasks the user asks you to plan: write a task graph to .maccoder/tasks.md using write_file, then STOP. The orchestrator will execute each task with a subagent. Format:

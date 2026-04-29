@@ -1533,6 +1533,17 @@ async function sendAgentMode(prompt, opts = {}) {
           break
         }
 
+        // Route edit_todos — apply surgical mutations to the existing todo list
+        if (ev.name === 'edit_todos') {
+          _bootstrapShown = true
+          applyTodoEdits(ev.input)
+          document.getElementById(respId+'-status').textContent = `📋 Updated todo list`
+          updateStatusBar('tool', { toolName: ev.name, activity: 'Updating progress...' })
+          updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: 'Updating progress...' })
+          scrollOutput()
+          break
+        }
+
         document.getElementById(respId+'-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
         // Capture the ID of the just-inserted tool block so tool-result can find it
         // reliably even if LSP/system messages are inserted after it.
@@ -1558,8 +1569,8 @@ async function sendAgentMode(prompt, opts = {}) {
         scrollOutput()
         break
       case 'tool-result': {
-        // Skip rendering tool-result for update_todos — it's handled by the todo panel
-        if (lastToolName === 'update_todos') {
+        // Skip rendering tool-result for update_todos/edit_todos — handled by the todo panel
+        if (lastToolName === 'update_todos' || lastToolName === 'edit_todos') {
           setActivity('📋 Updated progress <span class="activity-dot">●</span>')
           updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: 'Thinking about next step...' })
           break
@@ -1944,6 +1955,13 @@ async function sendAgentMode(prompt, opts = {}) {
                   scrollOutput()
                   break
                 }
+                // Route edit_todos — surgical mutations to the existing list
+                if (ev.name === 'edit_todos') {
+                  if (!currentTaskGraph) applyTodoEdits(ev.input)
+                  updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Updating progress...' })
+                  scrollOutput()
+                  break
+                }
                 document.getElementById(orchTaskBlockId + '-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
                 // Capture the ID of the just-inserted tool block for reliable lookup in tool-result
                 const _orchJustInserted = document.getElementById(orchTaskBlockId + '-tools').querySelector('.tool-block:last-child')
@@ -1958,8 +1976,8 @@ async function sendAgentMode(prompt, opts = {}) {
                 break
               case 'tool-result': {
                 if (!orchTaskBlockId) break
-                // Skip rendering tool-result for update_todos
-                if (orchToolName === 'update_todos') {
+                // Skip rendering tool-result for update_todos/edit_todos
+                if (orchToolName === 'update_todos' || orchToolName === 'edit_todos') {
                   updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Thinking about next step...' })
                   break
                 }
@@ -3980,6 +3998,13 @@ async function _launchOrchestrator(tasksPath, taskCount) {
           scrollOutput()
           break
         }
+        // Route edit_todos — surgical mutations
+        if (ev.name === 'edit_todos') {
+          if (!currentTaskGraph) applyTodoEdits(ev.input)
+          updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Updating progress...' })
+          scrollOutput()
+          break
+        }
         document.getElementById(orchTaskBlockId + '-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
         document.getElementById(orchTaskBlockId + '-status').textContent = `🔧 Using tool: ${ev.name}`
         { const actEl = document.getElementById(orchTaskBlockId + '-activity')
@@ -3991,8 +4016,8 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         break
       case 'tool-result': {
         if (!orchTaskBlockId) break
-        // Skip rendering tool-result for update_todos
-        if (orchToolName === 'update_todos') {
+        // Skip rendering tool-result for update_todos/edit_todos
+        if (orchToolName === 'update_todos' || orchToolName === 'edit_todos') {
           updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Thinking about next step...' })
           break
         }

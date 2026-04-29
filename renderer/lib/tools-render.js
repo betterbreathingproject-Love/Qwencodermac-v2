@@ -168,6 +168,51 @@ function toggleTodoPanel() {
   if (panel) panel.classList.toggle('collapsed')
 }
 
+/**
+ * Apply surgical edit_todos operations to the current todo list.
+ * Supports append (add new items), update (patch by id), remove (delete by id).
+ * Calls updateTodoPanel with the result.
+ */
+function applyTodoEdits(ops) {
+  if (!ops) return
+  let todos = [...(currentTodos || [])]
+
+  // append — auto-assign IDs continuing from the current max
+  if (Array.isArray(ops.append) && ops.append.length > 0) {
+    const maxId = todos.reduce((m, t) => Math.max(m, Number(t.id) || 0), 0)
+    ops.append.forEach((item, i) => {
+      todos.push({
+        id: maxId + i + 1,
+        content: item.content || '',
+        status: item.status === 'done' ? 'completed' : item.status === 'in_progress' ? 'in_progress' : 'pending',
+      })
+    })
+  }
+
+  // update — patch matching items by id
+  if (Array.isArray(ops.update) && ops.update.length > 0) {
+    todos = todos.map(t => {
+      const patch = ops.update.find(u => String(u.id) === String(t.id))
+      if (!patch) return t
+      return {
+        ...t,
+        content: patch.content != null ? patch.content : t.content,
+        status: patch.status != null
+          ? (patch.status === 'done' ? 'completed' : patch.status === 'in_progress' ? 'in_progress' : 'pending')
+          : t.status,
+      }
+    })
+  }
+
+  // remove — filter out by id
+  if (Array.isArray(ops.remove) && ops.remove.length > 0) {
+    const removeSet = new Set(ops.remove.map(String))
+    todos = todos.filter(t => !removeSet.has(String(t.id)))
+  }
+
+  updateTodoPanel(todos, 'running')
+}
+
 function renderToolResult(content, isError=false) {
   const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2)
 
