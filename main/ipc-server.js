@@ -75,20 +75,27 @@ function startServer(port, appDir, mainWindow) {
   })
   serverProcess.on('exit', (code, signal) => {
     serverProcess = null
-    const isCrash = !_serverStopping && (code !== 0 || signal === 'SIGSEGV' || signal === 'SIGABRT' || signal === 'SIGBUS')
-    console.log(`[main] Server exited — code: ${code}, signal: ${signal}, crash: ${isCrash}`)
+    // Treat any unexpected exit as a crash — including clean exit (code 0) when
+    // we didn't ask for it. SIGTERM from the OS or a race in stopServer() can
+    // produce code=0 with _serverStopping=false, which previously left the server
+    // dead with no restart. Only skip restart when we explicitly stopped it.
+    const isCrash = !_serverStopping
+    console.log(`[main] Server exited — code: ${code}, signal: ${signal}, stopping: ${_serverStopping}, crash: ${isCrash}`)
     mainWindow?.webContents.send('server-status', { running: false })
 
     if (isCrash) {
       // Debounce: cancel any pending restart before scheduling a new one
       if (_crashRestartTimer) { clearTimeout(_crashRestartTimer); _crashRestartTimer = null }
 
-      const reason = signal || `exit code ${code}`
-      console.log(`[main] Server crashed (${reason}), performing full recovery in 5s...`)
-      mainWindow?.webContents.send('server-log', `⚠️ Server crashed (${reason}) — restarting in 5s...`)
+      const reason = signal || (code !== 0 ? `exit code ${code}` : 'unexpected exit')
+      // Hard crashes (SIGSEGV/SIGABRT/SIGBUS) need longer cooldown for GPU memory release
+      const isHardCrash = signal === 'SIGSEGV' || signal === 'SIGABRT' || signal === 'SIGBUS'
+      const restartDelay = isHardCrash ? 5000 : 2000
+      console.log(`[main] Server exited unexpectedly (${reason}), restarting in ${restartDelay}ms...`)
+      mainWindow?.webContents.send('server-log', `⚠️ Server exited (${reason}) — restarting in ${restartDelay / 1000}s...`)
       mainWindow?.webContents.send('server-crashed', { reason, willRestart: true })
 
-      // Wait 5s for Metal/GPU memory to be fully released before restarting.
+      // Wait for Metal/GPU memory to be fully released before restarting.
       // A SIGSEGV from MLX leaves GPU memory in an undefined state — starting
       // too quickly causes an immediate second crash.
       _crashRestartTimer = setTimeout(async () => {
@@ -110,7 +117,7 @@ function startServer(port, appDir, mainWindow) {
         } else if (ok) {
           mainWindow?.webContents.send('server-status', { running: true })
         }
-      }, 5000)
+      }, restartDelay)
     }
   })
 }

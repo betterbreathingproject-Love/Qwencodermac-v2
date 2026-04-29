@@ -428,21 +428,24 @@ class Orchestrator extends EventEmitter {
     const errMsg = error.message || String(error);
     const isTransient = /ECONNRESET|ECONNREFUSED|EPIPE|Server not available|server crash|HTTP (500|502|503)|Server returned HTTP|SSE error|server_error/i.test(errMsg);
 
-    // Auto-retry transient errors (server crash, timeout) up to 2 times
+    // Auto-retry transient errors (server crash, timeout) up to 3 times
     const retryCount = this._retryCount || new Map();
     this._retryCount = retryCount;
     const attempts = retryCount.get(nodeId) || 0;
 
-    if (isTransient && attempts < 2) {
+    if (isTransient && attempts < 3) {
       retryCount.set(nodeId, attempts + 1);
-      this.emit('task-error', { nodeId, error: `${errMsg} (retrying ${attempts + 1}/2 after 5s...)` });
-      // Wait for server to restart, then retry
+      // Use a longer delay on subsequent retries to give the server time to
+      // restart AND reload the model (model load can take 30-60s on first load).
+      const retryDelay = attempts === 0 ? 10000 : 30000;
+      this.emit('task-error', { nodeId, error: `${errMsg} (retrying ${attempts + 1}/3 in ${retryDelay / 1000}s...)` });
+      // Wait for server to restart and model to reload, then retry
       setTimeout(async () => {
         if (this._state !== 'running') return;
         this._updateNodeStatus(nodeId, 'not_started');
         // Re-enter the run loop which will pick up this node
         await this._runLoop();
-      }, 5000);
+      }, retryDelay);
       return;
     }
 
