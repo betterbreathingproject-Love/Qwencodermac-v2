@@ -3585,6 +3585,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
     const tasksDiv = document.getElementById(orchId + '-tasks')
     tasksDiv.insertAdjacentHTML('beforeend', `<div class="msg-block" id="${orchTaskBlockId}" style="margin:6px 0;padding:8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg3)">
       <div class="msg-system" id="${orchTaskBlockId}-status" style="font-weight:600">${label}</div>
+      <div id="${orchTaskBlockId}-fast"></div>
       <div id="${orchTaskBlockId}-tools"></div>
       <details class="msg-thinking" id="${orchTaskBlockId}-think" style="display:none">
         <summary>🧠 Thinking</summary>
