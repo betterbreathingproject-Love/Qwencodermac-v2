@@ -2826,6 +2826,11 @@ class DirectBridge {
                 usage.prompt_tps = parsed.x_stats.prompt_tps
                 usage.generation_tps = parsed.x_stats.generation_tps
                 usage.peak_memory_gb = parsed.x_stats.peak_memory_gb
+                // Use server's actual token count for compaction decisions
+                // (more accurate than client-side chars/4 heuristic)
+                if (parsed.x_stats.prompt_tokens_actual) {
+                  usage.prompt_tokens = parsed.x_stats.prompt_tokens_actual
+                }
               }
               // Forward raw stats to renderer
               this.send('qwen-event', {

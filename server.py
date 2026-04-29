@@ -276,6 +276,40 @@ def load_model(model_path: str):
         print(f"[server] WARNING: No chat template found — tool calling will not work")
     print(f"[server] Ready: {_model_id}")
 
+    # ── autotune: Metal shader warm-up ────────────────────────────────────────
+    # Run a minimal generation immediately after load to compile Metal shaders.
+    # Without this, the first real inference call is 2-5s slower because MLX
+    # compiles the GPU kernels on first use. Warm-up makes that cost invisible.
+    try:
+        _warmup_model()
+    except Exception as _wu_err:
+        print(f"[server] Warm-up skipped: {_wu_err}", file=sys.stderr)
+
+
+def _warmup_model():
+    """Run a minimal generation to pre-compile Metal shaders after model load."""
+    if _model is None:
+        return
+    print(f"[server] Warming up Metal shaders...", file=sys.stderr)
+    start = time.perf_counter()
+    try:
+        if _model_is_vision:
+            from mlx_vlm import generate
+            from mlx_vlm.prompt_utils import apply_chat_template
+            warmup_prompt = apply_chat_template(
+                _processor, _config, "Hi",
+                num_images=0,
+            )
+            generate(_model, _processor, warmup_prompt, max_tokens=1, verbose=False)
+        else:
+            from mlx_lm import generate
+            warmup_prompt = "<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n"
+            generate(_model, _processor, warmup_prompt, max_tokens=1)
+        elapsed = time.perf_counter() - start
+        print(f"[server] Metal shaders warm — first-token latency pre-compiled ({elapsed:.2f}s)", file=sys.stderr)
+    except Exception as e:
+        print(f"[server] Warm-up generation failed (non-fatal): {e}", file=sys.stderr)
+
 
 # ── app ───────────────────────────────────────────────────────────────────────
 app = FastAPI(title="MLX Vision Server")
@@ -1273,6 +1307,8 @@ async def chat_completions(req: ChatRequest):
                                 "prompt_tps": round(getattr(data, "prompt_tps", 0), 2),
                                 "generation_tps": round(getattr(data, "generation_tps", 0), 2),
                                 "peak_memory_gb": round(getattr(data, "peak_memory", 0), 3),
+                                "prompt_tokens_actual": _estimate_prompt_tokens(prompt),
+                                "context_window": _get_context_window(),
                             },
                         }
                         yield f"data: {json.dumps(stats_chunk)}\n\n"
