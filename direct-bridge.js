@@ -1774,7 +1774,8 @@ class DirectBridge {
         if (typeof userPrompt === 'string' && userPrompt) {
           assistClient.assistTodoBootstrap(userPrompt).then(todos => {
             if (todos && !_bootstrapDone) {
-              this.send('qwen-event', { type: 'tool_result', tool: 'update_todos', result: { todos } })
+              this.send('qwen-event', { type: 'fast-assist', task: 'todo_bootstrap', label: '⚡ Fast Assistant — generated initial todo list', detail: `${todos.length} items` })
+              this.send('qwen-event', { type: 'todo-bootstrap', todos })
             }
           }).catch(() => {})
         }
@@ -2052,14 +2053,17 @@ class DirectBridge {
         }
 
         // Assist-based repetition detection — fire-and-forget (supplements existing string-matching)
+        // Only injects a system message if the turn counter hasn't advanced, to avoid
+        // corrupting the messages array mid-turn with a stale async result.
         if (assistClient && text) {
           lastTextResponses.push(text.slice(0, 500))
           if (lastTextResponses.length > 3) lastTextResponses.shift()
           if (lastTextResponses.length >= 2) {
             const _responsesSnapshot = [...lastTextResponses]
+            const _turnAtDetection = turn
             assistClient.assistDetectRepetition(_responsesSnapshot).then(result => {
-              if (result && result.repeating) {
-                // Inject system message to break the loop
+              if (result && result.repeating && turn === _turnAtDetection) {
+                // Only inject if we're still on the same turn (not mid-next-turn)
                 messages.push({ role: 'system', content: `[Repetition detected: ${result.reason || 'semantic loop'}] Please take a different approach or use a tool to make progress.` })
               }
             }).catch(() => {})
@@ -2305,14 +2309,18 @@ class DirectBridge {
           }
         }
 
-        // Tool pre-validation — check tool args before execution (awaited, 10s timeout)
+        // Tool pre-validation — advisory check via fast model (non-blocking).
+        // The 0.8B model can flag suspicious tool calls but does NOT have veto power
+        // over the main model. A false-positive rejection would interrupt the agent.
+        // We log the warning and emit a debug event but always proceed with execution.
         if (assistClient && VALIDATED_TOOLS.has(fnName)) {
           const recentContext = messages.slice(-6).map(m => typeof m.content === 'string' ? m.content : '').join('\n')
-          const validation = await assistClient.assistValidateTool(fnName, fnArgs, recentContext)
-          if (validation && !validation.valid) {
-            messages.push({ role: 'system', content: `Tool call rejected: ${validation.reason}` })
-            continue  // re-prompt primary model without executing the tool
-          }
+          assistClient.assistValidateTool(fnName, fnArgs, recentContext).then(validation => {
+            if (validation && !validation.valid) {
+              // Advisory only — warn but do not block
+              this.send('qwen-event', { type: 'fast-assist', task: 'tool_validate', label: `⚡ Fast Assistant — tool warning: ${fnName}`, detail: validation.reason || 'flagged' })
+            }
+          }).catch(() => {})
         }
 
         // Execute
@@ -2581,7 +2589,7 @@ class DirectBridge {
           assistClient.assistTodoWatch(fnName, content, _todosSnapshot).then(async updated => {
             if (updated && hasStatusChanges(updated, _todosSnapshot)) {
               _lastTodos = updated  // update the tracked todos
-              this.send('qwen-event', { type: 'tool_result', tool: 'update_todos', result: { todos: updated } })
+              this.send('qwen-event', { type: 'todo-watch', todos: updated })
 
               // Re-route when a new todo becomes in_progress
               const newlyActive = updated.find((t, i) => {

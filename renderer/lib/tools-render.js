@@ -87,20 +87,25 @@ function updateTodoPanel(todos, status) {
 
   // Merge incoming todos with existing ones to prevent data loss when the
   // model sends a partial update (e.g., only the items it changed).
-  // If the incoming list has fewer items than the current list, merge by id.
+  // Always merge by id when we have existing todos — this prevents duplication
+  // when the bootstrap and the model both send todo lists with overlapping content.
   let merged = todos
-  if (currentTodos.length > 0 && todos.length > 0 && todos.length < currentTodos.length) {
-    // Build a map of incoming updates keyed by id
-    const updates = new Map(todos.map(t => [t.id, t]))
+  if (currentTodos.length > 0 && todos.length > 0) {
+    // Build a map of incoming updates keyed by id (normalise to string for comparison)
+    const updates = new Map(todos.map(t => [String(t.id), t]))
     // Start from the existing list and apply updates
     merged = currentTodos.map(existing => {
-      const update = updates.get(existing.id)
+      const update = updates.get(String(existing.id))
       return update ? { ...existing, ...update } : existing
     })
     // Add any new items from the incoming list that weren't in the existing list
     for (const t of todos) {
-      if (!currentTodos.some(e => e.id === t.id)) merged.push(t)
+      if (!currentTodos.some(e => String(e.id) === String(t.id))) merged.push(t)
     }
+    // If the incoming list is a full replacement (same or more items and all IDs
+    // are new — e.g. model reset the list), use it directly instead of merging.
+    const allNew = todos.every(t => !currentTodos.some(e => String(e.id) === String(t.id)))
+    if (allNew) merged = todos
   }
 
   // Persist todos to session storage

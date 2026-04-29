@@ -1165,6 +1165,8 @@ async function sendAgentMode(prompt, opts = {}) {
   // Shows a short reply from the 0.8B while the 35B loads context and starts its loop
   window.app.assistChatReply(prompt, agentRole || 'general').then(reply => {
     if (!reply) return
+    // Don't show the fast reply if the agent already finished (e.g. server was down)
+    if (agentFinished) return
     const fastEl = document.getElementById(respId + '-fast')
     if (fastEl) {
       fastEl.insertAdjacentHTML('beforeend', `<div class="fast-reply-badge"><span class="fast-reply-icon">⚡</span><span class="fast-reply-model">Fast Assistant</span><span class="fast-reply-text">${esc(reply)}</span></div>`)
@@ -1175,6 +1177,7 @@ async function sendAgentMode(prompt, opts = {}) {
   let lastText = '', lastThinking = '', tokenCount = 0, startTime = null
   let agentFinished = false
   let lastToolName = ''
+  let _bootstrapShown = false  // track whether bootstrap todos have been shown
   let inputTokens = 0, outputTokens = 0
   let serverTps = null // real tk/s from server, used when available
   let allTextSegments = [] // accumulates text across all turns (text→tool→text→...)
@@ -1307,6 +1310,32 @@ async function sendAgentMode(prompt, opts = {}) {
         const fastEl = document.getElementById(respId + '-fast')
         if (fastEl) fastEl.insertAdjacentHTML('beforeend', renderFastAssistBlock(ev))
         else appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${ev.label || '⚡ Fast Assistant'}</span>`)
+        break
+      }
+      case 'todo-bootstrap': {
+        // Fast-assist generated an initial todo list before the main model's first turn.
+        // Only show it if the main model hasn't already called update_todos.
+        if (!_bootstrapShown && Array.isArray(ev.todos) && ev.todos.length > 0) {
+          _bootstrapShown = true
+          const mapped = ev.todos.map(t => ({
+            id: t.id,
+            content: t.content || t.title || t.text || '',
+            status: t.status === 'done' ? 'completed' : t.status === 'in_progress' ? 'in_progress' : 'pending',
+          }))
+          updateTodoPanel(mapped, 'running')
+        }
+        break
+      }
+      case 'todo-watch': {
+        // Fast-assist inferred a status update from a completed tool call.
+        if (Array.isArray(ev.todos) && ev.todos.length > 0) {
+          const mapped = ev.todos.map(t => ({
+            id: t.id,
+            content: t.content || t.title || t.text || '',
+            status: t.status === 'done' ? 'completed' : t.status === 'in_progress' ? 'in_progress' : 'pending',
+          }))
+          updateTodoPanel(mapped, 'running')
+        }
         break
       }
       case 'session-start':
@@ -1458,6 +1487,7 @@ async function sendAgentMode(prompt, opts = {}) {
             content: t.content || t.title || t.text || '',
             status: t.status === 'done' ? 'completed' : t.status === 'in_progress' ? 'in_progress' : 'pending',
           }))
+          _bootstrapShown = true  // main model has set todos — suppress any pending bootstrap
           updateTodoPanel(mapped, 'running')
           document.getElementById(respId+'-status').textContent = `📋 Updated todo list`
           updateStatusBar('tool', { toolName: ev.name, activity: 'Updating progress...' })
