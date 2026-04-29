@@ -86,7 +86,7 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
         // while a different project was open in the UI.
         if (fs.existsSync(configPath)) {
           const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-          if (cfg.targetProjectDir) targetProjectDir = cfg.targetProjectDir
+          if (cfg.targetProjectDir) targetProjectDir = cfg.targetProjectDir.trim()
         }
       } catch (_) { /* spec context is optional */ }
 

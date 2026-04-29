@@ -8,6 +8,10 @@ let activeSessionType = 'vibe'
 let conversationHistory = [] // [{role, content, ts}]
 let projectSettings = null  // context settings for active project
 let compactorInstalled = false
+
+// Sanitize a project path — trim whitespace to prevent trailing-space issues
+// from file pickers (e.g. "photo ranker " vs "photo ranker")
+function sanitizePath(p) { return typeof p === 'string' ? p.trim() : p }
 let currentLspStatus = 'stopped' // track LSP status globally
 let permMode = 'auto-edit' // 'auto-edit' or 'default'
 let agentRole = 'general' // current agent role for vibe mode
@@ -121,7 +125,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   dz.addEventListener('dragover', e => { e.preventDefault(); dz.style.borderColor='var(--accent)' })
   dz.addEventListener('dragleave', () => dz.style.borderColor='')
   dz.addEventListener('drop', e => { e.preventDefault(); dz.style.borderColor=''; const f=e.dataTransfer.files[0]; if(f?.type.startsWith('image/')) readImageFile(f) })
-  currentProject = await window.app.getProject()
+  currentProject = sanitizePath(await window.app.getProject())
   if (currentProject) startFileWatcher(currentProject)
   await loadProjectList()
   await loadContextSettings()
@@ -572,9 +576,9 @@ async function saveAutoLoadSetting(enabled) {
 async function openProject() {
   const p = await window.app.openFolder()
   if(!p) return
-  currentProject = p
-  await renderFileTree(p, document.getElementById('fileTree'))
-  startFileWatcher(p)
+  currentProject = sanitizePath(p)
+  await renderFileTree(currentProject, document.getElementById('fileTree'))
+  startFileWatcher(currentProject)
 }
 
 // ── file watcher for auto-refresh ─────────────────────────────────────────────
@@ -680,7 +684,7 @@ async function newProject() {
   const name = dir.split('/').pop()
   const p = await window.app.createProject(name, dir)
   activeProjectId = p.id
-  currentProject = p.directory
+  currentProject = sanitizePath(p.directory)
   await loadProjectList()
   await renderFileTree(dir, document.getElementById('fileTree'))
   startFileWatcher(dir)
@@ -703,7 +707,7 @@ async function switchProject(id) {
   const p = await window.app.openProjectById(id)
   if (!p) return
   activeProjectId = p.id
-  currentProject = p.directory
+  currentProject = sanitizePath(p.directory)
   document.getElementById('projectPath').textContent = p.directory
   await renderFileTree(p.directory, document.getElementById('fileTree'))
   startFileWatcher(p.directory)
@@ -816,7 +820,7 @@ async function welcomePickProject() {
   const name = dir.split('/').pop()
   const p = await window.app.createProject(name, dir)
   activeProjectId = p.id
-  currentProject = p.directory
+  currentProject = sanitizePath(p.directory)
   await loadProjectList()
   await renderFileTree(dir, document.getElementById('fileTree'))
   startFileWatcher(dir)
@@ -1131,11 +1135,11 @@ async function sendAgentMode(prompt, opts = {}) {
     appendMsg('system', '📁 Agent mode needs a project folder. Opening picker...')
     const p = await window.app.openFolder()
     if (!p) { appendMsg('system', '⚠️ No folder selected. Agent cancelled.'); return }
-    currentProject = p
-    await renderFileTree(p, document.getElementById('fileTree'))
-    startFileWatcher(p)
+    currentProject = sanitizePath(p)
+    await renderFileTree(currentProject, document.getElementById('fileTree'))
+    startFileWatcher(currentProject)
     showPanel('files', document.querySelector('[data-panel="files"]'))
-    appendMsg('system', `📁 Working directory: ${p}`)
+    appendMsg('system', `📁 Working directory: ${currentProject}`)
   }
 
   isGenerating = true

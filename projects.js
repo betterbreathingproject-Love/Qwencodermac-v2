@@ -36,7 +36,10 @@ function createProject(name, directory) {
   const projDir = path.join(PROJECTS_DIR, id)
   ensureDir(projDir)
   ensureDir(path.join(projDir, 'sessions'))
-  const meta = { name, directory, created: Date.now(), lastOpened: Date.now() }
+  // Trim directory path to prevent trailing spaces from file pickers causing
+  // path resolution failures later (e.g. "photo ranker " vs "photo ranker")
+  const cleanDirectory = typeof directory === 'string' ? directory.trim() : directory
+  const meta = { name, directory: cleanDirectory, created: Date.now(), lastOpened: Date.now() }
   fs.writeFileSync(path.join(projDir, 'project.json'), JSON.stringify(meta, null, 2))
   fs.writeFileSync(path.join(projDir, 'history.json'), '[]')
   const sess = createSession(id, 'Session 1')

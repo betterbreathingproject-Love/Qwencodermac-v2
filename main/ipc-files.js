@@ -26,8 +26,9 @@ function register(ipcMain, { getMainWindow, getCurrentProject, setCurrentProject
   ipcMain.handle('open-folder', async () => {
     const result = await dialog.showOpenDialog(getMainWindow(), { properties: ['openDirectory'] })
     if (result.canceled || !result.filePaths.length) return null
-    setCurrentProject(result.filePaths[0])
-    return result.filePaths[0]
+    const folderPath = result.filePaths[0].trim()
+    setCurrentProject(folderPath)
+    return folderPath
   })
 
   ipcMain.handle('read-dir', async (_, dirPath) => {

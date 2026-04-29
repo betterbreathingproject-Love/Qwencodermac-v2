@@ -31,7 +31,7 @@ function register(ipcMain, { getCurrentProject, setCurrentProject, getMainWindow
   ipcMain.handle('create-project', (_, name, directory) => {
     if (!isNonEmptyString(name)) return { error: 'name is required' }
     if (!isNonEmptyString(directory)) return { error: 'directory is required' }
-    const p = createProject(name, directory)
+    const p = createProject(name, typeof directory === 'string' ? directory.trim() : directory)
     setCurrentProject(p.directory)
     checkSteeringPrompt(p.directory, getMainWindow)
     return p
