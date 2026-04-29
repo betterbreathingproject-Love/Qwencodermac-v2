@@ -1513,6 +1513,10 @@ async function sendAgentMode(prompt, opts = {}) {
         }
 
         document.getElementById(respId+'-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
+        // Capture the ID of the just-inserted tool block so tool-result can find it
+        // reliably even if LSP/system messages are inserted after it.
+        const _justInsertedTool = document.getElementById(respId+'-tools').querySelector('.tool-block:last-child')
+        if (_justInsertedTool) _justInsertedTool.dataset.toolSeq = String(_agentToolCount)
         setActivity(`🔧 ${esc(activity)} <span class="activity-dot">●</span>`)
         // Show specific activity based on tool type
         const toolActivity = {
@@ -1540,7 +1544,11 @@ async function sendAgentMode(prompt, opts = {}) {
           break
         }
         const toolsDiv = document.getElementById(respId+'-tools')
-        const lastTool = toolsDiv.querySelector('.tool-block:last-child')
+        // Find by tool sequence number — more reliable than :last-child since
+        // LSP/system messages may be inserted between tool-use and tool-result.
+        const lastTool = toolsDiv.querySelector(`.tool-block[data-tool-seq="${_agentToolCount}"]`)
+          || toolsDiv.querySelector('.tool-block.running:last-of-type')
+          || toolsDiv.querySelector('.tool-block:last-child')
 
         if (lastTool) {
           const newStatus = ev.is_error ? 'error' : 'done'
@@ -1891,6 +1899,9 @@ async function sendAgentMode(prompt, opts = {}) {
                   break
                 }
                 document.getElementById(orchTaskBlockId + '-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
+                // Capture the ID of the just-inserted tool block for reliable lookup in tool-result
+                const _orchJustInserted = document.getElementById(orchTaskBlockId + '-tools').querySelector('.tool-block:last-child')
+                if (_orchJustInserted) _orchJustInserted.dataset.toolSeq = String(_agentToolCount)
                 document.getElementById(orchTaskBlockId + '-status').textContent = `🔧 Using tool: ${ev.name}`
                 { const actEl = document.getElementById(orchTaskBlockId + '-activity')
                   if (actEl) { actEl.innerHTML = `⚡ ${esc(ev.name || 'tool')} <span class="activity-dot">●</span>`; actEl.classList.remove('hidden') }
@@ -1907,7 +1918,9 @@ async function sendAgentMode(prompt, opts = {}) {
                   break
                 }
                 const toolsDiv = document.getElementById(orchTaskBlockId + '-tools')
-                const lastTool = toolsDiv?.querySelector('.tool-block:last-child')
+                const lastTool = toolsDiv?.querySelector(`.tool-block[data-tool-seq="${_agentToolCount}"]`)
+                  || toolsDiv?.querySelector('.tool-block.running:last-of-type')
+                  || toolsDiv?.querySelector('.tool-block:last-child')
                 if (lastTool) {
                   const newStatus = ev.is_error ? 'error' : 'done'
                   lastTool.className = lastTool.className.replace(/\b(running|done|error)\b/g, '').trim() + ' ' + newStatus
