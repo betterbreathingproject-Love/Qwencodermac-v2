@@ -7,6 +7,18 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- startup model loading overlay — shown immediately, removed once model is ready -->
+  <div id="startupOverlay" class="startup-overlay">
+    <div class="startup-card">
+      <div class="startup-logo">🤖</div>
+      <div class="startup-title">QwenCoder Mac Studio</div>
+      <div class="startup-stage" id="startupStage">Starting server...</div>
+      <div class="startup-model-name" id="startupModelName"></div>
+      <div class="startup-bar"><div class="startup-bar-fill" id="startupBarFill"></div></div>
+      <div class="startup-hint" id="startupHint">Initializing MLX inference engine</div>
+      <button class="startup-skip" id="startupSkipBtn" onclick="dismissStartupOverlay()" style="display:none">Skip →</button>
+    </div>
+  </div>
   <!-- titlebar -->
   <div class="titlebar">
     <div class="titlebar-drag"></div>
@@ -96,6 +108,20 @@
           <div class="sc-field"><span class="sc-label">Vision</span><span style="color:var(--green)">✓ Supports Images</span></div>
           <div class="sc-field"><span class="sc-label">Search</span><span id="searchEngineStatus" style="font-size:11px;color:var(--muted)">Checking...</span></div>
           <div class="sc-field" id="searchInstallHint" style="display:none"><span class="sc-label"></span><a href="#" onclick="window.app.openExternal('https://ast-grep.github.io/guide/quick-start.html');return false" style="font-size:10px;color:var(--accent2)">Install ast-grep for structural search →</a></div>
+        </div>
+
+        <div class="sp-header" style="margin-top:4px"><span class="section-label">STARTUP</span></div>
+        <div class="setup-compact" id="startupSettings">
+          <div class="sc-field">
+            <label class="cs-toggle-wrap">
+              <input type="checkbox" id="as-autoLoad" checked onchange="saveAutoLoadSetting(this.checked)">
+              <span class="sc-label">Auto-load last model</span>
+            </label>
+          </div>
+          <div class="sc-field" id="as-lastModelField">
+            <span class="sc-label">Last model</span>
+            <span id="as-lastModelName" style="font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px">—</span>
+          </div>
         </div>
 
         <div class="sp-header" style="margin-top:4px"><span class="section-label">API KEYS</span></div>

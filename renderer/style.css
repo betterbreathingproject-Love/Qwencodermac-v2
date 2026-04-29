@@ -617,7 +617,52 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .stat-chip.agent-type-chip { border-color: rgba(245,166,35,0.3); background: rgba(245,166,35,0.08); }
 .stat-chip.agent-type-chip .stat-val { color: var(--accent2, #f5a623); font-size: 10px; }
 
-/* ── model loading overlay ─────────────────────────────────────────────────── */
+/* ── startup overlay — full-screen, shown on launch until model is ready ────── */
+.startup-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  background: #0d0d0f;
+  animation: fadeIn 0.15s ease;
+  transition: opacity 0.4s ease;
+}
+.startup-overlay.dismissing { opacity: 0; pointer-events: none; }
+.startup-card {
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  padding: 48px 56px; text-align: center; max-width: 380px; width: 100%;
+}
+.startup-logo { font-size: 52px; line-height: 1; margin-bottom: 4px; filter: drop-shadow(0 0 24px rgba(124,106,247,0.4)); }
+.startup-title { font-size: 20px; font-weight: 700; color: var(--text); letter-spacing: -0.02em; }
+.startup-stage {
+  font-size: 13px; font-weight: 600; color: var(--accent2);
+  min-height: 20px; transition: opacity 0.3s ease;
+}
+.startup-model-name {
+  font-size: 11px; color: var(--muted); font-family: 'SF Mono', monospace;
+  max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-height: 16px;
+}
+.startup-bar {
+  width: 220px; height: 3px; background: rgba(255,255,255,0.06);
+  border-radius: 2px; overflow: hidden;
+}
+.startup-bar-fill {
+  height: 100%; width: 25%; background: var(--accent);
+  border-radius: 2px; animation: indeterminate 1.8s ease-in-out infinite;
+  position: relative;
+}
+.startup-bar-fill.done {
+  animation: none; width: 100%;
+  background: var(--green); transition: width 0.4s ease, background 0.3s ease;
+}
+.startup-hint { font-size: 11px; color: var(--muted); min-height: 16px; transition: opacity 0.3s; }
+.startup-skip {
+  margin-top: 8px; background: none; border: 1px solid rgba(255,255,255,0.1);
+  color: var(--muted); font-size: 11px; padding: 4px 14px; border-radius: 6px;
+  cursor: pointer; transition: all 0.15s;
+}
+.startup-skip:hover { border-color: var(--accent); color: var(--accent2); }
+
+
 .model-loading-overlay {
   position: absolute; inset: 0; z-index: 50;
   display: flex; align-items: center; justify-content: center;

@@ -61,9 +61,27 @@ function showToast(message, type = 'info', duration = 5000) {
 
 // ── init ──────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', async () => {
-  window.app.onServerStatus(s => { setServerStatus(s.running); if(s.running) refreshStatus().then(() => autoLoadLastModel()) })
+  // Show startup overlay immediately — will be dismissed once model loads or skipped
+  _initStartupOverlay()
+
+  // Guard: only run autoLoadLastModel once even if both the status event and
+  // the direct refreshStatus call complete (server may already be running)
+  let _autoLoadRan = false
+  async function _tryAutoLoad() {
+    if (_autoLoadRan) return
+    _autoLoadRan = true
+    await autoLoadLastModel()
+  }
+
+  window.app.onServerStatus(s => {
+    setServerStatus(s.running)
+    if (s.running) {
+      _setStartupStage('server-ready')
+      refreshStatus().then(() => _tryAutoLoad())
+    }
+  })
   await refreshStatus()
-  await autoLoadLastModel()
+  await _tryAutoLoad()
 
   // drag-drop images onto agent input
   const inputWrap = document.querySelector('.input-wrap')
@@ -100,6 +118,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   initLspStatus()
   initCalibrationStatus()
   refreshSteeringDocs()
+  loadAutoLoadSetting()
 
   // Listen for telegram-unavailable events from the main process
   window.app.onTelegramUnavailable?.(({ reason, recordingPath }) => {
@@ -163,36 +182,51 @@ function changeAgentRole(role) {
 async function refreshStatus() {
   const s = await window.app.serverStatus()
   setServerStatus(s.running)
-  if(s.running) { if(s.models) renderModels(s.models); if(s.loaded) setLoadedModel(s.loaded) }
+  if (s.running) {
+    _setStartupStage('server-ready')
+    if (s.models) renderModels(s.models)
+    if (s.loaded) setLoadedModel(s.loaded)
+  }
 }
 
 async function autoLoadLastModel() {
-  if (loadedModelId) return  // already loaded
-  if (!allModels.length) return  // no models available
+  if (loadedModelId) { dismissStartupOverlay(); return }  // already loaded
+  if (!allModels.length) {
+    // Server not ready yet or no models — stay on overlay, don't dismiss
+    // The onServerStatus handler will call us again once the server is up
+    return
+  }
   try {
     const appSettings = await window.app.getAppSettings()
+
+    // Respect the auto-load setting (default true)
+    if (appSettings.autoLoadOnStartup === false) {
+      _setStartupStage('no-model')
+      return
+    }
+
     // Prefer saved last model, then fall back to the 35B default by name match
     const targetPath = appSettings.lastModelPath ||
       allModels.find(m => m.path && m.path.includes('Qwen3.6-35B-A3B-MLX-8bit'))?.path ||
       allModels[0]?.path
-    if (!targetPath) return
+    if (!targetPath) { _setStartupStage('no-model'); return }
     const match = allModels.find(m => m.path === targetPath) || allModels[0]
-    if (!match) return
+    if (!match) { _setStartupStage('no-model'); return }
+
     const modelName = _formatModelName(match.id)
-    _showModelLoadingOverlay(modelName)
-    appendMsg('system', `⏳ Auto-loading model: ${modelName}`)
+    _setStartupStage('loading-model', modelName)
+
     const r = await window.app.loadModel(match.path)
     if (r && r.error) {
-      _hideModelLoadingOverlay()
+      _setStartupStage('error', r.error)
       appendMsg('system', `⚠️ Auto-load failed: ${r.error}`)
     } else {
       setLoadedModel(r.model_id || match.id)
       window.app.saveAppSettings({ lastModelPath: match.path })
-      _hideModelLoadingOverlay()
-      appendMsg('system', `✅ Model loaded: ${modelName}`)
+      _setStartupStage('done', modelName)
     }
   } catch (err) {
-    _hideModelLoadingOverlay()
+    _setStartupStage('error', err.message || 'Unknown error')
     appendMsg('system', `⚠️ Auto-load failed: ${err.message || 'Unknown error'}`)
   }
 }
@@ -424,6 +458,98 @@ function _hideModelLoadingOverlay() {
     overlay.classList.add('fade-out')
     setTimeout(() => overlay.remove(), 300)
   }
+}
+
+// ── startup overlay ───────────────────────────────────────────────────────────
+let _startupOverlayDismissed = false
+let _startupSkipTimer = null
+
+function _initStartupOverlay() {
+  // Show skip button after 5s so user isn't trapped if server is slow
+  _startupSkipTimer = setTimeout(() => {
+    const btn = document.getElementById('startupSkipBtn')
+    if (btn) btn.style.display = ''
+  }, 5000)
+}
+
+// stage: 'starting' | 'server-ready' | 'loading-model' | 'done'
+function _setStartupStage(stage, modelName) {
+  if (_startupOverlayDismissed) return
+  const stageEl = document.getElementById('startupStage')
+  const hintEl = document.getElementById('startupHint')
+  const modelEl = document.getElementById('startupModelName')
+  const barFill = document.getElementById('startupBarFill')
+  if (!stageEl) return
+
+  if (stage === 'server-ready') {
+    stageEl.textContent = 'Server ready'
+    if (hintEl) hintEl.textContent = 'Checking for last used model...'
+  } else if (stage === 'loading-model') {
+    stageEl.textContent = 'Loading model'
+    if (modelName && modelEl) modelEl.textContent = modelName
+    if (hintEl) hintEl.textContent = 'Loading weights into memory...'
+    // Cycle through loading hints
+    const hints = [
+      'Loading weights into memory...',
+      'Preparing MLX inference engine...',
+      'Warming up on Apple Silicon...',
+      'Almost ready...',
+    ]
+    let hi = 0
+    const hintTimer = setInterval(() => {
+      hi++
+      if (!hintEl || hi >= hints.length) { clearInterval(hintTimer); return }
+      hintEl.style.opacity = '0'
+      setTimeout(() => {
+        if (hintEl) { hintEl.textContent = hints[hi]; hintEl.style.opacity = '1' }
+      }, 200)
+    }, 3500)
+  } else if (stage === 'done') {
+    stageEl.textContent = 'Ready'
+    if (hintEl) hintEl.textContent = modelName ? `${modelName} loaded` : 'Model loaded'
+    if (barFill) barFill.classList.add('done')
+    // Dismiss after a short success pause
+    setTimeout(() => dismissStartupOverlay(), 800)
+  } else if (stage === 'no-model') {
+    stageEl.textContent = 'Ready'
+    if (hintEl) hintEl.textContent = 'Select a model to get started'
+    if (barFill) barFill.classList.add('done')
+    setTimeout(() => dismissStartupOverlay(), 600)
+  } else if (stage === 'error') {
+    stageEl.textContent = 'Load failed'
+    if (hintEl) hintEl.textContent = modelName || 'Could not load model'
+    setTimeout(() => dismissStartupOverlay(), 1500)
+  }
+}
+
+function dismissStartupOverlay() {
+  if (_startupOverlayDismissed) return
+  _startupOverlayDismissed = true
+  if (_startupSkipTimer) { clearTimeout(_startupSkipTimer); _startupSkipTimer = null }
+  const overlay = document.getElementById('startupOverlay')
+  if (!overlay) return
+  overlay.classList.add('dismissing')
+  setTimeout(() => overlay.remove(), 420)
+}
+
+// ── startup settings ──────────────────────────────────────────────────────────
+async function loadAutoLoadSetting() {
+  try {
+    const s = await window.app.getAppSettings()
+    const enabled = s.autoLoadOnStartup !== false // default true
+    const cb = document.getElementById('as-autoLoad')
+    if (cb) cb.checked = enabled
+    const nameEl = document.getElementById('as-lastModelName')
+    if (nameEl && s.lastModelPath) {
+      // Show just the model folder name, not the full path
+      const parts = s.lastModelPath.split('/')
+      nameEl.textContent = parts[parts.length - 1] || s.lastModelPath
+    }
+  } catch { /* ignore */ }
+}
+
+async function saveAutoLoadSetting(enabled) {
+  await window.app.saveAppSettings({ autoLoadOnStartup: enabled })
 }
 
 // ── files ─────────────────────────────────────────────────────────────────────
