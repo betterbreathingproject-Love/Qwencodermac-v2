@@ -830,9 +830,10 @@ function trimMessages(messages, maxInputTokens) {
       const len = (m.content || '').length
       if (len > maxLen) { maxLen = len; maxIdx = i }
     }
-    if (maxIdx === -1 || maxLen <= 2000) break
-    // Truncate to a proportional share of the budget (but at least 1500 chars)
-    const allowedChars = Math.max(1500, Math.floor(targetChars / messages.length))
+    if (maxIdx === -1 || maxLen <= 4000) break
+    // Truncate to a proportional share of the budget (but at least 4000 chars)
+    // Previous floor of 1500 was too aggressive and destroyed useful context
+    const allowedChars = Math.max(4000, Math.floor(targetChars / messages.length))
     if (maxLen > allowedChars) {
       const oldLen = messages[maxIdx].content.length
       messages[maxIdx].content = messages[maxIdx].content.slice(0, allowedChars) +
@@ -846,14 +847,24 @@ function trimMessages(messages, maxInputTokens) {
 
   // Phase 1: Truncate large tool result messages in the middle
   // Keep first 2 and last 4 messages intact
+  // Preserve navigational tool results (list_dir, search) — they're structural
   const safeStart = 2
   const safeEnd = messages.length - 4
+  const NAV_TOOL_NAMES = ['list_dir', 'search_files', 'grep_search', 'lsp_get_symbols', 'lsp_get_references']
   for (let i = safeStart; i < safeEnd && current > maxInputTokens; i++) {
     const msg = messages[i]
     if (msg.role === 'tool' && msg.content && msg.content.length > 2000) {
-      const oldLen = msg.content.length
-      msg.content = msg.content.slice(0, 1500) + '\n\n... [trimmed to save context space]'
-      current -= Math.ceil((oldLen - msg.content.length) / 4)
+      // Check if this is a nav tool result by looking at the preceding assistant tool_call
+      const prevMsg = i > 0 ? messages[i - 1] : null
+      const isNavResult = prevMsg && prevMsg.role === 'assistant' && prevMsg.tool_calls &&
+        prevMsg.tool_calls.some(tc => NAV_TOOL_NAMES.includes(tc.function?.name))
+      // Nav tool results get a higher floor (8K) to preserve directory/search structure
+      const minKeep = isNavResult ? 8000 : 1500
+      if (msg.content.length > minKeep) {
+        const oldLen = msg.content.length
+        msg.content = msg.content.slice(0, minKeep) + '\n\n... [trimmed to save context space]'
+        current -= Math.ceil((oldLen - msg.content.length) / 4)
+      }
     }
   }
   if (current <= maxInputTokens) return messages
