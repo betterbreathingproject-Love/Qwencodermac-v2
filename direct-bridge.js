@@ -1209,19 +1209,24 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         return { result: `Edited ${args.path}` }
       }
       case 'list_dir': {
-        const v = validatePath(args.path || '.')
-        if (v.error) return v
+        const listPath = (args && args.path != null) ? args.path : '.'
+        const v = validatePath(listPath)
+        if (v.error) return { error: `list_dir failed: ${v.error}. The working directory is: ${cwd}` }
         const p = v.resolved
-        if (!fs.existsSync(p)) return { error: `Directory not found: ${args.path}. If this is a new project, use bash({"command": "mkdir -p ."}) to create the project directory first, then proceed with scaffolding.` }
-        const entries = fs.readdirSync(p, { withFileTypes: true })
-          .filter(e => !e.name.startsWith('.'))
-          .sort((a, b) => {
-            if (a.isDirectory() && !b.isDirectory()) return -1
-            if (!a.isDirectory() && b.isDirectory()) return 1
-            return a.name.localeCompare(b.name)
-          })
-          .map(e => e.isDirectory() ? e.name + '/' : e.name)
-        return { result: entries.join('\n') }
+        if (!fs.existsSync(p)) return { error: `Directory not found: ${listPath}. Working directory: ${cwd}. If this is a new project, use bash({"command": "mkdir -p ."}) to create the project directory first.` }
+        try {
+          const entries = fs.readdirSync(p, { withFileTypes: true })
+            .filter(e => !e.name.startsWith('.'))
+            .sort((a, b) => {
+              if (a.isDirectory() && !b.isDirectory()) return -1
+              if (!a.isDirectory() && b.isDirectory()) return 1
+              return a.name.localeCompare(b.name)
+            })
+            .map(e => e.isDirectory() ? e.name + '/' : e.name)
+          return { result: entries.length > 0 ? entries.join('\n') : '(empty directory)' }
+        } catch (err) {
+          return { error: `list_dir error for "${listPath}" (cwd: ${cwd}): ${err.message}` }
+        }
       }
       case 'bash': {
         if (typeof args.command !== 'string' || !args.command.trim()) return { error: 'command must be a non-empty string. Usage: bash({"command": "ls -la"})' }
