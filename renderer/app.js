@@ -1765,6 +1765,7 @@ async function sendAgentMode(prompt, opts = {}) {
           scrollOutput()
 
           window.app.offQwenEvents()
+          window.app.offOrchestratorCompleted()  // clear any stale listener from a previous run
           let orchToolName = ''
           let orchTaskBlockId = null
           let orchTaskText = ''
@@ -3693,7 +3694,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
   scrollOutput()
 
   window.app.offQwenEvents()
-  let orchToolName = ''
+  window.app.offOrchestratorCompleted()  // clear any stale listener from a previous run
   let orchTaskBlockId = null
   let orchTaskText = ''
   let orchTaskCount = 0
@@ -4032,8 +4033,16 @@ async function _launchOrchestrator(tasksPath, taskCount) {
 async function startInlineSpecImplementation() {
   if (!currentSpecDir || !currentProject) return
   if (isGenerating) return
+  // Set isGenerating immediately to prevent double-launch from rapid clicks.
+  // The async operations below (specArtifacts, loadTaskGraph) yield control,
+  // so without this guard a second click can pass the isGenerating check above.
+  isGenerating = true
   const artifacts = await window.app.specArtifacts(currentSpecDir)
-  if (!artifacts.tasks) { appendMsg('system', '⚠️ Generate tasks first.'); return }
+  if (!artifacts.tasks) {
+    isGenerating = false
+    appendMsg('system', '⚠️ Generate tasks first.')
+    return
+  }
 
   // Ensure the spec config has targetProjectDir set — patch it if missing.
   // This handles specs created before this field was added.

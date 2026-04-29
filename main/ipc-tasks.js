@@ -14,6 +14,20 @@ function isNonEmptyString(v) { return typeof v === 'string' && v.length > 0 }
 // ── IPC registration ──────────────────────────────────────────────────────────
 function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, getLspManager, findPython }) {
   let orchestratorInstance = null
+  let _agentEventHandler = null  // track so we can remove it before creating a new orchestrator
+
+  // ── helper: tear down the current orchestrator cleanly ──────────────────
+  function _teardownOrchestrator() {
+    if (_agentEventHandler) {
+      getAgentPool().off('agent-event', _agentEventHandler)
+      _agentEventHandler = null
+    }
+    if (orchestratorInstance) {
+      orchestratorInstance.removeAllListeners()
+      orchestratorInstance.abort().catch(() => {})
+      orchestratorInstance = null
+    }
+  }
 
   // ── compactor ───────────────────────────────────────────────────────────
   ipcMain.handle('compactor-status', async () => {
@@ -83,6 +97,11 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
       })()
       console.log('[orchestrator] projectDir:', projectDir, '(explicit:', !!explicitProjectDir, 'config:', !!targetProjectDir, ')')
 
+      // Abort any previously running orchestrator before starting a new one.
+      // Without this, two orchestrators can run concurrently, both dispatching
+      // tasks to the same agent pool and corrupting each other's state.
+      _teardownOrchestrator()
+
       orchestratorInstance = new Orchestrator({
         taskGraph: graph,
         agentPool: getAgentPool(),
@@ -95,11 +114,12 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
         getMainWindow()?.webContents.send('task-status-event', evt)
       })
 
-      // Forward agent streaming events (tool calls, tokens) to renderer
-      const agentEventHandler = (evt) => {
+      // Forward agent streaming events (tool calls, tokens) to renderer.
+      // Store the handler reference so it can be removed on teardown.
+      _agentEventHandler = (evt) => {
         getMainWindow()?.webContents.send('orchestrator-agent-event', evt)
       }
-      getAgentPool().on('agent-event', agentEventHandler)
+      getAgentPool().on('agent-event', _agentEventHandler)
 
       orchestratorInstance.on('task-error', (evt) => {
         console.error('[orchestrator] Task error:', evt.nodeId, evt.error)
@@ -109,12 +129,18 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
       })
       orchestratorInstance.on('completed', () => {
         console.log('[orchestrator] All tasks completed')
-        getAgentPool().off('agent-event', agentEventHandler)
+        if (_agentEventHandler) {
+          getAgentPool().off('agent-event', _agentEventHandler)
+          _agentEventHandler = null
+        }
         getMainWindow()?.webContents.send('orchestrator-completed')
       })
       orchestratorInstance.start().catch(err => {
         console.error('[orchestrator] Start error:', err)
-        getAgentPool().off('agent-event', agentEventHandler)
+        if (_agentEventHandler) {
+          getAgentPool().off('agent-event', _agentEventHandler)
+          _agentEventHandler = null
+        }
         getMainWindow()?.webContents.send('task-status-event', { nodeId: 'orchestrator', status: 'failed', error: err.message })
         getMainWindow()?.webContents.send('orchestrator-completed')
       })
