@@ -123,11 +123,16 @@ function updateTodoPanel(todos, status) {
   const total = merged.length
   countEl.textContent = `${done}/${total}`
 
+  // Only the last in_progress item gets the animated pulse — all others are static
+  const activeItems = merged.filter(t => t.status === 'in_progress' || t.status === 'active')
+  const lastActiveId = activeItems.length > 0 ? activeItems[activeItems.length - 1].id : null
+
   let itemsHtml = ''
   for (const todo of merged) {
     const isDone = todo.status === 'completed' || todo.status === 'done'
     const isActive = todo.status === 'in_progress' || todo.status === 'active'
-    const checkCls = isDone ? 'todo-check done' : isActive ? 'todo-check active' : 'todo-check'
+    const isCurrentlyAnimated = isActive && String(todo.id) === String(lastActiveId)
+    const checkCls = isDone ? 'todo-check done' : isCurrentlyAnimated ? 'todo-check active' : isActive ? 'todo-check active-static' : 'todo-check'
     const checkIcon = isDone ? '✓' : isActive ? '◉' : '○'
     const textCls = isDone ? 'todo-text done' : isActive ? 'todo-text active' : 'todo-text'
     let content = (typeof todo.content === 'string' && todo.content) ? todo.content

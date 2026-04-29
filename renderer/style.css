@@ -421,6 +421,13 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   animation: heartbeat-rainbow 1.5s ease-in-out infinite;
   box-shadow: 0 0 6px rgba(168, 85, 247, 0.6);
 }
+/* Non-animated in_progress dot — used for all but the most recently started node */
+.tg-node-dot.in_progress.static {
+  animation: none;
+  transform: none;
+  background: #a855f7;
+  box-shadow: 0 0 4px rgba(168, 85, 247, 0.4);
+}
 .tg-node-dot.completed {
   background: #22c55e;
   box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
@@ -954,6 +961,11 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   border-color: var(--blue);
   color: var(--blue);
   animation: pulse 1.5s ease-in-out infinite;
+}
+.todo-check.active-static {
+  background: rgba(96,165,250,0.08);
+  border-color: var(--blue);
+  color: var(--blue);
 }
 .todo-id {
   font-size: 10px;

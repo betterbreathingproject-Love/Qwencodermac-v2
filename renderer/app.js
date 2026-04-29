@@ -2879,6 +2879,15 @@ function renderTaskGraph(graph) {
     container.innerHTML = '<div class="model-empty">Task graph is empty.</div>'
     return
   }
+
+  // Only animate the most recently started in_progress node — animating all of them
+  // simultaneously creates confusing visual noise when multiple nodes are in_progress.
+  const inProgressIds = ids.filter(id => nodes[id].status === 'in_progress')
+  const animatedNodeId = inProgressIds.reduce((latest, id) => {
+    const t = nodes[id]._startTime || 0
+    return t >= (nodes[latest]?._startTime || 0) ? id : latest
+  }, inProgressIds[0])
+
   container.innerHTML = ids.map(id => {
     const node = nodes[id]
     const indent = (node.depth || 0) * 12
@@ -2889,8 +2898,12 @@ function renderTaskGraph(graph) {
     const activityTag = node.status === 'in_progress'
       ? `<span class="tg-node-activity" data-node-id="${id}"></span>`
       : ''
+    // Use animated dot only for the most recently started in_progress node
+    const dotClass = node.status === 'in_progress' && id !== animatedNodeId
+      ? 'in_progress static'
+      : node.status
     return `<div class="tg-node status-${node.status}" data-node-id="${id}" style="padding-left:${8 + indent}px" onclick="showTaskDetail('${id}')">
-      <span class="tg-node-dot ${node.status}"></span>
+      <span class="tg-node-dot ${dotClass}"></span>
       <span class="tg-node-id">${esc(id)}</span>
       <span class="tg-node-title">${esc(node.title)}</span>
       ${agentTag}${elapsedTag}${activityTag}
