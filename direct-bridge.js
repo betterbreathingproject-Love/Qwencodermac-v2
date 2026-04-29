@@ -1761,7 +1761,7 @@ class DirectBridge {
               )
               if (desc) {
                 msg.content[i] = { type: 'text', text: `[Vision: ${desc}]` }
-                this.send('qwen-event', { type: 'fast-assist', task: 'vision', label: '⚡ Fast Assistant — image described' })
+                this.send('qwen-event', { type: 'fast-assist', task: 'vision', label: '⚡ Fast Assistant — image described', detail: desc.slice(0, 120) })
               }
             }
           }
@@ -2439,8 +2439,9 @@ class DirectBridge {
             if (taskContext) {
               const section = await assistClient.assistExtractRelevantSection(fnArgs.path || '', content, taskContext)
               if (section) {
+                const _origLen = content.length
                 content = section
-                this.send('qwen-event', { type: 'fast-assist', task: 'extract_section', label: '⚡ Fast Assistant — extracted relevant section' })
+                this.send('qwen-event', { type: 'fast-assist', task: 'extract_section', label: '⚡ Fast Assistant — extracted relevant section', detail: `${fnArgs.path ? fnArgs.path.split('/').pop() : 'file'} · ${_origLen.toLocaleString()} chars → ${section.length.toLocaleString()} chars` })
               }
             }
           }
@@ -2482,7 +2483,10 @@ class DirectBridge {
         if (assistClient && isError && content) {
           const recentContext = messages.slice(-4).map(m => typeof m.content === 'string' ? m.content : '').join('\n')
           const diagnosis = await assistClient.assistDiagnoseError(fnName, fnArgs, content, recentContext)
-          if (diagnosis) content = `[Fast model diagnosis: ${diagnosis}]\n\n${content}`
+          if (diagnosis) {
+            content = `[Fast model diagnosis: ${diagnosis}]\n\n${content}`
+            this.send('qwen-event', { type: 'fast-assist', task: 'error_diagnose', label: '⚡ Fast Assistant — error diagnosed', detail: diagnosis.slice(0, 120) })
+          }
         }
 
         // Vision offload for browser_screenshot results
@@ -2498,23 +2502,31 @@ class DirectBridge {
             )
             if (desc) {
               content = `[Vision: ${desc}]`
-              this.send('qwen-event', { type: 'fast-assist', task: 'vision', label: '⚡ Fast Assistant — screenshot described' })
+              this.send('qwen-event', { type: 'fast-assist', task: 'vision', label: '⚡ Fast Assistant — screenshot described', detail: desc.slice(0, 120) })
             }
           }
         }
 
         // Fetch summarize — summarize large web_fetch results
         if (assistClient && fnName === 'web_fetch' && typeof content === 'string' && content.length > assistClient.FETCH_SUMMARIZE_THRESHOLD) {
+          const _origFetchLen = content.length
           const summary = await assistClient.assistFetchSummarize(fnArgs.url || '', content, 512)
-          if (summary) content = `[Summarized by fast model — original: ${content.length} chars]\n\n${summary}`
+          if (summary) {
+            content = `[Summarized by fast model — original: ${_origFetchLen} chars]\n\n${summary}`
+            this.send('qwen-event', { type: 'fast-assist', task: 'fetch_summarize', label: '⚡ Fast Assistant — web content summarized', detail: `${fnArgs.url ? fnArgs.url.slice(0, 60) : 'URL'} · ${_origFetchLen.toLocaleString()} chars → ${summary.length.toLocaleString()} chars` })
+          }
         }
 
         // Git summarize — summarize large git command outputs
         if (assistClient && fnName === 'bash' && typeof content === 'string' && content.length > assistClient.GIT_SUMMARIZE_THRESHOLD) {
           const cmd = fnArgs.command || ''
           if (/^git\s+(status|log|diff|show)\b/.test(cmd)) {
+            const _origGitLen = content.length
             const summary = await assistClient.assistGitSummarize(cmd, content)
-            if (summary) content = `[Git summary by fast model — original: ${content.length} chars]\n\n${summary}`
+            if (summary) {
+              content = `[Git summary by fast model — original: ${_origGitLen} chars]\n\n${summary}`
+              this.send('qwen-event', { type: 'fast-assist', task: 'git_summarize', label: '⚡ Fast Assistant — git output summarized', detail: `\`${cmd.slice(0, 40)}\` · ${_origGitLen.toLocaleString()} chars → ${summary.length.toLocaleString()} chars` })
+            }
           }
         }
 
@@ -2524,7 +2536,10 @@ class DirectBridge {
           if (lines.length > assistClient.SEARCH_RANK_THRESHOLD) {
             const taskContext = messages.filter(m => m.role === 'user').pop()?.content || ''
             const ranked = await assistClient.assistRankSearchResults(fnArgs.pattern || '', lines, taskContext)
-            if (ranked) content = `[Ranked by fast model — showing 15 of ${lines.length} matches]\n\n${ranked.slice(0, 15).join('\n')}`
+            if (ranked) {
+              content = `[Ranked by fast model — showing 15 of ${lines.length} matches]\n\n${ranked.slice(0, 15).join('\n')}`
+              this.send('qwen-event', { type: 'fast-assist', task: 'rank_search', label: '⚡ Fast Assistant — search results ranked', detail: `"${(fnArgs.pattern || '').slice(0, 40)}" · ${lines.length} → 15 results` })
+            }
           }
         }
 

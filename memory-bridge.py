@@ -2428,6 +2428,22 @@ async def _handle_chat_reply(payload: dict) -> AssistResponse:
             if reply.startswith(prefix):
                 reply = reply[len(prefix):].strip()
 
+        # Strip tool call leakage — the small model may emit <tool_call> XML or
+        # JSON tool_calls blocks even though we don't want tool use here.
+        import re as _re
+        # Remove <tool_call>...</tool_call> blocks (Qwen3 format)
+        reply = _re.sub(r'<tool_call>[\s\S]*?</tool_call>', '', reply, flags=_re.IGNORECASE).strip()
+        # Remove <|tool_call|>...</s> or similar special tokens
+        reply = _re.sub(r'<\|tool_call\|>[\s\S]*?(?:</s>|$)', '', reply, flags=_re.IGNORECASE).strip()
+        # Remove bare JSON tool_calls objects that leaked through
+        reply = _re.sub(r'\{"tool_calls"[\s\S]*?\}(?:\s*\})?', '', reply).strip()
+        # Remove any remaining XML-like tags that look like tool invocations
+        reply = _re.sub(r'<(?:function_call|invoke|tool_use)[\s\S]*?</(?:function_call|invoke|tool_use)>', '', reply, flags=_re.IGNORECASE).strip()
+        # If the reply is now empty or only whitespace after stripping, return None
+        if not reply or len(reply) < 5:
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            return AssistResponse(result=None, elapsed_ms=elapsed_ms, output_tokens=0)
+
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         logger.debug(f"[chat_reply] {elapsed_ms}ms: {reply[:80]!r}")
         return AssistResponse(result=reply if reply else None, elapsed_ms=elapsed_ms, output_tokens=len(reply.split()))

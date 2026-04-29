@@ -14,6 +14,30 @@ let agentRole = 'general' // current agent role for vibe mode
 let currentTodos = [] // persisted todo list for active session
 let _lastCompactionStats = null
 
+// ── fast assistant block renderer ─────────────────────────────────────────────
+// Renders a collapsible block showing what the fast (0.8B) model did, similar
+// to how tool-blocks show main-model tool activity.
+const _FAST_ASSIST_ICONS = {
+  vision: '👁️', extract_section: '✂️', fetch_summarize: '🌍',
+  git_summarize: '🔀', rank_search: '🔎', error_diagnose: '🩺',
+  todo_bootstrap: '📋', todo_watch: '👀', tool_validate: '✅',
+}
+function renderFastAssistBlock(ev) {
+  const task = ev.task || 'assist'
+  const icon = _FAST_ASSIST_ICONS[task] || '⚡'
+  const label = (ev.label || '⚡ Fast Assistant').replace(/^⚡ Fast Assistant — ?/, '')
+  const detail = ev.detail || ''
+  const id = 'fa-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6)
+  return `<details class="fast-assist-block" id="${id}">
+    <summary class="fast-assist-header">
+      <span class="fast-assist-icon">${icon}</span>
+      <span class="fast-assist-badge">⚡ Fast</span>
+      <span class="fast-assist-label">${esc(label)}</span>
+      ${detail ? `<span class="fast-assist-detail">${esc(detail)}</span>` : ''}
+    </summary>
+  </details>`
+}
+
 // ── toast notifications ───────────────────────────────────────────────────────
 function showToast(message, type = 'info', duration = 5000) {
   let container = document.getElementById('toast-container')
@@ -1000,6 +1024,7 @@ async function sendAgentMode(prompt, opts = {}) {
   const respId = 'resp-'+Date.now()
   out.insertAdjacentHTML('beforeend', `<div class="msg-block" id="${respId}">
     <div class="msg-system" id="${respId}-status" style="display:none"></div>
+    <div id="${respId}-fast"></div>
     <div id="${respId}-tools"></div>
     <details class="msg-thinking" id="${respId}-think" style="display:none">
       <summary>🧠 Thinking</summary>
@@ -1014,9 +1039,9 @@ async function sendAgentMode(prompt, opts = {}) {
   // Shows a short reply from the 0.8B while the 35B loads context and starts its loop
   window.app.assistChatReply(prompt, agentRole || 'general').then(reply => {
     if (!reply) return
-    const textEl = document.getElementById(respId + '-text')
-    if (textEl && !textEl.textContent) {
-      textEl.innerHTML = `<span class="fast-reply">${esc(reply)}</span>`
+    const fastEl = document.getElementById(respId + '-fast')
+    if (fastEl) {
+      fastEl.insertAdjacentHTML('beforeend', `<div class="fast-reply-badge"><span class="fast-reply-icon">⚡</span><span class="fast-reply-model">Fast Assistant</span><span class="fast-reply-text">${esc(reply)}</span></div>`)
       scrollOutput()
     }
   }).catch(() => {})
@@ -1108,9 +1133,6 @@ async function sendAgentMode(prompt, opts = {}) {
       _mdRenderTimer = null
       if (_mdDirty) {
         _mdDirty = false
-        // Clear the fast-reply placeholder once real text starts streaming
-        const textEl = document.getElementById(respId+'-text')
-        if (textEl?.querySelector('.fast-reply')) textEl.innerHTML = ''
         document.getElementById(respId+'-text').innerHTML = renderMd(lastText, true) + '<span class="cursor">▌</span>'
         scrollOutput()
       }
@@ -1156,9 +1178,8 @@ async function sendAgentMode(prompt, opts = {}) {
         }
         break
       case 'fast-assist': {
-        const toolsEl = document.getElementById(respId + '-tools')
-        const html = `<div class="msg-system" style="color:var(--accent,#7c6af7);font-size:11px;padding:2px 8px">${ev.label || '⚡ Fast Assistant'}</div>`
-        if (toolsEl) toolsEl.insertAdjacentHTML('afterbegin', html)
+        const fastEl = document.getElementById(respId + '-fast')
+        if (fastEl) fastEl.insertAdjacentHTML('beforeend', renderFastAssistBlock(ev))
         else appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${ev.label || '⚡ Fast Assistant'}</span>`)
         break
       }
@@ -1583,6 +1604,7 @@ async function sendAgentMode(prompt, opts = {}) {
             const tasksDiv = document.getElementById(orchId + '-tasks')
             tasksDiv.insertAdjacentHTML('beforeend', `<div class="msg-block" id="${orchTaskBlockId}" style="margin:6px 0;padding:8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg3)">
               <div class="msg-system" id="${orchTaskBlockId}-status" style="font-weight:600">${label}</div>
+              <div id="${orchTaskBlockId}-fast"></div>
               <div id="${orchTaskBlockId}-tools"></div>
               <details class="msg-thinking" id="${orchTaskBlockId}-think" style="display:none">
                 <summary>🧠 Thinking</summary>
@@ -1620,9 +1642,8 @@ async function sendAgentMode(prompt, opts = {}) {
                 }
                 break
               case 'fast-assist': {
-                const toolsEl = document.getElementById(respId + '-tools')
-                const html = `<div class="msg-system" style="color:var(--accent,#7c6af7);font-size:11px;padding:2px 8px">${ev.label || '⚡ Fast Assistant'}</div>`
-                if (toolsEl) toolsEl.insertAdjacentHTML('afterbegin', html)
+                const fastEl2 = document.getElementById(respId + '-fast')
+                if (fastEl2) fastEl2.insertAdjacentHTML('beforeend', renderFastAssistBlock(ev))
                 else appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${ev.label || '⚡ Fast Assistant'}</span>`)
                 break
               }
@@ -3340,9 +3361,8 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         break
       }
       case 'fast-assist': {
-        const toolsEl = orchTaskBlockId ? document.getElementById(orchTaskBlockId + '-tools') : null
-        const html = `<div class="msg-system" style="color:var(--accent,#7c6af7);font-size:11px;padding:2px 8px">${ev.label || '⚡ Fast Assistant'}</div>`
-        if (toolsEl) toolsEl.insertAdjacentHTML('afterbegin', html)
+        const faOrcEl = orchTaskBlockId ? document.getElementById(orchTaskBlockId + '-fast') : null
+        if (faOrcEl) faOrcEl.insertAdjacentHTML('beforeend', renderFastAssistBlock(ev))
         else appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${ev.label || '⚡ Fast Assistant'}</span>`)
         break
       }
