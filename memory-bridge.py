@@ -2382,14 +2382,19 @@ async def _handle_route_task(payload: dict) -> AssistResponse:
 
 
 async def _handle_chat_reply(payload: dict) -> AssistResponse:
-    """2.11 Chat reply — generate a short, friendly acknowledgement before the main agent starts.
+    """2.11 Chat reply — generate a short, punchy acknowledgement before the main agent starts.
 
     Uses the fast 0.8B model to immediately respond to the user's message with
-    1-2 sentences: what it understood + what it's about to do. This gives the
-    user instant feedback while the 35B model loads the context and starts its
-    tool loop.
+    1-2 sentences in an energetic, action-oriented tone ("on it" vibes).
+
+    Key fixes vs raw-prompt approach:
+    - Uses apply_chat_template so the model sees a proper chat turn (not a raw
+      completion prompt that triggers thinking mode on Qwen3 models).
+    - Appends /no_think to the system prompt to suppress <think> blocks.
+    - Strips all special tokens, thinking artifacts, and tool call leakage from
+      the output before returning.
     """
-    import time, asyncio
+    import time, asyncio, re as _re
     t0 = time.monotonic()
 
     user_message: str = payload.get("user_message", "")
@@ -2402,14 +2407,51 @@ async def _handle_chat_reply(payload: dict) -> AssistResponse:
     try:
         import mlx_lm
 
-        prompt = (
-            f"You are a helpful coding assistant giving a brief acknowledgement. "
-            f"The user just sent a message and the main agent is about to start working. "
-            f"Reply in 1-2 short sentences: confirm what you understood and what will happen next. "
-            f"Be direct and friendly. No markdown, no lists, no code blocks.\n\n"
-            f"User: {user_message[:400]}\n\n"
-            f"Brief acknowledgement:"
+        # Role-specific energy — tailor the vibe to what the agent is about to do
+        role_context = {
+            "implementation": "writing code",
+            "explore":        "exploring the codebase",
+            "context-gather": "gathering context",
+            "code-search":    "searching the code",
+            "debug":          "debugging",
+            "tester":         "running tests",
+            "requirements":   "working on requirements",
+            "design":         "working on the design",
+        }.get(agent_role, "on it")
+
+        system_prompt = (
+            "You are a fast coding assistant giving a brief, energetic acknowledgement. "
+            "Reply in 1-2 short sentences max. Be direct, confident, and action-oriented — "
+            "like a skilled engineer who just got the task and is already moving. "
+            "No markdown, no lists, no code blocks, no tool calls, no XML tags. "
+            "Examples of good replies: "
+            "'On it — reading through the codebase now.' "
+            "'Got it, fixing that bug right away.' "
+            "'Sure, I'll refactor that component.' "
+            "/no_think"
         )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_message[:400]},
+        ]
+
+        # Use apply_chat_template so the model sees a proper chat format.
+        # add_generation_prompt=True appends the assistant turn start token.
+        # Falls back to raw prompt if the tokenizer doesn't support chat templates.
+        try:
+            prompt = _extract_processor.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        except Exception:
+            # Fallback for tokenizers without chat template support
+            prompt = (
+                f"System: {system_prompt}\n\n"
+                f"User: {user_message[:400]}\n\n"
+                f"Assistant:"
+            )
 
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
@@ -2417,36 +2459,46 @@ async def _handle_chat_reply(payload: dict) -> AssistResponse:
             lambda: mlx_lm.generate(
                 _extract_model, _extract_processor,
                 prompt=prompt,
-                max_tokens=80,
+                max_tokens=60,
                 verbose=False,
             )
         )
 
         reply = response.strip()
-        # Strip any accidental role prefixes the model might add
-        for prefix in ("Brief acknowledgement:", "Assistant:", "AI:", "Response:"):
+
+        # ── Strip all artifacts ───────────────────────────────────────────────
+
+        # 1. Thinking blocks — <think>...</think> (Qwen3 thinking mode)
+        reply = _re.sub(r'<think>[\s\S]*?</think>', '', reply, flags=_re.IGNORECASE).strip()
+        # 2. Unclosed think block (model was cut off mid-think)
+        reply = _re.sub(r'<think>[\s\S]*$', '', reply, flags=_re.IGNORECASE).strip()
+
+        # 3. Special tokens: <|im_start|>, <|im_end|>, <|endoftext|>, <lm_start>, etc.
+        reply = _re.sub(r'<\|[^|>]+\|>', '', reply).strip()
+        reply = _re.sub(r'</?(?:lm_start|lm_end|s|eos|bos|pad|unk)>', '', reply, flags=_re.IGNORECASE).strip()
+
+        # 4. Tool call leakage
+        reply = _re.sub(r'<tool_call>[\s\S]*?</tool_call>', '', reply, flags=_re.IGNORECASE).strip()
+        reply = _re.sub(r'<(?:function_call|invoke|tool_use)[\s\S]*?</(?:function_call|invoke|tool_use)>', '', reply, flags=_re.IGNORECASE).strip()
+        reply = _re.sub(r'\{"tool_calls"[\s\S]*?\}(?:\s*\})?', '', reply).strip()
+
+        # 5. Role prefixes the model might echo
+        for prefix in ("Assistant:", "assistant:", "Brief acknowledgement:", "AI:", "Response:"):
             if reply.startswith(prefix):
                 reply = reply[len(prefix):].strip()
 
-        # Strip tool call leakage — the small model may emit <tool_call> XML or
-        # JSON tool_calls blocks even though we don't want tool use here.
-        import re as _re
-        # Remove <tool_call>...</tool_call> blocks (Qwen3 format)
-        reply = _re.sub(r'<tool_call>[\s\S]*?</tool_call>', '', reply, flags=_re.IGNORECASE).strip()
-        # Remove <|tool_call|>...</s> or similar special tokens
-        reply = _re.sub(r'<\|tool_call\|>[\s\S]*?(?:</s>|$)', '', reply, flags=_re.IGNORECASE).strip()
-        # Remove bare JSON tool_calls objects that leaked through
-        reply = _re.sub(r'\{"tool_calls"[\s\S]*?\}(?:\s*\})?', '', reply).strip()
-        # Remove any remaining XML-like tags that look like tool invocations
-        reply = _re.sub(r'<(?:function_call|invoke|tool_use)[\s\S]*?</(?:function_call|invoke|tool_use)>', '', reply, flags=_re.IGNORECASE).strip()
-        # If the reply is now empty or only whitespace after stripping, return None
-        if not reply or len(reply) < 5:
+        # 6. Take only the first 1-2 sentences — ignore anything after
+        sentences = _re.split(r'(?<=[.!?])\s+', reply)
+        reply = ' '.join(sentences[:2]).strip()
+
+        # 7. Final sanity — must be non-empty plain text
+        if not reply or len(reply) < 4 or '<' in reply:
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             return AssistResponse(result=None, elapsed_ms=elapsed_ms, output_tokens=0)
 
         elapsed_ms = int((time.monotonic() - t0) * 1000)
-        logger.debug(f"[chat_reply] {elapsed_ms}ms: {reply[:80]!r}")
-        return AssistResponse(result=reply if reply else None, elapsed_ms=elapsed_ms, output_tokens=len(reply.split()))
+        logger.debug(f"[chat_reply] {elapsed_ms}ms ({role_context}): {reply[:80]!r}")
+        return AssistResponse(result=reply, elapsed_ms=elapsed_ms, output_tokens=len(reply.split()))
 
     except Exception as e:
         logger.warning(f"[_handle_chat_reply] failed: {e}")
