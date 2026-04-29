@@ -1110,6 +1110,27 @@ async def chat_completions(req: ChatRequest):
             original_max = kwargs.get('max_tokens', 1024)
             kwargs['max_tokens'] = _autotune_max_tokens(prompt, original_max)
 
+        # ── memory-adaptive max_tokens cap ────────────────────────────────────
+        # When Metal memory is above 60%, cap max_tokens to prevent the
+        # generation from exhausting remaining RAM and causing a SIGABRT crash.
+        # Each token uses ~2-4 MB of KV cache on the 35B model.
+        try:
+            import mlx.core as mx
+            import subprocess
+            _mem_active = mx.metal.get_active_memory() / (1024**3)
+            _total_bytes = int(subprocess.check_output(["sysctl", "-n", "hw.memsize"]).strip())
+            _total_gb = _total_bytes / (1024**3)
+            _pressure = _mem_active / _total_gb
+            if _pressure > 0.60:
+                # Scale max_tokens down: at 60% pressure allow 4096, at 75%+ allow 1024
+                _mem_cap = max(1024, int(4096 * (1.0 - (_pressure - 0.60) / 0.15)))
+                _current_max = kwargs.get('max_tokens', 4096)
+                if _current_max > _mem_cap:
+                    print(f"[server] ⚠️ Memory pressure {_pressure:.0%} — capping max_tokens {_current_max}→{_mem_cap}", file=sys.stderr)
+                    kwargs['max_tokens'] = _mem_cap
+        except Exception:
+            pass
+
         # Prefill batching (autotune optimization #6):
         # Larger batch = fewer Metal kernel dispatches for long prompts.
         # MLX default is 512; we use 1024 for prompts >2000 chars.

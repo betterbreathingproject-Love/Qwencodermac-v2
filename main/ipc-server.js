@@ -70,6 +70,24 @@ function findPython() {
   return 'python3'
 }
 
+/**
+ * Pre-approve the Python executable in the macOS Application Firewall so that
+ * spawning a new Python process (e.g. after a crash restart) does not trigger
+ * the "python3 wants to accept incoming network connections" popup.
+ *
+ * socketfilterfw --add is idempotent — safe to call on every launch.
+ * Requires no elevated privileges for the current user's firewall rules.
+ */
+function suppressFirewallPopup(pyPath) {
+  if (process.platform !== 'darwin') return
+  const { execFile } = require('child_process')
+  const fwTool = '/usr/libexec/ApplicationFirewall/socketfilterfw'
+  if (!fs.existsSync(fwTool)) return
+  // --add registers the executable; --unblockapp allows incoming connections
+  execFile(fwTool, ['--add', pyPath], { timeout: 5000 }, () => {})
+  execFile(fwTool, ['--unblockapp', pyPath], { timeout: 5000 }, () => {})
+}
+
 function getServerScript(appDir) {
   const packed = path.join(process.resourcesPath || '', 'server.py')
   const dev = path.join(appDir, 'server.py')
@@ -84,6 +102,9 @@ let serverProcess = null
 let _serverStopping = false
 let _lastLoadedModelPath = null  // track last loaded model for post-crash reload
 let _crashRestartTimer = null    // debounce crash restarts
+// Ring buffer of last 50 stderr lines — written to crash.log on unexpected exit
+const _lastStderr = []
+const _STDERR_RING_SIZE = 50
 
 /**
  * Record the last successfully loaded model path so it can be reloaded
@@ -98,6 +119,9 @@ function startServer(port, appDir, mainWindow) {
   _serverStopping = false
   killStaleServer(port)
   const py = findPython()
+  // Pre-approve Python in the macOS firewall so crash restarts don't trigger
+  // the "python3 wants to accept incoming network connections" popup.
+  suppressFirewallPopup(py)
   const script = getServerScript(appDir)
   console.log(`[main] Starting server: ${py} ${script} --port ${port}`)
   serverProcess = spawn(py, [script, '--port', String(port)], {
@@ -114,7 +138,11 @@ function startServer(port, appDir, mainWindow) {
     mainWindow?.webContents.send('server-log', d.toString().trim())
   })
   serverProcess.stderr.on('data', d => {
-    mainWindow?.webContents.send('server-log', d.toString().trim())
+    const line = d.toString().trim()
+    // Keep a rolling window of recent stderr for crash diagnosis
+    _lastStderr.push(line)
+    if (_lastStderr.length > _STDERR_RING_SIZE) _lastStderr.shift()
+    mainWindow?.webContents.send('server-log', line)
   })
   serverProcess.on('exit', (code, signal) => {
     serverProcess = null
@@ -127,6 +155,16 @@ function startServer(port, appDir, mainWindow) {
     mainWindow?.webContents.send('server-status', { running: false })
 
     if (isCrash) {
+      // Write a crash log with timestamp and last stderr lines for diagnosis
+      try {
+        const logDir = path.join(require('os').homedir(), '.qwencoder')
+        if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true })
+        const logPath = path.join(logDir, 'crash.log')
+        const entry = `\n--- CRASH ${new Date().toISOString()} signal=${signal} code=${code} ---\n${_lastStderr.join('\n')}\n`
+        fs.appendFileSync(logPath, entry, 'utf-8')
+        console.log(`[main] Crash log written to ${logPath}`)
+      } catch { /* non-fatal */ }
+
       // Debounce: cancel any pending restart before scheduling a new one
       if (_crashRestartTimer) { clearTimeout(_crashRestartTimer); _crashRestartTimer = null }
 
