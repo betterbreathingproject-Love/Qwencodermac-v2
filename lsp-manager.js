@@ -15,6 +15,7 @@ const DEFAULT_MAX_RESTARTS = 3;
 const BINARY_NAME = 'agent-lsp';
 const BUNDLED_BINARY_PATH = path.join(__dirname, 'resources', 'bin', BINARY_NAME);
 const KNOWN_LANGUAGE_SERVERS = [
+  'sourcekit-lsp',              // Swift/Obj-C — ships with Xcode, always at /usr/bin/sourcekit-lsp
   'gopls',
   'typescript-language-server',
   'pyright',
@@ -24,6 +25,7 @@ const KNOWN_LANGUAGE_SERVERS = [
 ];
 
 const LANGUAGE_SERVER_LANGUAGES = {
+  'sourcekit-lsp': ['swift', 'objective-c'],
   'gopls': ['go'],
   'typescript-language-server': ['javascript', 'typescript'],
   'pyright': ['python'],
@@ -31,6 +33,16 @@ const LANGUAGE_SERVER_LANGUAGES = {
   'clangd': ['c', 'cpp'],
   'jdtls': ['java'],
 };
+
+// Extra PATH entries to check when Electron's process.env.PATH is stripped.
+// Homebrew on Apple Silicon installs to /opt/homebrew/bin which is often absent.
+const EXTRA_PATH_DIRS = [
+  '/opt/homebrew/bin',
+  '/opt/homebrew/sbin',
+  '/usr/local/bin',
+  '/usr/bin',
+  '/usr/sbin',
+];
 
 // --- LspManager ---
 
@@ -130,19 +142,39 @@ class LspManager extends EventEmitter {
   }
 
   /**
-   * Detect installed language servers on the system PATH.
-   * Scans for known language server binaries and returns the list of found ones.
+   * Detect installed language servers on the system PATH and known extra dirs.
+   * Electron strips /opt/homebrew/bin from its PATH on macOS, so we check
+   * known binary locations directly in addition to `which`.
    * @returns {string[]} Array of detected language server binary names
    */
   _detectLanguageServers() {
     const found = [];
     for (const server of KNOWN_LANGUAGE_SERVERS) {
+      let detected = false;
+
+      // 1. Try `which` first (works when PATH is intact)
       try {
         execSync(`which ${server}`, { encoding: 'utf8', timeout: 5000, stdio: 'pipe' });
-        found.push(server);
+        detected = true;
       } catch {
-        // Not found on PATH, skip
+        // Not on PATH — fall through to direct path check
       }
+
+      // 2. Check known extra dirs directly (catches Homebrew on Apple Silicon)
+      if (!detected) {
+        for (const dir of EXTRA_PATH_DIRS) {
+          try {
+            const fullPath = path.join(dir, server);
+            fs.accessSync(fullPath, fs.constants.X_OK);
+            detected = true;
+            break;
+          } catch {
+            // Not in this dir
+          }
+        }
+      }
+
+      if (detected) found.push(server);
     }
     return found;
   }
@@ -179,9 +211,16 @@ class LspManager extends EventEmitter {
     // --- Build spawn arguments ---
     // agent-lsp auto-detects language servers when run with no args.
     // Pass the project directory via env so it indexes the right workspace.
+    // Also augment PATH with known extra dirs so agent-lsp can find language
+    // servers that Electron's stripped PATH would miss (e.g. /opt/homebrew/bin).
     const spawnEnv = { ...process.env }
     if (projectDir) {
       spawnEnv.AGENT_LSP_PROJECT = projectDir
+    }
+    const currentPath = spawnEnv.PATH || ''
+    const missingDirs = EXTRA_PATH_DIRS.filter(d => !currentPath.includes(d))
+    if (missingDirs.length > 0) {
+      spawnEnv.PATH = missingDirs.join(':') + (currentPath ? ':' + currentPath : '')
     }
 
     // --- Spawn the process ---

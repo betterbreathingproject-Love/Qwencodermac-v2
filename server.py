@@ -854,6 +854,27 @@ class BenchmarkResponse(BaseModel):
     context_window: int
 
 
+@app.post("/admin/abort")
+async def admin_abort():
+    """
+    Signal the current inference to stop and wait until the semaphore is free.
+    Called by the client after destroying the SSE connection to ensure the
+    inference thread has fully released Metal resources before the next request.
+    Times out after 8s and returns regardless — the semaphore will be released
+    eventually by the inference thread's finally block.
+    """
+    sem = _get_inference_semaphore()
+    try:
+        # Try to acquire the semaphore — this blocks until the inference thread
+        # releases it (i.e. Metal cleanup is done). Timeout after 8s.
+        await asyncio.wait_for(sem.acquire(), timeout=8.0)
+        sem.release()  # immediately release — we just wanted to confirm it's free
+        return {"ok": True, "idle": True}
+    except asyncio.TimeoutError:
+        # Inference thread is taking too long — return anyway, client will retry
+        return {"ok": True, "idle": False, "note": "timed out waiting for inference to finish"}
+
+
 @app.post("/admin/benchmark")
 async def benchmark():
     """Run a short inference pass and return performance metrics."""

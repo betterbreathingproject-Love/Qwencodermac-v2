@@ -146,6 +146,27 @@ class InputRequester {
 const SERVER_PORT = 8090
 const SERVER_URL = `http://127.0.0.1:${SERVER_PORT}`
 
+/**
+ * POST /admin/abort — signal the server to stop the current inference and
+ * wait until the inference semaphore is free (Metal cleanup done).
+ * Called after interrupt() to prevent the next run() from racing with cleanup.
+ * Resolves when the server confirms idle, or after 9s timeout.
+ */
+function _callAdminAbort() {
+  return new Promise((resolve) => {
+    const req = http.request({
+      hostname: '127.0.0.1', port: SERVER_PORT, path: '/admin/abort', method: 'POST',
+      headers: { 'Content-Length': '0' },
+    }, (res) => {
+      res.resume() // drain
+      res.on('end', resolve)
+    })
+    req.on('error', resolve) // server may be down — that's fine
+    req.setTimeout(9000, () => { req.destroy(); resolve() })
+    req.end()
+  })
+}
+
 // ── Built-in tool definitions (what the model can call) ───────────────────────
 
 const TOOL_DEFS = [
@@ -1365,6 +1386,7 @@ class DirectBridge {
   constructor(sink, opts = {}) {
     this.sink = sink
     this._aborted = false
+    this._running = false   // guard against concurrent run() calls
     this._activeReq = null
     this._browserInstance = null
     this._lspManager = opts.lspManager || null
@@ -1385,6 +1407,15 @@ class DirectBridge {
   }
 
   async run({ prompt, cwd, permissionMode, model, images, conversationHistory, systemPromptOverride, samplingParams, taskGraphPath }) {
+    // Prevent concurrent runs — if a previous run is still winding down after
+    // interrupt(), wait up to 3s for it to finish before starting the new one.
+    if (this._running) {
+      const deadline = Date.now() + 3000
+      while (this._running && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 100))
+      }
+    }
+    this._running = true
     this._aborted = false
     this._samplingParams = samplingParams || {}
 
@@ -1581,6 +1612,8 @@ class DirectBridge {
       if (!this._aborted) {
         this.send('qwen-event', { type: 'error', error: err.message || String(err) })
       }
+    } finally {
+      this._running = false
     }
   }
 
@@ -3131,6 +3164,12 @@ ${autoEdit ? '\nAuto-edit mode: proceed with all changes without asking for conf
       this._activeReq = null
     }
     this.send('qwen-event', { type: 'session-end' })
+
+    // Tell the server to stop inference and wait until the semaphore is free.
+    // This prevents the next run() from hitting the server while the inference
+    // thread is still running Metal cleanup — which causes a crash.
+    // Fire-and-forget with a short timeout; run() also has a _running guard.
+    _callAdminAbort().catch(() => {})
   }
 
   async close() {
