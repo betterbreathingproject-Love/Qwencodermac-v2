@@ -3,6 +3,7 @@ let allModels=[], selectedModel=null, loadedModelId=null, imageB64=null, isGener
 let currentFile=null, currentProject=null
 let attachedImgs = [] // [{name, b64}]
 let activeProjectId = null
+let _orchestratorRunning = false  // true while task graph / spec orchestrator is executing
 let activeSessionId = null
 let activeSessionType = 'vibe'
 let conversationHistory = [] // [{role, content, ts}]
@@ -1099,6 +1100,22 @@ function sendAgent() {
   const prompt = document.getElementById('agentPrompt').value.trim()
   if(!prompt) return
 
+  // ── orchestrator injection mode ──────────────────────────────────────────
+  // When the task graph / spec orchestrator is running, the main chat input
+  // acts as a live injection channel rather than starting a new agent session.
+  if (_orchestratorRunning) {
+    document.getElementById('agentPrompt').value = ''
+    window.app.taskGraphInject(prompt).then(result => {
+      if (result?.error) {
+        appendMsg('system', `⚠️ Inject failed: ${result.error}`)
+      } else {
+        appendMsg('user', esc(prompt))
+        appendMsg('system', `💬 Injected into running agents — they'll see this at the next turn boundary.`)
+      }
+    })
+    return
+  }
+
   // ── slash command interception (Task 10.7) ──
   if (prompt.startsWith('/')) {
     const parsed = parseSlashCommand(prompt)
@@ -1783,6 +1800,8 @@ async function sendAgentMode(prompt, opts = {}) {
           document.getElementById('tgPauseBtn').style.display = 'inline-block'
           document.getElementById('tgAbortBtn').style.display = 'inline-block'
           document.getElementById('tgInjectBar').style.display = 'block'
+          _orchestratorRunning = true
+          document.getElementById('agentPrompt').placeholder = '💬 Agents running — type here to inject context or refine objectives. ⌘↵ to send'
 
           // Switch to tasks panel in sidebar so user can see progress
           showPanel('tasks', document.querySelector('[data-panel="tasks"]'))
@@ -2132,6 +2151,8 @@ async function sendAgentMode(prompt, opts = {}) {
             document.getElementById('tgResumeBtn').style.display = 'none'
             document.getElementById('tgAbortBtn').style.display = 'none'
             document.getElementById('tgInjectBar').style.display = 'none'
+            _orchestratorRunning = false
+            document.getElementById('agentPrompt').placeholder = 'Ask anything... drop images here. ⌘↵ to send'
 
             // Refresh task graph to show final statuses
             if (currentTasksPath) loadTaskGraph(currentTasksPath).catch(() => {})
@@ -2954,6 +2975,8 @@ async function taskGraphRun() {
   document.getElementById('tgAbortBtn').style.display = 'inline-block'
   document.getElementById('tgRunBtn').style.display = 'none'
   document.getElementById('tgInjectBar').style.display = 'block'
+  _orchestratorRunning = true
+  document.getElementById('agentPrompt').placeholder = '💬 Agents running — type here to inject context or refine objectives. ⌘↵ to send'
 
   // Listen for orchestrator completion to reload the final persisted state
   window.app.onOrchestratorCompleted(() => {
@@ -2964,6 +2987,8 @@ async function taskGraphRun() {
     document.getElementById('tgResumeBtn').style.display = 'none'
     document.getElementById('tgAbortBtn').style.display = 'none'
     document.getElementById('tgInjectBar').style.display = 'none'
+    _orchestratorRunning = false
+    document.getElementById('agentPrompt').placeholder = 'Ask anything... drop images here. ⌘↵ to send'
   })
 }
 
@@ -2987,6 +3012,8 @@ async function taskGraphAbort() {
   document.getElementById('tgAbortBtn').style.display = 'none'
   document.getElementById('tgRunBtn').style.display = 'inline-block'
   document.getElementById('tgInjectBar').style.display = 'none'
+  _orchestratorRunning = false
+  document.getElementById('agentPrompt').placeholder = 'Ask anything... drop images here. ⌘↵ to send'
   appendMsg('system', '⏹ Task graph aborted.')
 }
 
@@ -3787,6 +3814,8 @@ async function _launchOrchestrator(tasksPath, taskCount) {
   document.getElementById('tgPauseBtn').style.display = 'inline-block'
   document.getElementById('tgAbortBtn').style.display = 'inline-block'
   document.getElementById('tgInjectBar').style.display = 'block'
+  _orchestratorRunning = true
+  document.getElementById('agentPrompt').placeholder = '💬 Agents running — type here to inject context or refine objectives. ⌘↵ to send'
 
   // Switch to tasks panel in sidebar
   showPanel('tasks', document.querySelector('[data-panel="tasks"]'))
@@ -4132,6 +4161,9 @@ async function _launchOrchestrator(tasksPath, taskCount) {
     document.getElementById('tgPauseBtn').style.display = 'none'
     document.getElementById('tgResumeBtn').style.display = 'none'
     document.getElementById('tgAbortBtn').style.display = 'none'
+    document.getElementById('tgInjectBar').style.display = 'none'
+    _orchestratorRunning = false
+    document.getElementById('agentPrompt').placeholder = 'Ask anything... drop images here. ⌘↵ to send'
 
     if (currentTasksPath) loadTaskGraph(currentTasksPath).catch(() => {})
   })
