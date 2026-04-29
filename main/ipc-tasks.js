@@ -72,12 +72,14 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
         tasksFilePath: filePath,
         specContext,
         lspManager: getLspManager ? getLspManager() : null,
-        // Pass the project directory so agents run in the right cwd.
-        // Derive from getCurrentProject() first; fall back to walking up from specDir.
-        projectDir: getCurrentProject() || (() => {
-          // specDir is .maccoder/specs/<name>/ — project root is 3 levels up
+        // Derive project directory from the spec file path.
+        // specDir is <projectRoot>/.maccoder/specs/<name>/ — walk up 3 levels.
+        // This is always correct regardless of which project is open in the UI.
+        projectDir: (() => {
           const p = require('path')
-          return p.resolve(specDir, '..', '..', '..')
+          const derived = p.resolve(specDir, '..', '..', '..')
+          console.log('[orchestrator] projectDir derived from spec:', derived)
+          return derived
         })(),
       })
       orchestratorInstance.on('task-status-event', (evt) => {
