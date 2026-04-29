@@ -396,10 +396,13 @@ class Orchestrator extends EventEmitter {
 
     try {
       const startTime = Date.now();
-      const result = await this._agentPool.dispatch(
-        { ...node, specContext: this._specContext, cwd: this._projectDir || node.cwd },
-        this._context
-      );
+      // Inject retry hint as systemPromptSuffix if this is a simplified retry
+      const taskNode = { ...node, specContext: this._specContext, cwd: this._projectDir || node.cwd }
+      if (node._retryHint) {
+        taskNode.systemPromptSuffix = (taskNode.systemPromptSuffix ? taskNode.systemPromptSuffix + '\n\n' : '') + node._retryHint
+        delete node._retryHint  // consume the hint so it doesn't persist
+      }
+      const result = await this._agentPool.dispatch(taskNode, this._context);
       const duration = Date.now() - startTime;
 
       const taskResult = {
@@ -428,34 +431,79 @@ class Orchestrator extends EventEmitter {
     const errMsg = error.message || String(error);
     const isTransient = /ECONNRESET|ECONNREFUSED|EPIPE|Server not available|server crash|HTTP (500|502|503)|Server returned HTTP|SSE error|server_error/i.test(errMsg);
 
-    // Auto-retry transient errors (server crash, timeout) up to 3 times
-    const retryCount = this._retryCount || new Map();
-    this._retryCount = retryCount;
-    const attempts = retryCount.get(nodeId) || 0;
+    // Lazy-init retry tracking maps
+    if (!this._retryCount) this._retryCount = new Map();
+    if (!this._simplifiedRetry) this._simplifiedRetry = new Set();
 
+    const attempts = this._retryCount.get(nodeId) || 0;
+
+    // ── Tier 1: Transient errors — retry up to 3x with backoff ──────────────
     if (isTransient && attempts < 3) {
-      retryCount.set(nodeId, attempts + 1);
-      // Use a longer delay on subsequent retries to give the server time to
-      // restart AND reload the model (model load can take 30-60s on first load).
+      this._retryCount.set(nodeId, attempts + 1);
       const retryDelay = attempts === 0 ? 10000 : 30000;
       this.emit('task-error', { nodeId, error: `${errMsg} (retrying ${attempts + 1}/3 in ${retryDelay / 1000}s...)` });
-      // Wait for server to restart and model to reload, then retry
       setTimeout(async () => {
         if (this._state !== 'running') return;
         this._updateNodeStatus(nodeId, 'not_started');
-        // Re-enter the run loop which will pick up this node
         await this._runLoop();
       }, retryDelay);
       return;
     }
 
+    // ── Tier 2: Permanent failure, first attempt — retry once with simplified hint ──
+    // Only applies to non-transient failures on the first permanent failure.
+    if (!isTransient && !this._simplifiedRetry.has(nodeId)) {
+      this._simplifiedRetry.add(nodeId);
+      const node = this._graph.nodes.get(nodeId);
+      const hint = `Previous attempt failed: ${errMsg.slice(0, 200)}. Take a simpler, more focused approach. Break the work into smaller steps. If a file doesn't exist yet, create a minimal version first.`;
+      // Inject the hint as a systemPromptSuffix on the node for the retry
+      if (node) node._retryHint = hint;
+      this.emit('task-error', { nodeId, error: `${errMsg} (retrying with simplified approach...)` });
+      setTimeout(async () => {
+        if (this._state !== 'running') return;
+        this._updateNodeStatus(nodeId, 'not_started');
+        await this._runLoop();
+      }, 2000);
+      return;
+    }
+
+    // ── Tier 3: Permanently failed — mark failed, cascade-skip direct dependents ──
     this._updateNodeStatus(nodeId, 'failed');
     if (this._onError) this._onError(nodeId, error);
     this.emit('task-error', { nodeId, error: errMsg });
-    // Don't pause the whole orchestrator on a single task failure —
-    // mark it failed and let the run loop continue with remaining tasks.
-    // The loop will skip nodes whose only blocker is a failed dependency.
-    await this._runLoop();
+
+    // Skip direct children whose only unresolved dependency is this failed node.
+    // Siblings and unrelated nodes continue running normally.
+    this._cascadeSkipDependents(nodeId);
+
+    // Continue the run loop — remaining independent tasks should still execute.
+    this._runLoop().catch(() => {});
+  }
+
+  /**
+   * Skip nodes that are directly blocked by a failed node and have no other
+   * path to completion. Only skips immediate dependents, not the whole subtree,
+   * to avoid over-skipping when a node has multiple dependency paths.
+   */
+  _cascadeSkipDependents(failedNodeId) {
+    for (const [id, node] of this._graph.nodes) {
+      if (node.status !== 'not_started') continue;
+      if (!node.dependencies.includes(failedNodeId)) continue;
+
+      // Only skip if ALL dependencies are either completed, skipped, or failed
+      // (i.e. this node has no remaining chance of running via another path).
+      const allDepsTerminal = node.dependencies.every(depId => {
+        const dep = this._graph.nodes.get(depId);
+        return dep && (dep.status === 'completed' || dep.status === 'skipped' || dep.status === 'failed');
+      });
+
+      if (allDepsTerminal) {
+        this._updateNodeStatus(id, 'skipped');
+        this.emit('task-skipped', { nodeId: id, reason: `dependency ${failedNodeId} failed` });
+        // Recurse — this node's dependents may now also be unblockable
+        this._cascadeSkipDependents(id);
+      }
+    }
   }
 
   // --- Branch evaluation ---

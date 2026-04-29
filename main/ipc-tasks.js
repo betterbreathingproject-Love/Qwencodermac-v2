@@ -124,8 +124,13 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
       orchestratorInstance.on('task-error', (evt) => {
         console.error('[orchestrator] Task error:', evt.nodeId, evt.error)
         getMainWindow()?.webContents.send('task-status-event', { nodeId: evt.nodeId, status: 'failed', error: evt.error })
-        // Orchestrator pauses on failure — notify renderer so it can finalize UI
-        getMainWindow()?.webContents.send('orchestrator-completed')
+        // Do NOT send orchestrator-completed here — the orchestrator continues running
+        // after a failure (retries or cascades to next tasks). Only 'completed' event
+        // should trigger the final UI teardown.
+      })
+      orchestratorInstance.on('task-skipped', (evt) => {
+        console.log('[orchestrator] Task skipped:', evt.nodeId, evt.reason)
+        getMainWindow()?.webContents.send('task-status-event', { nodeId: evt.nodeId, status: 'skipped', reason: evt.reason })
       })
       orchestratorInstance.on('completed', () => {
         console.log('[orchestrator] All tasks completed')
