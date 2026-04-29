@@ -125,9 +125,12 @@ function parseTaskGraph(markdown) {
 
     parseBracketContent(bracketContent, node, graph, lineNum);
 
-    // Duplicate ID check (collected, validated later)
+    // Duplicate ID check — skip duplicates to prevent graph corruption.
+    // A corrupted tasks.md with repeated sections would otherwise cause
+    // the graph to grow on every persist cycle.
     if (graph.nodes.has(id)) {
-      graph.errors.push(createParseError(lineNum, `Duplicate node ID: "${id}"`, 'error'));
+      graph.errors.push(createParseError(lineNum, `Duplicate node ID: "${id}" — skipping`, 'error'));
+      continue;  // skip this node entirely
     }
 
     // Build parent-child relationships using the parent stack
