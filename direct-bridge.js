@@ -1212,7 +1212,7 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         const v = validatePath(args.path || '.')
         if (v.error) return v
         const p = v.resolved
-        if (!fs.existsSync(p)) return { error: `Directory not found: ${args.path}` }
+        if (!fs.existsSync(p)) return { error: `Directory not found: ${args.path}. If this is a new project, use bash({"command": "mkdir -p ."}) to create the project directory first, then proceed with scaffolding.` }
         const entries = fs.readdirSync(p, { withFileTypes: true })
           .filter(e => !e.name.startsWith('.'))
           .sort((a, b) => {
@@ -1236,9 +1236,13 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
           // Strip the trailing & and run detached so the agent loop doesn't hang
           const cmd = args.command.trim().replace(/&\s*$/, '').trim()
           const { spawn: spawnBg } = require('child_process')
+          const _bgEnv = { ...process.env }
+          const _bgExtra = ['/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin', '/usr/bin', '/bin']
+          const _bgMissing = _bgExtra.filter(d => !(_bgEnv.PATH || '').includes(d))
+          if (_bgMissing.length > 0) _bgEnv.PATH = _bgMissing.join(':') + ':' + (_bgEnv.PATH || '')
           const bgProc = spawnBg('bash', ['-c', cmd], {
             cwd,
-            env: { ...process.env },
+            env: _bgEnv,
             stdio: 'ignore',
             detached: true,
           })
@@ -1249,9 +1253,18 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
           let stdout = ''
           let stderr = ''
           let killed = false
+          // Augment PATH so swift, xcodebuild, git, brew etc. are found.
+          // Electron strips /opt/homebrew/bin and /usr/bin from its PATH.
+          const augmentedEnv = { ...process.env }
+          const extraDirs = ['/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin', '/usr/bin', '/usr/sbin', '/bin', '/sbin']
+          const currentPath = augmentedEnv.PATH || ''
+          const missing = extraDirs.filter(d => !currentPath.includes(d))
+          if (missing.length > 0) {
+            augmentedEnv.PATH = missing.join(':') + (currentPath ? ':' + currentPath : '')
+          }
           const proc = spawn('bash', ['-c', args.command], {
             cwd,
-            env: { ...process.env },
+            env: augmentedEnv,
             stdio: ['pipe', 'pipe', 'pipe'],
           })
           const timer = setTimeout(() => {

@@ -142,6 +142,18 @@ const agentPool = new AgentPool({
     const cwd = task.cwd || currentProject || process.cwd()
     console.log('[agent-factory] Creating', typeName, 'agent for task:', task.id, task.title)
 
+    // Ensure the working directory exists — for new projects being scaffolded
+    // from scratch, the directory may not exist yet when the first task runs.
+    try {
+      const fs = require('node:fs')
+      if (!fs.existsSync(cwd)) {
+        fs.mkdirSync(cwd, { recursive: true })
+        console.log('[agent-factory] Created project directory:', cwd)
+      }
+    } catch (err) {
+      console.warn('[agent-factory] Could not create cwd:', err.message)
+    }
+
     const bridge = new DirectBridge(new WindowSink(mainWindow), {
       agentRole: typeName,
       allowedTools: agentType?.allowedTools || null,
