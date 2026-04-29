@@ -1181,7 +1181,22 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
               if (match) p = path.join(parentDir, match)
             } catch { /* ignore */ }
           }
-          if (!fs.existsSync(p)) return { error: `File not found: ${args.path}` }
+          if (!fs.existsSync(p)) {
+            // Detect double-prefix: agent may have included the project folder name
+            // as a path prefix after seeing it in the list_dir tree header.
+            // e.g. cwd = "/projects/photo ranker", path = "photo ranker/PhotoRanker/File.swift"
+            // Strip the first segment and retry.
+            const rootName = path.basename(cwd)
+            const parts = args.path.replace(/\\/g, '/').split('/')
+            if (parts[0] === rootName && parts.length > 1) {
+              const stripped = parts.slice(1).join('/')
+              const strippedResolved = path.resolve(cwd, stripped)
+              if (strippedResolved.startsWith(cwd) && fs.existsSync(strippedResolved)) {
+                p = strippedResolved
+              }
+            }
+          }
+          if (!fs.existsSync(p)) return { error: `File not found: ${args.path}. Tip: paths must be relative to the project root — do not include the project folder name as a prefix.` }
         }
         const stat = fs.statSync(p)
         if (stat.size > 512 * 1024) return { error: `File too large (${(stat.size / 1024).toFixed(0)}KB). Use start_line/end_line to read sections, or use search_files to find specific content.` }
@@ -1277,20 +1292,35 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
             // Use the correctly-cased path
             p = path.join(parentDir, caseMatch)
           } else {
-            // Help the agent recover by showing what's actually at the parent directory
-            let hint = ''
-            if (fs.existsSync(parentDir)) {
-              try {
-                const siblings = fs.readdirSync(parentDir, { withFileTypes: true })
-                  .filter(e => e.isDirectory() && !e.name.startsWith('.'))
-                  .map(e => e.name)
-                  .slice(0, 20)
-                if (siblings.length > 0) {
-                  hint = ` Available directories in "${path.relative(cwd, parentDir) || '.'}": ${siblings.join(', ')}`
-                }
-              } catch { /* ignore */ }
+            // Detect double-prefix: agent included the project folder name as a path prefix.
+            // e.g. cwd = "/projects/photo ranker", listPath = "photo ranker/PhotoRanker"
+            const rootName = path.basename(cwd)
+            const parts = listPath.replace(/\\/g, '/').split('/')
+            if (parts[0] === rootName && parts.length > 1) {
+              const stripped = parts.slice(1).join('/')
+              const strippedResolved = path.resolve(cwd, stripped)
+              if (strippedResolved.startsWith(cwd) && fs.existsSync(strippedResolved)) {
+                p = strippedResolved
+                // fall through to the readdir below
+              } else {
+                return { error: `Directory not found: ${listPath}. Do not include the project folder name "${rootName}" as a path prefix — paths are relative to the project root.` }
+              }
+            } else {
+              // Help the agent recover by showing what's actually at the parent directory
+              let hint = ''
+              if (fs.existsSync(parentDir)) {
+                try {
+                  const siblings = fs.readdirSync(parentDir, { withFileTypes: true })
+                    .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+                    .map(e => e.name)
+                    .slice(0, 20)
+                  if (siblings.length > 0) {
+                    hint = ` Available directories in "${path.relative(cwd, parentDir) || '.'}": ${siblings.join(', ')}`
+                  }
+                } catch { /* ignore */ }
+              }
+              return { error: `Directory not found: ${listPath}.${hint}` }
             }
-            return { error: `Directory not found: ${listPath}.${hint}` }
           }
         }
         try {
@@ -1309,7 +1339,12 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
           const isProjectRoot = p === cwd || p === path.resolve(cwd, '.')
           if (isProjectRoot) {
             const tree = buildFileTree(p, 3)
-            return { result: tree || (entries.length > 0 ? entries.join('\n') : '(empty directory)') }
+            const treeResult = tree || (entries.length > 0 ? entries.join('\n') : '(empty directory)')
+            // Append a clear note so the agent doesn't prepend the folder name to paths.
+            // The tree header shows e.g. "photo ranker/" but that's just a label — all
+            // tool paths must be relative to this root (e.g. "PhotoRanker/Models/Photo.swift").
+            const rootName = path.basename(p)
+            return { result: `${treeResult}\n\nNOTE: You are at the project root. Use paths relative to here — do NOT include "${rootName}/" as a prefix. Example: "PhotoRanker/Models/Photo.swift", not "${rootName}/PhotoRanker/Models/Photo.swift".` }
           }
 
           return { result: entries.length > 0 ? entries.join('\n') : '(empty directory)' }
