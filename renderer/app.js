@@ -1782,6 +1782,7 @@ async function sendAgentMode(prompt, opts = {}) {
           document.getElementById('tgRunBtn').style.display = 'none'
           document.getElementById('tgPauseBtn').style.display = 'inline-block'
           document.getElementById('tgAbortBtn').style.display = 'inline-block'
+          document.getElementById('tgInjectBar').style.display = 'block'
 
           // Switch to tasks panel in sidebar so user can see progress
           showPanel('tasks', document.querySelector('[data-panel="tasks"]'))
@@ -2130,6 +2131,7 @@ async function sendAgentMode(prompt, opts = {}) {
             document.getElementById('tgPauseBtn').style.display = 'none'
             document.getElementById('tgResumeBtn').style.display = 'none'
             document.getElementById('tgAbortBtn').style.display = 'none'
+            document.getElementById('tgInjectBar').style.display = 'none'
 
             // Refresh task graph to show final statuses
             if (currentTasksPath) loadTaskGraph(currentTasksPath).catch(() => {})
@@ -2951,6 +2953,7 @@ async function taskGraphRun() {
   document.getElementById('tgPauseBtn').style.display = 'inline-block'
   document.getElementById('tgAbortBtn').style.display = 'inline-block'
   document.getElementById('tgRunBtn').style.display = 'none'
+  document.getElementById('tgInjectBar').style.display = 'block'
 
   // Listen for orchestrator completion to reload the final persisted state
   window.app.onOrchestratorCompleted(() => {
@@ -2960,6 +2963,7 @@ async function taskGraphRun() {
     document.getElementById('tgPauseBtn').style.display = 'none'
     document.getElementById('tgResumeBtn').style.display = 'none'
     document.getElementById('tgAbortBtn').style.display = 'none'
+    document.getElementById('tgInjectBar').style.display = 'none'
   })
 }
 
@@ -2977,11 +2981,26 @@ async function taskGraphResume() {
 
 async function taskGraphAbort() {
   if (!confirm('Abort task graph execution?')) return
-  const result = await window.app.taskGraphPause()
+  await window.app.taskGraphAbort()
   document.getElementById('tgPauseBtn').style.display = 'none'
   document.getElementById('tgResumeBtn').style.display = 'none'
   document.getElementById('tgAbortBtn').style.display = 'none'
   document.getElementById('tgRunBtn').style.display = 'inline-block'
+  document.getElementById('tgInjectBar').style.display = 'none'
+  appendMsg('system', '⏹ Task graph aborted.')
+}
+
+async function taskGraphInject() {
+  const input = document.getElementById('tgInjectInput')
+  const msg = input?.value?.trim()
+  if (!msg) return
+  input.value = ''
+  const result = await window.app.taskGraphInject(msg)
+  if (result?.error) {
+    appendMsg('system', `⚠️ Inject failed: ${result.error}`)
+  } else {
+    appendMsg('system', `💬 Injected: ${esc(msg)}`)
+  }
 }
 
 async function openTasksMd() {
@@ -3767,6 +3786,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
   document.getElementById('tgRunBtn').style.display = 'none'
   document.getElementById('tgPauseBtn').style.display = 'inline-block'
   document.getElementById('tgAbortBtn').style.display = 'inline-block'
+  document.getElementById('tgInjectBar').style.display = 'block'
 
   // Switch to tasks panel in sidebar
   showPanel('tasks', document.querySelector('[data-panel="tasks"]'))

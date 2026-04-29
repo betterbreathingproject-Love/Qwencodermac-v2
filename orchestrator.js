@@ -805,6 +805,36 @@ class Orchestrator extends EventEmitter {
 
   async abort() {
     this._setState('aborted');
+    // Cancel all in-flight agent dispatches immediately
+    if (this._agentPool && typeof this._agentPool.cancelAll === 'function') {
+      this._agentPool.cancelAll();
+    }
+  }
+
+  /**
+   * Inject a user message into all currently running agents and queue it
+   * for future task dispatches. This allows mid-run course corrections —
+   * the user can add context, refine objectives, or ask questions without
+   * stopping the workflow.
+   */
+  inject(message) {
+    if (!message || typeof message !== 'string') return
+    const trimmed = message.trim()
+    if (!trimmed) return
+
+    // Append to specContext so future task dispatches include it
+    this._specContext = this._specContext
+      ? `${this._specContext}\n\n[User update mid-run]: ${trimmed}`
+      : `[User update mid-run]: ${trimmed}`
+
+    // Forward to all currently running agents via their bridge's inject()
+    for (const [, entry] of this._agentPool._runningTasks || new Map()) {
+      if (entry.agent && typeof entry.agent.inject === 'function') {
+        entry.agent.inject(trimmed)
+      }
+    }
+
+    this.emit('user-injection', { message: trimmed })
   }
 
   // --- Query methods ---

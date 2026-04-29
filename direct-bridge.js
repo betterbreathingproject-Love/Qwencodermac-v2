@@ -1584,10 +1584,24 @@ class DirectBridge {
     this._getCalibrationProfile = opts.getCalibrationProfile || null
     // Optional: function(title) → role string | null — used for todo-driven re-routing
     this._routeTask = opts.routeTask || null
+    // Queue of user messages to inject at the next turn boundary
+    this._pendingInjections = []
   }
 
   setLspManager(lspManager) {
     this._lspManager = lspManager
+  }
+
+  /**
+   * Inject a user message into the running agent at the next turn boundary.
+   * The message is queued and inserted before the next LLM call so the model
+   * sees it as a user turn — allowing mid-run course corrections without
+   * interrupting the current inference.
+   */
+  inject(message) {
+    if (message && typeof message === 'string' && message.trim()) {
+      this._pendingInjections.push(message.trim())
+    }
   }
 
   send(channel, data) {
@@ -1836,6 +1850,14 @@ class DirectBridge {
 
     for (let turn = 0; turn < effectiveMaxTurns; turn++) {
       if (this._aborted) return
+
+      // Drain any user-injected messages (from mid-run prompts / spec iteration).
+      // Insert them as user turns so the model sees the updated objective immediately.
+      while (this._pendingInjections.length > 0) {
+        const injected = this._pendingInjections.shift()
+        messages.push({ role: 'user', content: `[User update]: ${injected}` })
+        this.send('qwen-event', { type: 'user-injection', content: injected })
+      }
 
       // Warn the model when running low on turns so it can wrap up gracefully
       // instead of being cut off mid-task

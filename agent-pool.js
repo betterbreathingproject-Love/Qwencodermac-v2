@@ -281,6 +281,10 @@ class AgentPool extends EventEmitter {
       ? factory(task, agentType, context)
       : this._createDefaultAgent(task, agentType, context);
 
+    // Store agent reference so cancelAll() can call interrupt() on it
+    const taskEntry = this._runningTasks.get(task.id || '')
+    if (taskEntry) taskEntry.agent = agent
+
     // Race between agent execution and timeout
     const timeoutPromise = new Promise((_, reject) => {
       const timer = setTimeout(() => {
@@ -388,6 +392,25 @@ class AgentPool extends EventEmitter {
   _createDefaultAgent(task, agentType, context) {
     // In production, this would create a QwenBridge with CallbackSink
     return async () => `Executed: ${task.title}`;
+  }
+
+  /**
+   * Cancel all currently running foreground tasks.
+   * Signals each task's AbortController and calls interrupt() on the agent.
+   * Used by Orchestrator.abort() to stop all in-flight dispatches immediately.
+   */
+  cancelAll() {
+    for (const [, entry] of this._runningTasks) {
+      try { entry.abortController.abort() } catch (_) {}
+      if (entry.agent && typeof entry.agent.interrupt === 'function') {
+        try { entry.agent.interrupt() } catch (_) {}
+      }
+    }
+    // Also drain the wait queue so queued dispatches don't start
+    for (const waiter of this._waitQueue) {
+      try { waiter.resolve() } catch (_) {}
+    }
+    this._waitQueue.length = 0
   }
 
   // --- Background Dispatch ---

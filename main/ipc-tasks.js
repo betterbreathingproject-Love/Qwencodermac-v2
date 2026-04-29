@@ -160,6 +160,27 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
     } catch (e) { return { error: e.message } }
   })
 
+  ipcMain.handle('task-graph-abort', async () => {
+    try {
+      if (orchestratorInstance) {
+        await orchestratorInstance.abort()
+      }
+      // Also cancel any running pool tasks directly (belt-and-suspenders)
+      getAgentPool().cancelAll()
+      return { ok: true }
+    } catch (e) { return { error: e.message } }
+  })
+
+  ipcMain.handle('task-graph-inject', async (_, message) => {
+    if (!isNonEmptyString(message)) return { error: 'message is required' }
+    try {
+      if (orchestratorInstance) {
+        orchestratorInstance.inject(message)
+      }
+      return { ok: true }
+    } catch (e) { return { error: e.message } }
+  })
+
   ipcMain.handle('task-graph-resume', async () => {
     try {
       if (orchestratorInstance) await orchestratorInstance.resume()

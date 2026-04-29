@@ -105,6 +105,8 @@ contextBridge.exposeInMainWorld('app', {
   taskGraphParse:   (f)     => ipcRenderer.invoke('task-graph-parse', f),
   taskGraphExecute: (f, p)  => ipcRenderer.invoke('task-graph-execute', f, p),
   taskGraphPause:   ()      => ipcRenderer.invoke('task-graph-pause'),
+  taskGraphAbort:   ()      => ipcRenderer.invoke('task-graph-abort'),
+  taskGraphInject:  (msg)   => ipcRenderer.invoke('task-graph-inject', msg),
   taskGraphResume:  ()      => ipcRenderer.invoke('task-graph-resume'),
   taskGraphStatus:  ()      => ipcRenderer.invoke('task-graph-status'),
 
