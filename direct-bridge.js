@@ -235,7 +235,7 @@ const TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'bash',
-      description: 'Execute a shell command and return its output. Use for running tests, installing packages, git operations, etc.',
+      description: 'Execute a shell command and return its output. Use for running tests, installing packages, git operations, building projects, etc. Timeout: 30s for general commands, 5 minutes for install/build commands (npm install, pip install, swift build, xcodebuild, pod install, cargo build, etc.). For interactive commands that ask questions, add flags to suppress prompts (e.g. npm init -y, pip install --no-input).',
       parameters: {
         type: 'object',
         properties: {
@@ -1352,10 +1352,13 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
             env: augmentedEnv,
             stdio: ['pipe', 'pipe', 'pipe'],
           })
+          // Use a longer timeout for known long-running commands (installs, builds, tests)
+          const isLongRunning = /\b(npm\s+install|npm\s+ci|yarn\s+install|pnpm\s+install|pip\s+install|pip3\s+install|poetry\s+install|bundle\s+install|pod\s+install|swift\s+build|swift\s+package\s+resolve|xcodebuild|cargo\s+build|cargo\s+install|go\s+build|go\s+get|mvn\s+install|gradle\s+build|make\b|cmake\b|brew\s+install|apt\s+install|apt-get\s+install)\b/i.test(args.command)
+          const timeoutMs = isLongRunning ? 300000 : 30000  // 5 min for installs/builds, 30s otherwise
           const timer = setTimeout(() => {
             killed = true
             proc.kill('SIGKILL')
-          }, 30000)
+          }, timeoutMs)
           proc.stdout.on('data', (chunk) => {
             stdout += chunk.toString()
             if (stdout.length > 2 * 1024 * 1024) { killed = true; proc.kill('SIGKILL') }
@@ -1367,7 +1370,7 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
           proc.on('close', (code) => {
             clearTimeout(timer)
             if (killed) {
-              resolve({ error: `Command timed out or exceeded output limit (30s):\n${(stdout + '\n' + stderr).trim().slice(0, 2000)}` })
+              resolve({ error: `Command timed out or exceeded output limit (${timeoutMs / 1000}s):\n${(stdout + '\n' + stderr).trim().slice(0, 2000)}` })
             } else if (code === 0) {
               resolve({ result: stdout || '(no output)' })
             } else {
@@ -3253,7 +3256,7 @@ ${cwd}
 - ALWAYS use tools to read, write, and execute. Never output code or file contents as plain text — the user cannot use it.
 - edit_file: ALWAYS re-read the file with read_file in the same turn before editing. Compressed history may have stale content.
 - write_file: keep each call under 300 lines. For larger files, write the first chunk then use bash with heredoc to append.
-- bash: prefer single focused commands. Check exit codes in the output.
+- bash: prefer single focused commands. Check exit codes in the output. For installs and builds (npm install, pip install, swift build, xcodebuild), the timeout is 5 minutes — use them directly. Always add non-interactive flags to suppress prompts: `npm init -y`, `pip install --no-input`, `brew install --no-interaction`.
 - search_files: use regex patterns. Narrow with path/include filters to avoid noise.
 - NEVER output meta-commentary like "[Response interrupted by Fast assistant]", "[Summarized by fast model]", or any bracketed system annotations. These are injected automatically — do not reproduce or reference them in your text responses.
 
