@@ -103,6 +103,46 @@ class Orchestrator extends EventEmitter {
     // — causing the orchestrator to hang silently.
     this._resetStaleInProgressNodes();
 
+    // Log node statuses after reset for debugging
+    const statusCounts = {};
+    for (const [id, node] of this._graph.nodes) {
+      statusCounts[node.status] = (statusCounts[node.status] || 0) + 1;
+    }
+    console.log('[orchestrator] Node statuses after reset:', JSON.stringify(statusCounts));
+    console.log('[orchestrator] Total nodes:', this._graph.nodes.size);
+
+    // If all nodes are already completed/skipped, reset them all so the
+    // graph can be re-executed. This handles the "re-build" case where
+    // the user clicks Build on a spec that was already fully built.
+    const allDone = [...this._graph.nodes.values()].every(
+      n => n.status === 'completed' || n.status === 'skipped'
+    );
+    if (allDone && this._graph.nodes.size > 0) {
+      console.log('[orchestrator] All nodes already completed — resetting for re-execution');
+      const ids = [...this._graph.nodes.keys()];
+      for (const id of ids) {
+        this._updateNodeStatus(id, 'not_started');
+      }
+    }
+
+    // Check for stuck graphs: nodes that are not_started but whose
+    // dependencies will never be satisfied (deps are failed/not_started
+    // with no path to completion). Reset the blocking chain.
+    const nextCheck = getNextExecutableNodes(this._graph);
+    if (nextCheck.length === 0 && this._graph.nodes.size > 0) {
+      // No executable nodes — find not_started nodes with unsatisfied deps
+      // and reset their dependency chain
+      const notStarted = [...this._graph.nodes.values()].filter(n => n.status === 'not_started');
+      const failed = [...this._graph.nodes.values()].filter(n => n.status === 'failed');
+      if (notStarted.length > 0 || failed.length > 0) {
+        console.log('[orchestrator] Stuck graph detected: %d not_started, %d failed — resetting blocked nodes', notStarted.length, failed.length);
+        // Reset failed nodes so their dependents can proceed
+        for (const node of failed) {
+          this._updateNodeStatus(node.id, 'not_started');
+        }
+      }
+    }
+
     // ── Memory: archive workflow start ────────────────────────────────────
     if (memoryClient) {
       const graphSummary = {
@@ -119,6 +159,7 @@ class Orchestrator extends EventEmitter {
     // Find start node: ^start marker or first root node
     if (this._state === 'running' && !this._hasInProgressNodes()) {
       const startNodeId = this._findStartNodeId();
+      console.log('[orchestrator] Start node:', startNodeId, 'status:', startNodeId ? this._graph.nodes.get(startNodeId)?.status : 'N/A');
       if (startNodeId) {
         const startNode = this._graph.nodes.get(startNodeId);
         if (startNode && startNode.status === 'not_started') {
@@ -138,10 +179,18 @@ class Orchestrator extends EventEmitter {
    * the tasks.md was persisted with [-] nodes that have no active dispatch.
    */
   _resetStaleInProgressNodes() {
+    // Collect IDs first since _updateNodeStatus replaces this._graph
+    const staleIds = [];
     for (const [id, node] of this._graph.nodes) {
       if (node.status === 'in_progress') {
-        this._updateNodeStatus(id, 'not_started');
+        staleIds.push(id);
       }
+    }
+    if (staleIds.length > 0) {
+      console.log('[orchestrator] Resetting stale in_progress nodes:', staleIds);
+    }
+    for (const id of staleIds) {
+      this._updateNodeStatus(id, 'not_started');
     }
   }
 
@@ -151,10 +200,17 @@ class Orchestrator extends EventEmitter {
    * treating the graph as complete.
    */
   _resetFailedNodes() {
+    const failedIds = [];
     for (const [id, node] of this._graph.nodes) {
       if (node.status === 'failed') {
-        this._updateNodeStatus(id, 'not_started');
+        failedIds.push(id);
       }
+    }
+    if (failedIds.length > 0) {
+      console.log('[orchestrator] Resetting failed nodes:', failedIds);
+    }
+    for (const id of failedIds) {
+      this._updateNodeStatus(id, 'not_started');
     }
   }
 
@@ -178,10 +234,20 @@ class Orchestrator extends EventEmitter {
   async _runLoop() {
     while (this._state === 'running') {
       const nextNodes = getNextExecutableNodes(this._graph);
+      console.log('[orchestrator] _runLoop iteration: nextNodes=%d ids=%s', nextNodes.length, nextNodes.map(n => n.id).join(','));
 
       if (nextNodes.length === 0) {
         // Check if there are in-progress nodes (waiting for completion)
-        if (this._hasInProgressNodes()) break;
+        if (this._hasInProgressNodes()) {
+          console.log('[orchestrator] _runLoop: no next nodes but has in-progress — breaking to wait');
+          break;
+        }
+        // Log why we're completing
+        const statuses = {};
+        for (const [id, node] of this._graph.nodes) {
+          statuses[node.status] = (statuses[node.status] || 0) + 1;
+        }
+        console.log('[orchestrator] _runLoop: no next nodes, no in-progress. Statuses:', JSON.stringify(statuses));
         // All done
         this._setState('completed');
         if (this._onComplete) this._onComplete();
