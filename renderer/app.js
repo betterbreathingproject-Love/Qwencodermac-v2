@@ -1642,7 +1642,7 @@ async function sendAgentMode(prompt, opts = {}) {
                 }
                 break
               case 'fast-assist': {
-                const fastEl2 = document.getElementById(respId + '-fast')
+                const fastEl2 = orchTaskBlockId ? document.getElementById(orchTaskBlockId + '-fast') : null
                 if (fastEl2) fastEl2.insertAdjacentHTML('beforeend', renderFastAssistBlock(ev))
                 else appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${ev.label || '⚡ Fast Assistant'}</span>`)
                 break
