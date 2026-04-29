@@ -1139,10 +1139,21 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
   function validatePath(filePath) {
     if (!filePath || typeof filePath !== 'string') return { error: 'path is required and must be a non-empty string. You must pass a "path" key in the tool arguments, e.g. read_file({"path": "index.html"})' }
     if (filePath.includes('\0')) return { error: 'path contains null bytes' }
-    const resolved = path.resolve(cwd, filePath)
+
+    // If the agent passes an absolute path that's within the project, accept it
+    // by converting it to a relative path first. This handles cases where the agent
+    // copies an absolute path from an error message or file listing.
+    let effectivePath = filePath
+    if (path.isAbsolute(filePath) && filePath.startsWith(cwd + path.sep)) {
+      effectivePath = path.relative(cwd, filePath)
+    } else if (path.isAbsolute(filePath) && filePath === cwd) {
+      effectivePath = '.'
+    }
+
+    const resolved = path.resolve(cwd, effectivePath)
     // Ensure the resolved path is within the cwd (or is the cwd itself)
     if (!resolved.startsWith(cwd + path.sep) && resolved !== cwd) {
-      return { error: `Path "${filePath}" resolves outside the working directory` }
+      return { error: `Path "${filePath}" resolves outside the working directory. Use a relative path from the project root instead. Working directory: ${cwd}` }
     }
     return { resolved }
   }
@@ -1222,9 +1233,25 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
       case 'list_dir': {
         const listPath = (args && args.path != null) ? args.path : '.'
         const v = validatePath(listPath)
-        if (v.error) return { error: `list_dir failed: ${v.error}. The working directory is: ${cwd}` }
+        if (v.error) return { error: `list_dir failed: ${v.error}` }
         const p = v.resolved
-        if (!fs.existsSync(p)) return { error: `Directory not found: ${listPath}. Working directory: ${cwd}. If this is a new project, use bash({"command": "mkdir -p ."}) to create the project directory first.` }
+        if (!fs.existsSync(p)) {
+          // Help the agent recover by showing what's actually at the parent directory
+          const parentDir = path.dirname(p)
+          let hint = ''
+          if (fs.existsSync(parentDir)) {
+            try {
+              const siblings = fs.readdirSync(parentDir, { withFileTypes: true })
+                .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+                .map(e => e.name)
+                .slice(0, 20)
+              if (siblings.length > 0) {
+                hint = ` Available directories in "${path.relative(cwd, parentDir) || '.'}": ${siblings.join(', ')}`
+              }
+            } catch { /* ignore */ }
+          }
+          return { error: `Directory not found: ${listPath}. Working directory: ${cwd}.${hint} If this is a new project, use bash({"command": "mkdir -p ${listPath}"}) to create it.` }
+        }
         try {
           const entries = fs.readdirSync(p, { withFileTypes: true })
             .filter(e => !e.name.startsWith('.'))
