@@ -221,7 +221,7 @@ const TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'list_dir',
-      description: 'List files and directories at the given path. Returns names with / suffix for directories.',
+      description: 'List files and directories at the given path. Returns names with / suffix for directories. When called on the project root ("."), returns a full recursive file tree — use this to get a complete picture of what files exist before searching.',
       parameters: {
         type: 'object',
         properties: {
@@ -1293,6 +1293,16 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
               return a.name.localeCompare(b.name)
             })
             .map(e => e.isDirectory() ? e.name + '/' : e.name)
+
+          // When listing the project root, return a full recursive tree so the
+          // agent gets complete spatial awareness on demand without needing to
+          // call list_dir repeatedly on each subdirectory.
+          const isProjectRoot = p === cwd || p === path.resolve(cwd, '.')
+          if (isProjectRoot) {
+            const tree = buildFileTree(p, 3)
+            return { result: tree || (entries.length > 0 ? entries.join('\n') : '(empty directory)') }
+          }
+
           return { result: entries.length > 0 ? entries.join('\n') : '(empty directory)' }
         } catch (err) {
           return { error: `list_dir error for "${listPath}" (cwd: ${cwd}): ${err.message}` }
@@ -3245,6 +3255,7 @@ ${cwd}
 - write_file: keep each call under 300 lines. For larger files, write the first chunk then use bash with heredoc to append.
 - bash: prefer single focused commands. Check exit codes in the output.
 - search_files: use regex patterns. Narrow with path/include filters to avoid noise.
+- NEVER output meta-commentary like "[Response interrupted by Fast assistant]", "[Summarized by fast model]", or any bracketed system annotations. These are injected automatically — do not reproduce or reference them in your text responses.
 
 ## Progress tracking
 Before starting any multi-step task, call update_todos with all steps as "pending". Mark each "in_progress" when you start it and "done" when complete. Call task_complete when all items are done — this is the ONLY way to end a session.
