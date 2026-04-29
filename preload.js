@@ -119,12 +119,13 @@ contextBridge.exposeInMainWorld('app', {
   astSearchStatus:  ()      => ipcRenderer.invoke('ast-search-status'),
 
   // spec workflow
-  specInit:         (n)     => ipcRenderer.invoke('spec-init', n),
+  specInit:         (n, t)  => ipcRenderer.invoke('spec-init', n, t),
   specPhase:        (d)     => ipcRenderer.invoke('spec-phase', d),
   specAdvance:      (d)     => ipcRenderer.invoke('spec-advance', d),
   specArtifacts:    (d)     => ipcRenderer.invoke('spec-artifacts', d),
   specSaveArtifact: (d,p,c) => ipcRenderer.invoke('spec-save-artifact', d, p, c),
   specConfig:       (d)     => ipcRenderer.invoke('spec-config', d),
+  specSaveConfig:   (d, u)  => ipcRenderer.invoke('spec-save-config', d, u),
   specList:         ()      => ipcRenderer.invoke('spec-list'),
   specDelete:       (n)     => ipcRenderer.invoke('spec-delete', n),
 

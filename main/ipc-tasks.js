@@ -54,17 +54,34 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
       // Read spec context (requirements + design) if this is a spec tasks.md
       let specContext = ''
       const specDir = require('path').dirname(filePath)
+      let targetProjectDir = null
       try {
-        const reqPath = require('path').join(specDir, 'requirements.md')
-        const designPath = require('path').join(specDir, 'design.md')
+        const p = require('path')
         const fs = require('fs')
+        const reqPath = p.join(specDir, 'requirements.md')
+        const designPath = p.join(specDir, 'design.md')
+        const configPath = p.join(specDir, '.config.maccoder')
         if (fs.existsSync(reqPath)) {
           specContext += '## Requirements\n\n' + fs.readFileSync(reqPath, 'utf-8') + '\n\n'
         }
         if (fs.existsSync(designPath)) {
           specContext += '## Design\n\n' + fs.readFileSync(designPath, 'utf-8') + '\n\n'
         }
+        // Read targetProjectDir from spec config — this is the project being built,
+        // which may differ from the spec storage location when the spec was created
+        // while a different project was open in the UI.
+        if (fs.existsSync(configPath)) {
+          const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+          if (cfg.targetProjectDir) targetProjectDir = cfg.targetProjectDir
+        }
       } catch (_) { /* spec context is optional */ }
+
+      // Derive project directory: prefer stored targetProjectDir, fall back to 3 levels up
+      const projectDir = targetProjectDir || (() => {
+        const p = require('path')
+        return p.resolve(specDir, '..', '..', '..')
+      })()
+      console.log('[orchestrator] projectDir:', projectDir, '(from config:', !!targetProjectDir, ')')
 
       orchestratorInstance = new Orchestrator({
         taskGraph: graph,
@@ -72,15 +89,7 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
         tasksFilePath: filePath,
         specContext,
         lspManager: getLspManager ? getLspManager() : null,
-        // Derive project directory from the spec file path.
-        // specDir is <projectRoot>/.maccoder/specs/<name>/ — walk up 3 levels.
-        // This is always correct regardless of which project is open in the UI.
-        projectDir: (() => {
-          const p = require('path')
-          const derived = p.resolve(specDir, '..', '..', '..')
-          console.log('[orchestrator] projectDir derived from spec:', derived)
-          return derived
-        })(),
+        projectDir,
       })
       orchestratorInstance.on('task-status-event', (evt) => {
         getMainWindow()?.webContents.send('task-status-event', evt)
@@ -176,11 +185,11 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
   })
 
   // ── spec workflow ───────────────────────────────────────────────────────
-  ipcMain.handle('spec-init', async (_, featureName) => {
+  ipcMain.handle('spec-init', async (_, featureName, targetProjectDir) => {
     if (!isNonEmptyString(featureName)) return { error: 'featureName is required' }
     const project = getCurrentProject()
     if (!project) return { error: 'No project open' }
-    try { return initSpec(featureName, project) }
+    try { return initSpec(featureName, project, targetProjectDir || project) }
     catch (e) { return { error: e.message } }
   })
 
@@ -221,6 +230,23 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
     try {
       const raw = await fsp.readFile(configPath, 'utf-8')
       return JSON.parse(raw)
+    } catch (e) { return { error: e.message } }
+  })
+
+  ipcMain.handle('spec-save-config', async (_, specDir, updates) => {
+    if (!isNonEmptyString(specDir)) return { error: 'specDir is required' }
+    if (!updates || typeof updates !== 'object') return { error: 'updates must be an object' }
+    const path = require('path')
+    const fs = require('fs')
+    const configPath = path.join(specDir, '.config.maccoder')
+    try {
+      let cfg = {}
+      if (fs.existsSync(configPath)) {
+        cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      }
+      Object.assign(cfg, updates, { lastModified: Date.now() })
+      fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8')
+      return { ok: true }
     } catch (e) { return { error: e.message } }
   })
 

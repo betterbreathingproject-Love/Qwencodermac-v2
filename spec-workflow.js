@@ -20,6 +20,7 @@ function createSpecConfig(opts = {}) {
     currentPhase: opts.currentPhase || 'requirements',
     created: opts.created || Date.now(),
     lastModified: opts.lastModified || Date.now(),
+    targetProjectDir: opts.targetProjectDir || null, // the project being built (may differ from spec storage location)
   };
 }
 
@@ -31,7 +32,7 @@ function createSpecConfig(opts = {}) {
  * @param {string} projectDir - Root project directory
  * @returns {{ featureName: string, specDir: string, currentPhase: string, config: object }}
  */
-function initSpec(featureName, projectDir) {
+function initSpec(featureName, projectDir, targetProjectDir) {
   if (!featureName || typeof featureName !== 'string') {
     throw new Error('featureName is required and must be a non-empty string');
   }
@@ -44,7 +45,9 @@ function initSpec(featureName, projectDir) {
 
   fs.mkdirSync(specDir, { recursive: true });
 
-  const config = createSpecConfig();
+  const config = createSpecConfig({
+    targetProjectDir: targetProjectDir || projectDir,
+  });
   const configPath = path.join(specDir, '.config.maccoder');
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
 
@@ -53,6 +56,7 @@ function initSpec(featureName, projectDir) {
     specDir,
     currentPhase: config.currentPhase,
     config,
+    targetProjectDir: config.targetProjectDir,
   };
 }
 

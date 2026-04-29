@@ -3136,7 +3136,7 @@ async function createInlineSpec() {
   const description = (descInput?.value || '').trim()
   if (!name) { appendMsg('system', '⚠️ Enter a feature name.'); return }
   if (!currentProject) { appendMsg('system', '⚠️ Open a project first.'); return }
-  const result = await window.app.specInit(name)
+  const result = await window.app.specInit(name, currentProject)
   if (result.error) { appendMsg('system', '❌ ' + result.error); return }
   currentSpecDir = result.specDir
   currentSpecName = result.featureName
@@ -3774,6 +3774,15 @@ async function startInlineSpecImplementation() {
   const artifacts = await window.app.specArtifacts(currentSpecDir)
   if (!artifacts.tasks) { appendMsg('system', '⚠️ Generate tasks first.'); return }
 
+  // Ensure the spec config has targetProjectDir set — patch it if missing.
+  // This handles specs created before this field was added.
+  try {
+    const cfg = await window.app.specConfig(currentSpecDir)
+    if (!cfg.error && !cfg.targetProjectDir) {
+      await window.app.specSaveConfig(currentSpecDir, { targetProjectDir: currentProject })
+    }
+  } catch (_) { /* best-effort */ }
+
   // Use the spec dir directly — works for both .kiro/specs/ and .maccoder/specs/
   const tasksPath = currentSpecDir + '/tasks.md'
   try {
@@ -3810,7 +3819,7 @@ async function createNewSpec() {
   const description = (descInput?.value || '').trim()
   if (!name) { appendMsg('system', '⚠️ Enter a feature name.'); return }
   if (!currentProject) { appendMsg('system', '⚠️ Open a project first.'); return }
-  const result = await window.app.specInit(name)
+  const result = await window.app.specInit(name, currentProject)
   if (result.error) { appendMsg('system', '❌ ' + result.error); return }
   currentSpecDir = result.specDir
   currentSpecName = result.featureName
@@ -4104,7 +4113,7 @@ async function loadSpecPanel() {
 async function handleSpecCommand(args) {
   if (args) {
     if (!currentProject) { appendMsg('system', '⚠️ Open a project first.'); return }
-    const result = await window.app.specInit(args)
+    const result = await window.app.specInit(args, currentProject)
     if (result.error) { appendMsg('system', '❌ ' + result.error); return }
     currentSpecDir = result.specDir
     currentSpecName = result.featureName
