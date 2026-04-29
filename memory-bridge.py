@@ -1883,7 +1883,7 @@ async def _handle_todo_bootstrap(payload: dict) -> AssistResponse:
             item_id = item.get("id")
             content = item.get("content")
             status = item.get("status", "pending")
-            if not isinstance(item_id, int) or not isinstance(content, str):
+            if not isinstance(item_id, int) or not isinstance(content, str) or not content.strip():
                 continue
             todos.append({"id": item_id, "content": content, "status": "pending"})
 

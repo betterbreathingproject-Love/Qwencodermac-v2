@@ -130,7 +130,19 @@ function updateTodoPanel(todos, status) {
     const checkCls = isDone ? 'todo-check done' : isActive ? 'todo-check active' : 'todo-check'
     const checkIcon = isDone ? '✓' : isActive ? '◉' : '○'
     const textCls = isDone ? 'todo-text done' : isActive ? 'todo-text active' : 'todo-text'
-    const content = todo.content || todo.title || todo.text || JSON.stringify(todo)
+    let content = (typeof todo.content === 'string' && todo.content) ? todo.content
+      : (typeof todo.title === 'string' && todo.title) ? todo.title
+      : (typeof todo.text === 'string' && todo.text) ? todo.text
+      : ''
+    // Guard against the model double-encoding a todo object as the content string
+    // e.g. content = '{"content":"","status":"pending"}' — extract the inner content
+    if (content && content.startsWith('{')) {
+      try {
+        const inner = JSON.parse(content)
+        const innerContent = inner.content || inner.title || inner.text || ''
+        if (innerContent) content = innerContent
+      } catch { /* not JSON — use as-is */ }
+    }
     const todoId = todo.id != null ? `<span class="todo-id">${esc(String(todo.id))}</span>` : ''
     itemsHtml += `<div class="todo-item ${isDone ? 'completed' : ''} ${isActive ? 'in-progress' : ''}">
       <span class="${checkCls}">${checkIcon}</span>

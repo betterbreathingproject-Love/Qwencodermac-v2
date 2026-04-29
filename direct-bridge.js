@@ -2233,7 +2233,7 @@ class DirectBridge {
         if (_lastTodos && _lastTodos.length > 0) {
           const incomplete = _lastTodos.filter(t => t.status !== 'done' && t.status !== 'completed')
           if (incomplete.length > 0) {
-            const remaining = incomplete.map(t => t.text || t.label || t.title || 'unnamed').join(', ')
+            const remaining = incomplete.map(t => t.content || t.text || t.label || t.title || 'unnamed').join(', ')
             this.send('qwen-event', { type: 'system', subtype: 'debug', data: `${incomplete.length} todo items still incomplete` })
             messages.push({ role: 'assistant', content: text })
             messages.push({
@@ -2822,7 +2822,7 @@ class DirectBridge {
       if (turn >= 1 && !_lastTodos) {
         messages.push({
           role: 'system',
-          content: 'BLOCKED: You MUST call update_todos before any other tool. Create your todo list NOW with all steps needed, each set to "pending". No other tools will be effective until you do this. Example: update_todos({"todos": [{"text": "Step 1 description", "status": "pending"}, {"text": "Step 2 description", "status": "pending"}]})',
+          content: 'BLOCKED: You MUST call update_todos before any other tool. Create your todo list NOW with all steps needed, each set to "pending". No other tools will be effective until you do this. Example: update_todos({"todos": [{"id": 1, "content": "Step 1 description", "status": "pending"}, {"id": 2, "content": "Step 2 description", "status": "pending"}]})',
         })
       }
 
@@ -2830,7 +2830,7 @@ class DirectBridge {
       if (_lastTodos && turn > 0 && turn % 3 === 0) {
         const done = _lastTodos.filter(t => t.status === 'done' || t.status === 'completed').length
         const total = _lastTodos.length
-        const pending = _lastTodos.filter(t => t.status === 'pending').map(t => t.text || t.label || t.title || '?')
+        const pending = _lastTodos.filter(t => t.status === 'pending').map(t => t.content || t.text || t.label || t.title || '?')
         if (pending.length > 0) {
           messages.push({
             role: 'system',
