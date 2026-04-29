@@ -1517,6 +1517,37 @@ class DirectBridge {
             this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Memory: retrieved ${memResult.results.length} relevant items from past sessions` })
           }
         } catch (_) { /* memory unavailable — proceed without */ }
+
+        // ── Session resume brief ──────────────────────────────────────────
+        // When conversation history was trimmed (large session), inject a
+        // structured brief of what was already accomplished so the agent
+        // doesn't re-search things it already found.
+        const historyWasTrimmed = conversationHistory && conversationHistory.length > 0 &&
+          conversationHistory.reduce((sum, m) => sum + estimateTokens(m.content), 0) > 6000
+        if (historyWasTrimmed) {
+          try {
+            // Search the archive for tool_call and decision events from this project
+            const priorWork = await memoryClient.archiveSearch(
+              `${path.basename(workDir)} tool_call decision`,
+              { limit: 20 }
+            )
+            if (priorWork && priorWork.length > 0) {
+              // Build a compact "what was already done" brief
+              const toolCalls = priorWork
+                .filter(r => r.event_type === 'tool_call' || r.event_type === 'decision')
+                .slice(0, 10)
+                .map(r => `• ${r.summary || (typeof r.payload === 'string' ? r.payload.slice(0, 100) : JSON.stringify(r.payload || '').slice(0, 100))}`)
+                .join('\n')
+              if (toolCalls) {
+                messages.push({
+                  role: 'system',
+                  content: `[Session Resume — prior work in this project]\nThe following was already done in previous sessions. Do NOT repeat these searches or actions unless the user explicitly asks:\n${toolCalls}\n\nContinue from where the work left off.`,
+                })
+                this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Memory: injected session resume brief (${toolCalls.split('\n').length} prior actions)` })
+              }
+            }
+          } catch (_) { /* archive unavailable — proceed without */ }
+        }
       }
 
       // Gather active diagnostics and inject into context so the agent
@@ -3047,6 +3078,24 @@ After every write_file or edit_file the LSP reports new errors in the tool resul
 
 ## Compressed context
 Large tool results are compressed automatically. If you see [compressed: ... rewind key: rw_xxx], call rewind_context with that key only if you need the full content.
+
+## Memory system
+Your context may include injected blocks — read them before starting work:
+- **[Memory Context — from previous sessions]**: relevant facts retrieved from past sessions. Use this to avoid re-discovering things you already know.
+- **[Session Resume — prior work]**: a list of actions already completed in this project. Do NOT repeat these searches or file reads unless the user explicitly asks you to redo them.
+- **[LSP] errors**: active diagnostics — keep these in mind and avoid making them worse.
+
+If the user asks about something from a past session ("remember when...", "what did I say about..."), that triggers a deeper memory search automatically — you don't need to do anything special.
+
+## Fast assistant (running alongside you)
+A small 0.8B model runs in the gaps between your turns. It handles:
+- Generating your initial todo list (you can refine it with update_todos)
+- Updating todo statuses as tool calls complete
+- Summarising large web pages, git diffs, and search results before they reach you
+- Diagnosing tool errors with a one-sentence root cause (shown as [Fast model diagnosis: ...])
+- Validating tool arguments before execution
+
+You don't need to manage any of this — it happens transparently.
 ${autoEdit ? '\nAuto-edit mode: proceed with all changes without asking for confirmation.' : ''}`
   }
 
