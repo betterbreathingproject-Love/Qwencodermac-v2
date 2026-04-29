@@ -37,7 +37,7 @@ function showToast(message, type = 'info', duration = 5000) {
 
 // ── init ──────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', async () => {
-  window.app.onServerStatus(s => { setServerStatus(s.running); if(s.running) refreshStatus() })
+  window.app.onServerStatus(s => { setServerStatus(s.running); if(s.running) refreshStatus().then(() => autoLoadLastModel()) })
   await refreshStatus()
   await autoLoadLastModel()
 

@@ -328,13 +328,22 @@ if _memory_bridge is not None:
 
 @app.on_event("startup")
 async def _startup_memory():
-    """Initialize memory-bridge components at server startup."""
+    """Initialize memory-bridge components in the background after server is ready.
+
+    Runs as a fire-and-forget background task so the server starts accepting
+    requests immediately — memory init (especially VectorMemory loading
+    sentence-transformers) can take 2-5s and must not block startup.
+    """
     if _memory_bridge is not None:
-        try:
-            await _memory_bridge.initialize()
-            print("[server] Memory-bridge initialized")
-        except Exception as e:
-            print(f"[server] WARNING: Memory-bridge initialization failed: {e}", file=sys.stderr)
+        import asyncio
+        async def _init_bg():
+            try:
+                await _memory_bridge.initialize()
+                print("[server] Memory-bridge initialized ✅", flush=True)
+            except Exception as e:
+                print(f"[server] WARNING: Memory-bridge initialization failed: {e}", file=sys.stderr, flush=True)
+        # Schedule as background task — server is already serving by the time this runs
+        asyncio.create_task(_init_bg())
 
 
 @app.on_event("shutdown")
