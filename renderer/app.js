@@ -5092,7 +5092,8 @@ async function initCalibrationStatus() {
   } catch { /* ignore */ }
 
   if (window.app.onCalibrationComplete) {
-    window.app.onCalibrationComplete(({ modelId, profile, fallback }) => {
+    window.app.onCalibrationComplete(({ modelId, profile, fallback, fromCache }) => {
+      if (profile) profile.fromCache = fromCache || false
       setCalibrationStatus('ready', profile)
       renderCalibrationDashboard(profile)
     })
@@ -5146,12 +5147,17 @@ function renderCalibrationDashboard(profile) {
 
   content.innerHTML = `
     <div class="calibration-section">
-      <div class="calibration-section-title">Benchmark Results</div>
+      <div class="calibration-section-title">Benchmark Results
+        ${profile.fromCache ? '<span style="font-size:10px;color:var(--muted);font-weight:normal;margin-left:6px">cached</span>' : ''}
+      </div>
       <div class="calibration-grid">${chipHtml(benchmarkChips)}</div>
     </div>
     <div class="calibration-section">
       <div class="calibration-section-title">Computed Settings</div>
       <div class="calibration-grid">${chipHtml(settingsChips)}</div>
+    </div>
+    <div style="margin-top:10px">
+      <button class="btn-sm" onclick="recalibrateNow()" style="font-size:11px;opacity:0.7">🔄 Recalibrate (force fresh benchmark)</button>
     </div>
   `
 }
@@ -5159,6 +5165,19 @@ function renderCalibrationDashboard(profile) {
 function clearCalibrationUI() {
   setCalibrationStatus('unavailable', null)
   renderCalibrationDashboard(null)
+}
+
+async function recalibrateNow() {
+  if (isGenerating) { showToast('Stop the agent first before recalibrating', 'warning'); return }
+  if (!loadedModelId) { showToast('Load a model first', 'warning'); return }
+  if (!confirm('This will run a fresh benchmark and overwrite the cached calibration for this model. Continue?')) return
+  setCalibrationStatus('calibrating', null)
+  try {
+    await window.app.recalibrate(loadedModelId)
+    showToast('Recalibration started — results will appear shortly', 'info')
+  } catch (err) {
+    showToast('Recalibration failed: ' + err.message, 'error')
+  }
 }
 
 // ── Symbol panel ──────────────────────────────────────────────────────────────
@@ -5609,7 +5628,9 @@ async function agentRoleGenerate() {
   btn.disabled = true
   btn.textContent = '⏳ Generating...'
   status.style.display = 'block'
-  status.textContent = 'Asking the model to generate prompt and tools...'
+  status.textContent = isGenerating
+    ? '⏳ Agent is running — queued, will generate when it finishes...'
+    : 'Asking the model to generate prompt and tools...'
   try {
     const res = await window.app.agentRoleGenerate({
       name: name || 'custom',

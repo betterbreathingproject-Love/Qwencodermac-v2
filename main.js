@@ -272,6 +272,66 @@ ipcCalibration.register(ipcMain, { getCalibrationProfile: ipcServer.getCalibrati
 let _memoryClientForRouting = null
 try { _memoryClientForRouting = require('./memory-client.js') } catch (_) {}
 
+// ── Server request queue ──────────────────────────────────────────────────────
+// Serializes all direct HTTP calls to the MLX server so concurrent requests
+// (agent run + role generate + calibration) don't race on the Metal GPU.
+// Callers await _serverQueue.enqueue(fn) — fn runs when the server is free.
+const _serverQueue = (() => {
+  let _running = false
+  const _waiters = []
+  const queue = {
+    _agentRunning: false,
+    _waiters,
+    /** Returns true if the server is currently busy with a request. */
+    isBusy() { return _running || this._agentRunning },
+    /**
+     * Enqueue a function that makes a server request.
+     * Returns a promise that resolves with the function's return value.
+     * @param {function} fn - async function to run when the server is free
+     * @param {object} [opts]
+     * @param {boolean} [opts.skipIfBusy] - resolve immediately with null if busy
+     * @param {number} [opts.timeoutMs] - reject after this many ms waiting in queue
+     */
+    enqueue(fn, opts = {}) {
+      return new Promise((resolve, reject) => {
+        if (opts.skipIfBusy && this.isBusy()) {
+          return resolve(null)
+        }
+        const timeoutMs = opts.timeoutMs || 0
+        let timer = null
+        const waiter = async () => {
+          if (timer) clearTimeout(timer)
+          _running = true
+          try {
+            resolve(await fn())
+          } catch (err) {
+            reject(err)
+          } finally {
+            _running = false
+            if (_waiters.length > 0) {
+              const next = _waiters.shift()
+              setImmediate(next)
+            }
+          }
+        }
+        if (!this.isBusy()) {
+          waiter()
+        } else {
+          if (timeoutMs > 0) {
+            timer = setTimeout(() => {
+              const idx = _waiters.indexOf(waiter)
+              if (idx !== -1) _waiters.splice(idx, 1)
+              reject(new Error('Server request timed out waiting in queue'))
+            }, timeoutMs)
+          }
+          _waiters.push(waiter)
+        }
+      })
+    },
+  }
+  return queue
+})()
+
 ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, model, images, conversationHistory, samplingParams, taskGraphPath }) => {
   if (!qwenBridge) return { error: 'not ready' }
   if (typeof prompt !== 'string' || !prompt.trim()) return { error: 'prompt is required' }
@@ -323,6 +383,22 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
   })
 
   qwenBridge.run({ prompt, cwd: cwd || currentProject, permissionMode, model, images, conversationHistory, samplingParams, taskGraphPath }).catch(() => {})
+  // Mark the server queue as busy for the duration of this agent run.
+  // This prevents concurrent requests (role generate, calibration) from
+  // hitting the Metal GPU simultaneously and crashing.
+  _serverQueue._agentRunning = true
+  const _releaseOnEnd = (_, data) => {
+    if (data && (data.type === 'session-end' || data.type === 'error' || data.type === 'result')) {
+      _serverQueue._agentRunning = false
+      mainWindow?.webContents.off('qwen-event', _releaseOnEnd)
+      // Drain any queued requests now that the agent is done
+      if (_serverQueue._waiters && _serverQueue._waiters.length > 0) {
+        const next = _serverQueue._waiters.shift()
+        setImmediate(next)
+      }
+    }
+  }
+  mainWindow?.webContents.on('qwen-event', _releaseOnEnd)
   return { ok: true }
 })
 ipcMain.handle('qwen-interrupt', async () => { await qwenBridge?.interrupt(); return { ok: true } })
@@ -395,6 +471,15 @@ ipcMain.handle('agent-role-delete', async (_, name) => {
 
 ipcMain.handle('agent-role-generate', async (_, { name, description, existingPrompt }) => {
   if (!qwenBridge) return { error: 'not ready' }
+
+  // If the main agent is running, queue this request rather than crashing Metal
+  if (_serverQueue.isBusy()) {
+    mainWindow?.webContents.send('qwen-event', {
+      type: 'system', subtype: 'debug',
+      data: 'Agent role generation queued — waiting for current agent to finish...'
+    })
+  }
+
   const allTools = ['read_file', 'write_file', 'edit_file', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch', 'browser_navigate', 'browser_screenshot', 'browser_click', 'browser_type', 'browser_get_text', 'browser_evaluate', 'browser_wait_for', 'browser_close']
   const prompt = `You are helping configure a specialized AI coding agent role.
 
@@ -414,19 +499,21 @@ Generate a JSON object with exactly these fields:
 Reply with ONLY the JSON object, no other text.`
 
   try {
-    const http = require('http')
-    const body = JSON.stringify({ messages: [{ role: 'user', content: prompt }], max_tokens: 512, temperature: 0.3 })
-    const result = await new Promise((resolve, reject) => {
-      const req = http.request({ hostname: '127.0.0.1', port: SERVER_PORT, path: '/v1/chat/completions', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, (res) => {
-        let data = ''
-        res.on('data', c => data += c)
-        res.on('end', () => { try { resolve(JSON.parse(data)) } catch { reject(new Error(data)) } })
+    const result = await _serverQueue.enqueue(async () => {
+      const http = require('http')
+      const body = JSON.stringify({ messages: [{ role: 'user', content: prompt }], max_tokens: 512, temperature: 0.3 })
+      return new Promise((resolve, reject) => {
+        const req = http.request({ hostname: '127.0.0.1', port: SERVER_PORT, path: '/v1/chat/completions', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, (res) => {
+          let data = ''
+          res.on('data', c => data += c)
+          res.on('end', () => { try { resolve(JSON.parse(data)) } catch { reject(new Error(data)) } })
+        })
+        req.on('error', reject)
+        req.setTimeout(30000, () => { req.destroy(); reject(new Error('timeout')) })
+        req.write(body)
+        req.end()
       })
-      req.on('error', reject)
-      req.setTimeout(30000, () => { req.destroy(); reject(new Error('timeout')) })
-      req.write(body)
-      req.end()
-    })
+    }, { timeoutMs: 300000 }) // wait up to 5 min for the agent to finish
     const text = result.choices?.[0]?.message?.content || ''
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (!jsonMatch) return { error: 'Model did not return valid JSON' }

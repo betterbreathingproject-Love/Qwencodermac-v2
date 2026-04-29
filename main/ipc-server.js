@@ -3,6 +3,7 @@
 const http = require('http')
 const fs = require('fs')
 const path = require('path')
+const os = require('os')
 const { spawn } = require('child_process')
 const calibrator = require('../calibrator')
 const config = require('../config')
@@ -10,6 +11,48 @@ const config = require('../config')
 // ── calibration state ─────────────────────────────────────────────────────────
 let _calibrationProfile = null
 let _calibrating = false
+
+// ── calibration cache (persisted to disk, keyed by model ID) ─────────────────
+// Profiles are stored in ~/.qwencoder/calibration/<modelKey>.json
+// so calibration only runs once per model, not on every server restart.
+
+function _calibrationCacheDir() {
+  return path.join(os.homedir(), '.qwencoder', 'calibration')
+}
+
+function _modelKey(modelId) {
+  // Sanitize model path to a safe filename key
+  return (modelId || 'unknown').replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80)
+}
+
+function _loadCachedProfile(modelId) {
+  try {
+    const file = path.join(_calibrationCacheDir(), _modelKey(modelId) + '.json')
+    if (fs.existsSync(file)) {
+      const data = JSON.parse(fs.readFileSync(file, 'utf-8'))
+      // Validate it has the required fields
+      if (data && data.maxInputTokens && data.maxTurns) {
+        console.log(`[calibration] Loaded cached profile for ${_modelKey(modelId)}`)
+        return data
+      }
+    }
+  } catch (err) {
+    console.warn(`[calibration] Failed to load cached profile: ${err.message}`)
+  }
+  return null
+}
+
+function _saveCachedProfile(modelId, profile) {
+  try {
+    const dir = _calibrationCacheDir()
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, _modelKey(modelId) + '.json')
+    fs.writeFileSync(file, JSON.stringify({ ...profile, modelId, cachedAt: Date.now() }, null, 2))
+    console.log(`[calibration] Saved profile for ${_modelKey(modelId)}`)
+  } catch (err) {
+    console.warn(`[calibration] Failed to save profile: ${err.message}`)
+  }
+}
 
 // ── validation helpers ────────────────────────────────────────────────────────
 function isNonEmptyString(v) { return typeof v === 'string' && v.length > 0 }
@@ -233,6 +276,20 @@ function waitForServer(serverUrl) {
 
 // ── calibration ───────────────────────────────────────────────────────────────
 async function runCalibration(serverUrl, serverPort, mainWindow, modelId) {
+  // Check disk cache first — skip benchmarking if we already have a profile
+  // for this model. Calibration only needs to run once per model.
+  const cached = _loadCachedProfile(modelId)
+  if (cached) {
+    _calibrationProfile = cached
+    mainWindow?.webContents.send('calibration-complete', {
+      modelId,
+      profile: _calibrationProfile,
+      fromCache: true,
+    })
+    console.log(`[calibration] Using cached profile for ${modelId} — skipping benchmark`)
+    return _calibrationProfile
+  }
+
   _calibrating = true
   mainWindow?.webContents.send('calibration-status', { status: 'calibrating' })
 
@@ -259,6 +316,8 @@ async function runCalibration(serverUrl, serverPort, mainWindow, modelId) {
     })
 
     _calibrationProfile = calibrator.computeProfile(metrics)
+    // Persist to disk so future loads of this model skip the benchmark
+    _saveCachedProfile(modelId, _calibrationProfile)
     mainWindow?.webContents.send('calibration-complete', {
       modelId,
       profile: _calibrationProfile,
@@ -284,8 +343,18 @@ function isCalibrating() {
   return _calibrating
 }
 
-function clearCalibration() {
+function clearCalibration(modelId) {
   _calibrationProfile = null
+  // Also clear the disk cache for this model so next load re-benchmarks
+  if (modelId) {
+    try {
+      const file = path.join(_calibrationCacheDir(), _modelKey(modelId) + '.json')
+      if (fs.existsSync(file)) fs.unlinkSync(file)
+      console.log(`[calibration] Cleared cached profile for ${modelId}`)
+    } catch (err) {
+      console.warn(`[calibration] Failed to clear cache: ${err.message}`)
+    }
+  }
 }
 
 // ── IPC registration ──────────────────────────────────────────────────────────
@@ -305,6 +374,13 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
     restartServer(serverPort(), appDir, getMainWindow())
     const ok = await waitForServer(serverUrl())
     return { ok }
+  })
+
+  // Force a fresh calibration benchmark, clearing the disk cache for this model
+  ipcMain.handle('recalibrate', async (_, modelId) => {
+    clearCalibration(modelId)
+    runCalibration(serverUrl(), serverPort(), getMainWindow(), modelId)
+    return { ok: true }
   })
 
   ipcMain.handle('server-status', async () => {
