@@ -3569,6 +3569,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
   out.insertAdjacentHTML('beforeend', `<div class="msg-block" id="${orchId}">
     <div class="msg-system" id="${orchId}-status">🚀 Orchestrator: executing ${taskCount || ''} tasks...</div>
     <div id="${orchId}-tasks"></div>
+    <div class="msg-activity" id="${orchId}-activity">🚀 Starting orchestrator... <span class="activity-dot">●</span></div>
   </div>`)
   scrollOutput()
 
@@ -3577,6 +3578,37 @@ async function _launchOrchestrator(tasksPath, taskCount) {
   let orchTaskBlockId = null
   let orchTaskText = ''
   let orchTaskCount = 0
+
+  // Local state for stats — mirrors what sendAgentMode has as closures
+  let inputTokens = 0, outputTokens = 0, tokenCount = 0, serverTps = null
+  let _agentToolCount = 0
+  let _orchStartTime = Date.now()
+  _agentStartTimestamp = Date.now()
+
+  // Local prompt progress for orchestrator (same pattern as sendAgentMode)
+  let _promptProgress = -1
+  let _promptProgressTimer = null
+  function startPromptProgress() {
+    if (_promptProgressTimer) { clearInterval(_promptProgressTimer); _promptProgressTimer = null }
+    _promptProgress = 0
+    let elapsed = 0
+    updateAgentStatsBar({ state: 'prompt-eval', inputTokens, outputTokens: tokenCount, progress: 0, toolCount: _agentToolCount, activity: 'Evaluating prompt...' })
+    _promptProgressTimer = setInterval(() => {
+      elapsed += 200
+      _promptProgress = 90 * (1 - Math.exp(-elapsed / 8000))
+      updateAgentStatsBar({ state: 'prompt-eval', inputTokens, outputTokens: tokenCount, progress: _promptProgress, toolCount: _agentToolCount, activity: 'Evaluating prompt...' })
+    }, 200)
+  }
+  function stopPromptProgress() {
+    if (_promptProgressTimer) { clearInterval(_promptProgressTimer); _promptProgressTimer = null }
+    _promptProgress = null
+  }
+
+  // Helper: update the orchestrator-level activity line
+  function setOrchActivity(html) {
+    const el = document.getElementById(orchId + '-activity')
+    if (el) { el.innerHTML = html; el.classList.remove('hidden') }
+  }
 
   function newOrchTaskBlock(label) {
     orchTaskCount++
@@ -3592,6 +3624,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         <div class="msg-thinking-body" id="${orchTaskBlockId}-think-body"></div>
       </details>
       <div class="msg-text" id="${orchTaskBlockId}-text"></div>
+      <div class="msg-activity" id="${orchTaskBlockId}-activity">🤖 Agent starting... <span class="activity-dot">●</span></div>
     </div>`)
     scrollOutput()
   }
@@ -3641,6 +3674,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         newOrchTaskBlock(taskLabel)
         document.getElementById(orchId + '-status').textContent = `🚀 Orchestrator: task ${orchTaskCount}...`
         startPromptProgress()
+        setOrchActivity(`📊 Task ${orchTaskCount}: evaluating prompt... <span class="activity-dot">●</span>`)
         updateAgentStatsBar({ state: 'prompt-eval', inputTokens, outputTokens: tokenCount, progress: 0, toolCount: _agentToolCount, agentType, activity: activeTask ? `Task ${activeTask.id}: Evaluating prompt...` : 'Evaluating prompt...' })
         break
       }
@@ -3660,6 +3694,11 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         const textEl = document.getElementById(orchTaskBlockId + '-text')
         if (textEl && displayText) textEl.innerHTML = renderMd(displayText, true) + '<span class="cursor">▌</span>'
         tokenCount++
+        { const tks = serverTps || _calcTks(tokenCount, _orchStartTime)
+          const actEl = document.getElementById(orchTaskBlockId + '-activity')
+          if (actEl) { actEl.innerHTML = `✍️ Generating — ${tokenCount} tokens${tks ? ' · ' + tks + ' tk/s' : ''} <span class="activity-dot">●</span>`; actEl.classList.remove('hidden') }
+          setOrchActivity(`✍️ Task ${orchTaskCount}: generating — ${tokenCount} tokens${tks ? ' · ' + tks + ' tk/s' : ''} <span class="activity-dot">●</span>`)
+        }
         updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, agentType: _currentAgentType, activity: 'Writing response...' })
         scrollOutput()
         break
@@ -3671,6 +3710,10 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         _agentToolCount++
         document.getElementById(orchTaskBlockId + '-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
         document.getElementById(orchTaskBlockId + '-status').textContent = `🔧 Using tool: ${ev.name}`
+        { const actEl = document.getElementById(orchTaskBlockId + '-activity')
+          if (actEl) { actEl.innerHTML = `⚡ ${esc(ev.name || 'tool')} <span class="activity-dot">●</span>`; actEl.classList.remove('hidden') }
+          setOrchActivity(`🔧 Task ${orchTaskCount}: running ${esc(ev.name || 'tool')} <span class="activity-dot">●</span>`)
+        }
         updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, agentType: _currentAgentType, activity: `Running ${ev.name}...` })
         scrollOutput()
         break
@@ -3690,6 +3733,10 @@ async function _launchOrchestrator(tasksPath, taskCount) {
           if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
         }
         updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, agentType: _currentAgentType, activity: 'Thinking about next step...' })
+        { const actEl = document.getElementById(orchTaskBlockId + '-activity')
+          if (actEl) { actEl.innerHTML = `🧠 Thinking about next step... <span class="activity-dot">●</span>`; actEl.classList.remove('hidden') }
+        }
+        startPromptProgress()
         scrollOutput()
         break
       }
@@ -3715,15 +3762,21 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         break
       }
       case 'session-end':
+        stopPromptProgress()
         if (orchTaskBlockId) {
           const statusEl = document.getElementById(orchTaskBlockId + '-status')
           if (statusEl) statusEl.textContent = '✅ Task completed'
           const tb = document.getElementById(orchTaskBlockId + '-think-body')
           if (tb && tb.textContent.endsWith('▌')) tb.textContent = tb.textContent.slice(0, -1)
+          // Hide the task-level activity line
+          const actEl = document.getElementById(orchTaskBlockId + '-activity')
+          if (actEl) actEl.classList.add('hidden')
         }
         orchTaskBlockId = null
         orchTaskText = ''
+        _orchStartTime = Date.now() // reset for next task
         document.getElementById(orchId + '-status').textContent = '🚀 Orchestrator: moving to next task...'
+        setOrchActivity(`🚀 Moving to next task... <span class="activity-dot">●</span>`)
         scrollOutput()
         break
       case 'error':
@@ -3735,6 +3788,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
   window.app.onOrchestratorCompleted(() => {
     window.app.offOrchestratorCompleted()
     window.app.offQwenEvents()
+    stopPromptProgress()
     // Use task graph node statuses — currentTodos is the chat todo list and
     // is empty at the start of a spec run, making [].every(...) vacuously true.
     const graphNodes = currentTaskGraph ? Object.values(currentTaskGraph.nodes) : []
@@ -3742,6 +3796,9 @@ async function _launchOrchestrator(tasksPath, taskCount) {
       ? graphNodes.every(n => n.status === 'completed' || n.status === 'skipped')
       : false
     document.getElementById(orchId + '-status').textContent = allDone ? '✅ All tasks completed' : '⚠️ Orchestrator stopped'
+    // Hide the orchestrator-level activity line
+    const orchActEl = document.getElementById(orchId + '-activity')
+    if (orchActEl) orchActEl.classList.add('hidden')
     if (allDone) appendMsg('system', '🎉 All tasks completed!')
     if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
     saveChatSnapshot()
