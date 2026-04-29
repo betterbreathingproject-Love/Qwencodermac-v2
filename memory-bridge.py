@@ -1257,15 +1257,25 @@ async def retrieve(req: RetrieveRequest):
 import asyncio as _asyncio
 
 # Semaphore for extraction model inference (concurrency=1)
-# Lazy-initialized inside the first async call to avoid creating it before
-# the event loop is running (which raises DeprecationWarning/error in Python 3.12+)
+# IMPORTANT: We share the SAME semaphore as the main inference in server.py
+# because both models hit the Metal GPU. Concurrent Metal operations crash
+# the process (SIGABRT in MTLCommandBuffer). By sharing the semaphore,
+# extraction waits for main inference to finish and vice versa.
 _extraction_semaphore: "_asyncio.Semaphore | None" = None
 
 
 def _get_extraction_semaphore() -> "_asyncio.Semaphore":
     global _extraction_semaphore
     if _extraction_semaphore is None:
-        _extraction_semaphore = _asyncio.Semaphore(1)
+        # Try to use the main inference semaphore from server.py
+        # so Metal operations are fully serialized across both models
+        try:
+            import importlib
+            server = importlib.import_module("server")
+            _extraction_semaphore = server._get_inference_semaphore()
+        except Exception:
+            # Fallback: own semaphore if server module isn't available
+            _extraction_semaphore = _asyncio.Semaphore(1)
     return _extraction_semaphore
 
 # Extraction queue state
