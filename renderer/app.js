@@ -1375,6 +1375,20 @@ async function sendAgentMode(prompt, opts = {}) {
         }
         break
       }
+      case 'user-injection': {
+        // A mid-run user message was injected into the agent's turn loop.
+        // Show it as a user bubble so the conversation stays readable.
+        if (ev.content) {
+          const out = document.getElementById('agentOutput')
+          out.insertAdjacentHTML('beforeend',
+            `<div class="msg-user" style="opacity:0.85;border-left:2px solid var(--blue)">
+              <div class="msg-user-label" style="color:var(--blue)">You (injected)</div>
+              ${esc(ev.content)}
+            </div>`)
+          scrollOutput()
+        }
+        break
+      }
       case 'session-start':
         setActivity('🤖 Agent running in ' + esc(ev.cwd||'.') + ' <span class="activity-dot">●</span>')
         startPromptProgress()
@@ -1890,6 +1904,18 @@ async function sendAgentMode(prompt, opts = {}) {
                 const fastEl2 = orchTaskBlockId ? document.getElementById(orchTaskBlockId + '-fast') : null
                 if (fastEl2) fastEl2.insertAdjacentHTML('beforeend', renderFastAssistBlock(ev))
                 else appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${ev.label || '⚡ Fast Assistant'}</span>`)
+                break
+              }
+              case 'user-injection': {
+                if (ev.content) {
+                  const out = document.getElementById('agentOutput')
+                  out.insertAdjacentHTML('beforeend',
+                    `<div class="msg-user" style="opacity:0.85;border-left:2px solid var(--blue)">
+                      <div class="msg-user-label" style="color:var(--blue)">You (injected)</div>
+                      ${esc(ev.content)}
+                    </div>`)
+                  scrollOutput()
+                }
                 break
               }
               case 'session-start': {
@@ -3939,6 +3965,18 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         const faOrcEl = orchTaskBlockId ? document.getElementById(orchTaskBlockId + '-fast') : null
         if (faOrcEl) faOrcEl.insertAdjacentHTML('beforeend', renderFastAssistBlock(ev))
         else appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${ev.label || '⚡ Fast Assistant'}</span>`)
+        break
+      }
+      case 'user-injection': {
+        if (ev.content) {
+          const out = document.getElementById('agentOutput')
+          out.insertAdjacentHTML('beforeend',
+            `<div class="msg-user" style="opacity:0.85;border-left:2px solid var(--blue)">
+              <div class="msg-user-label" style="color:var(--blue)">You (injected)</div>
+              ${esc(ev.content)}
+            </div>`)
+          scrollOutput()
+        }
         break
       }
       case 'session-start': {
