@@ -1140,20 +1140,27 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
     if (!filePath || typeof filePath !== 'string') return { error: 'path is required and must be a non-empty string. You must pass a "path" key in the tool arguments, e.g. read_file({"path": "index.html"})' }
     if (filePath.includes('\0')) return { error: 'path contains null bytes' }
 
+    // Trim whitespace — agents sometimes add trailing spaces/newlines
+    let effectivePath = filePath.trim()
+
     // If the agent passes an absolute path that's within the project, accept it
-    // by converting it to a relative path first. This handles cases where the agent
-    // copies an absolute path from an error message or file listing.
-    let effectivePath = filePath
-    if (path.isAbsolute(filePath) && filePath.startsWith(cwd + path.sep)) {
-      effectivePath = path.relative(cwd, filePath)
-    } else if (path.isAbsolute(filePath) && filePath === cwd) {
-      effectivePath = '.'
+    // by converting it to a relative path. Handles cases where the agent copies
+    // an absolute path from an error message or tool output.
+    if (path.isAbsolute(effectivePath)) {
+      const normalized = path.normalize(effectivePath)
+      const normalizedCwd = path.normalize(cwd)
+      if (normalized === normalizedCwd) {
+        effectivePath = '.'
+      } else if (normalized.startsWith(normalizedCwd + path.sep)) {
+        effectivePath = path.relative(cwd, normalized)
+      }
+      // else: absolute path outside project — will be caught by the check below
     }
 
     const resolved = path.resolve(cwd, effectivePath)
     // Ensure the resolved path is within the cwd (or is the cwd itself)
     if (!resolved.startsWith(cwd + path.sep) && resolved !== cwd) {
-      return { error: `Path "${filePath}" resolves outside the working directory. Use a relative path from the project root instead. Working directory: ${cwd}` }
+      return { error: `Path "${effectivePath}" resolves outside the working directory. Use a relative path from the project root instead. Working directory: ${cwd}` }
     }
     return { resolved }
   }
@@ -1163,8 +1170,19 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
       case 'read_file': {
         const v = validatePath(args.path)
         if (v.error) return v
-        const p = v.resolved
-        if (!fs.existsSync(p)) return { error: `File not found: ${args.path}` }
+        let p = v.resolved
+        if (!fs.existsSync(p)) {
+          // macOS case-insensitive fallback
+          const parentDir = path.dirname(p)
+          const targetName = path.basename(p)
+          if (fs.existsSync(parentDir)) {
+            try {
+              const match = fs.readdirSync(parentDir).find(e => e.toLowerCase() === targetName.toLowerCase())
+              if (match) p = path.join(parentDir, match)
+            } catch { /* ignore */ }
+          }
+          if (!fs.existsSync(p)) return { error: `File not found: ${args.path}` }
+        }
         const stat = fs.statSync(p)
         if (stat.size > 512 * 1024) return { error: `File too large (${(stat.size / 1024).toFixed(0)}KB). Use start_line/end_line to read sections, or use search_files to find specific content.` }
         const raw = fs.readFileSync(p, 'utf-8')
@@ -1234,23 +1252,37 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         const listPath = (args && args.path != null) ? args.path : '.'
         const v = validatePath(listPath)
         if (v.error) return { error: `list_dir failed: ${v.error}` }
-        const p = v.resolved
+        let p = v.resolved
         if (!fs.existsSync(p)) {
-          // Help the agent recover by showing what's actually at the parent directory
+          // macOS is case-insensitive — try to find a case-insensitive match
           const parentDir = path.dirname(p)
-          let hint = ''
+          const targetName = path.basename(p)
+          let caseMatch = null
           if (fs.existsSync(parentDir)) {
             try {
-              const siblings = fs.readdirSync(parentDir, { withFileTypes: true })
-                .filter(e => e.isDirectory() && !e.name.startsWith('.'))
-                .map(e => e.name)
-                .slice(0, 20)
-              if (siblings.length > 0) {
-                hint = ` Available directories in "${path.relative(cwd, parentDir) || '.'}": ${siblings.join(', ')}`
-              }
+              const entries = fs.readdirSync(parentDir)
+              caseMatch = entries.find(e => e.toLowerCase() === targetName.toLowerCase())
             } catch { /* ignore */ }
           }
-          return { error: `Directory not found: ${listPath}. Working directory: ${cwd}.${hint} If this is a new project, use bash({"command": "mkdir -p ${listPath}"}) to create it.` }
+          if (caseMatch) {
+            // Use the correctly-cased path
+            p = path.join(parentDir, caseMatch)
+          } else {
+            // Help the agent recover by showing what's actually at the parent directory
+            let hint = ''
+            if (fs.existsSync(parentDir)) {
+              try {
+                const siblings = fs.readdirSync(parentDir, { withFileTypes: true })
+                  .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+                  .map(e => e.name)
+                  .slice(0, 20)
+                if (siblings.length > 0) {
+                  hint = ` Available directories in "${path.relative(cwd, parentDir) || '.'}": ${siblings.join(', ')}`
+                }
+              } catch { /* ignore */ }
+            }
+            return { error: `Directory not found: ${listPath}.${hint}` }
+          }
         }
         try {
           const entries = fs.readdirSync(p, { withFileTypes: true })
