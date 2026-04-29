@@ -145,6 +145,19 @@ class Orchestrator extends EventEmitter {
     }
   }
 
+  /**
+   * Reset any failed nodes back to not_started so they can be retried.
+   * Called on resume() so the run loop can re-dispatch them instead of
+   * treating the graph as complete.
+   */
+  _resetFailedNodes() {
+    for (const [id, node] of this._graph.nodes) {
+      if (node.status === 'failed') {
+        this._updateNodeStatus(id, 'not_started');
+      }
+    }
+  }
+
   _findStartNodeId() {
     // Prefer ^start marker
     if (this._graph.startNodeId) return this._graph.startNodeId;
@@ -618,6 +631,14 @@ class Orchestrator extends EventEmitter {
   async resume() {
     if (this._state === 'paused') {
       this._setState('running');
+      // Reset failed nodes so they become eligible for re-dispatch.
+      // Without this, a failed node blocks all its dependents and
+      // _runLoop exits immediately thinking the graph is complete.
+      this._resetFailedNodes();
+      // Also reset stale in_progress nodes (same as start()) in case
+      // any were left over from a concurrent dispatch that finished
+      // while the orchestrator was paused.
+      this._resetStaleInProgressNodes();
       await this._runLoop();
     }
   }
