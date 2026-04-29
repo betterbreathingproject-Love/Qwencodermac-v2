@@ -755,6 +755,14 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .tool-spinner { display: inline-block; width: 10px; height: 10px; border: 1.5px solid rgba(250,204,21,0.3); border-top-color: var(--yellow); border-radius: 50%; animation: spin 0.6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ── auto-collapse tool blocks (read-type tools) ───────────────────────────── */
+/* Result content is hidden by default; only shown when the block is expanded */
+.tool-block.auto-collapse .tool-result { display: none; }
+.tool-block.auto-collapse[open] .tool-result { display: block; }
+/* Also hide params for auto-collapse blocks when not open */
+.tool-block.auto-collapse .tool-params { display: none; }
+.tool-block.auto-collapse[open] .tool-params { display: flex; }
+
 /* ── streaming tool preview ────────────────────────────────────────────────── */
 .tool-preview { border-color: rgba(250,204,21,0.25); background: var(--bg2); }
 .tool-preview .tool-header { border-bottom: 1px solid rgba(255,255,255,0.04); }

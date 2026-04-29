@@ -47,7 +47,12 @@ function renderToolUse(name, input, status='running') {
   const statusLabel = status === 'running' ? 'Running…' : status === 'done' ? 'Done' : status === 'error' ? 'Error' : status
   const statusIcon = status === 'running' ? '<span class="tool-spinner"></span>' : status === 'done' ? '✓' : status === 'error' ? '✗' : ''
   const params = _renderToolParams(input)
-  return `<div class="tool-block ${status}" id="${id}">
+
+  // Read-type tools auto-collapse when done — result is hidden unless expanded
+  const READ_TOOLS = new Set(['read_file', 'list_dir', 'web_fetch', 'web_search', 'browser_get_text', 'browser_get_html'])
+  const autoCollapse = READ_TOOLS.has(name) ? ' auto-collapse' : ''
+
+  return `<div class="tool-block${autoCollapse} ${status}" id="${id}">
     <div class="tool-header" onclick="this.parentElement.toggleAttribute('open')">
       <span class="tool-icon">${icon}</span>
       <div class="tool-header-info">

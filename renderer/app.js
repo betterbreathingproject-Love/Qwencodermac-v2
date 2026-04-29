@@ -3432,12 +3432,17 @@ async function _streamSpecPhase(phase, specRespId) {
           if (openThink > closeThink) displayText = accumulated.slice(0, openThink).trim()
           const textEl = document.getElementById(specRespId + '-text')
           if (textEl && displayText) textEl.innerHTML = renderMd(displayText, true) + '<span class="cursor">▌</span>'
-          // Update activity line
+          // Update activity line and status header
           const actEl = document.getElementById(specRespId + '-activity')
           if (actEl) {
             const tks = serverTps || _calcTks(tokenCount, startTime)
             actEl.innerHTML = `✍️ Generating ${phaseLabel} — ${outputTokens} tokens${tks ? ' · ' + tks + ' tk/s' : ''} <span class="activity-dot">●</span>`
             actEl.classList.remove('hidden')
+          }
+          const statusEl2 = document.getElementById(specRespId + '-status')
+          if (statusEl2) {
+            const tks = serverTps || _calcTks(tokenCount, startTime)
+            statusEl2.textContent = `📐 Generating ${phaseLabel}${tks ? ' · ' + tks + ' tk/s' : ''} — ${outputTokens} tokens`
           }
           scrollOutput()
         }
@@ -3584,7 +3589,7 @@ async function generateInlineSpecPhase(phase) {
       <summary>🧠 Thinking</summary>
       <div class="msg-thinking-body" id="${specRespId}-think-body"></div>
     </details>
-    <details class="spec-phase-output" open>
+    <details class="spec-phase-output" id="${specRespId}-output">
       <summary>📄 ${phaseLabel} output</summary>
       <div class="msg-text" id="${specRespId}-text"></div>
     </details>
@@ -3632,6 +3637,9 @@ async function generateInlineSpecPhase(phase) {
 
     if (statusEl) statusEl.textContent = `✅ ${phaseLabel} generated for "${currentSpecName}"`
     if (textEl) textEl.innerHTML = renderMd(cleaned)
+    // Open the output panel now that content is ready
+    const outputEl = document.getElementById(specRespId + '-output')
+    if (outputEl) outputEl.setAttribute('open', '')
 
     await window.app.specSaveArtifact(currentSpecDir, phase, cleaned)
     await window.app.specAdvance(currentSpecDir)
@@ -4272,7 +4280,7 @@ async function generateSpecPhase(phase) {
       <summary>🧠 Thinking</summary>
       <div class="msg-thinking-body" id="${specRespId}-think-body"></div>
     </details>
-    <details class="spec-phase-output" open>
+    <details class="spec-phase-output" id="${specRespId}-output">
       <summary>📄 ${phaseLabel} output</summary>
       <div class="msg-text" id="${specRespId}-text"></div>
     </details>
@@ -4317,6 +4325,9 @@ async function generateSpecPhase(phase) {
 
     if (statusEl) statusEl.textContent = `✅ ${phaseLabel} generated for "${currentSpecName}"`
     if (textEl) textEl.innerHTML = renderMd(cleaned)
+    // Open the output panel now that content is ready
+    const outputEl = document.getElementById(specRespId + '-output')
+    if (outputEl) outputEl.setAttribute('open', '')
 
     await window.app.specSaveArtifact(currentSpecDir, phase, cleaned)
     await window.app.specAdvance(currentSpecDir)
