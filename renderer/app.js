@@ -1877,6 +1877,18 @@ async function sendAgentMode(prompt, opts = {}) {
                 stopPromptProgress()
                 orchToolName = ev.name || ''
                 _agentToolCount++
+                // Route update_todos to the todo panel instead of showing a tool block
+                if (ev.name === 'update_todos' && ev.input?.todos) {
+                  const mapped = ev.input.todos.map(t => ({
+                    id: t.id,
+                    content: t.content || t.title || t.text || '',
+                    status: t.status === 'done' ? 'completed' : t.status === 'in_progress' ? 'in_progress' : 'pending',
+                  }))
+                  updateTodoPanel(mapped, 'running')
+                  updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Updating progress...' })
+                  scrollOutput()
+                  break
+                }
                 document.getElementById(orchTaskBlockId + '-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
                 document.getElementById(orchTaskBlockId + '-status').textContent = `🔧 Using tool: ${ev.name}`
                 { const actEl = document.getElementById(orchTaskBlockId + '-activity')
@@ -1888,6 +1900,11 @@ async function sendAgentMode(prompt, opts = {}) {
                 break
               case 'tool-result': {
                 if (!orchTaskBlockId) break
+                // Skip rendering tool-result for update_todos
+                if (orchToolName === 'update_todos') {
+                  updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Thinking about next step...' })
+                  break
+                }
                 const toolsDiv = document.getElementById(orchTaskBlockId + '-tools')
                 const lastTool = toolsDiv?.querySelector('.tool-block:last-child')
                 if (lastTool) {
@@ -1930,6 +1947,74 @@ async function sendAgentMode(prompt, opts = {}) {
                 }
                 break
               }
+              case 'lsp-activity': {
+                const lspDot = document.getElementById('lspDot')
+                const action = ev.action || ''
+                const filePath = ev.path ? ev.path.split('/').pop() : ''
+                if (lspDot) {
+                  lspDot.style.background = 'var(--accent2)'
+                  lspDot.style.boxShadow = '0 0 6px var(--accent2)'
+                  setTimeout(() => {
+                    const colors = { ready: 'var(--green)', starting: '#f5a623', degraded: '#f5a623', error: 'var(--red)', stopped: 'var(--muted)' }
+                    lspDot.style.background = colors[currentLspStatus] || 'var(--muted)'
+                    lspDot.style.boxShadow = ''
+                  }, 800)
+                }
+                if (orchTaskBlockId) {
+                  const toolsEl = document.getElementById(orchTaskBlockId + '-tools')
+                  if (action === 'speculative-check') {
+                    setOrchActivity(`🔬 LSP: validating ${filePath}... <span class="activity-dot">●</span>`)
+                  } else if (action === 'speculative-ok' && toolsEl) {
+                    toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--green)">✅ LSP validated ${filePath} — no new errors</div>`)
+                  } else if (action === 'speculative-warn' && toolsEl) {
+                    toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--yellow)">⚠️ LSP found ${ev.count} issue${ev.count > 1 ? 's' : ''} in ${filePath}</div>`)
+                  } else if (action === 'diagnostics-check') {
+                    setOrchActivity(`🔬 LSP: checking ${filePath}... <span class="activity-dot">●</span>`)
+                  } else if (action === 'diagnostics-ok' && toolsEl) {
+                    toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--green)">✅ LSP: ${filePath} — clean</div>`)
+                  } else if (action === 'diagnostics-errors' && toolsEl) {
+                    toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--red)">⚠️ LSP: ${filePath} — ${ev.count} error${ev.count > 1 ? 's' : ''} found</div>`)
+                  } else if (action === 'session-diagnostics' && toolsEl) {
+                    toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--accent2)">📋 LSP: ${ev.count} existing error${ev.count > 1 ? 's' : ''} in project</div>`)
+                  }
+                }
+                break
+              }
+              case 'memory-extract': {
+                if (orchTaskBlockId && ev.message) {
+                  const toolsEl = document.getElementById(orchTaskBlockId + '-tools')
+                  if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--muted);font-size:10px;opacity:0.7">${esc(ev.message)}</div>`)
+                }
+                break
+              }
+              case 'system':
+                if (ev.subtype === 'debug') {
+                  setOrchActivity(`🔍 ${esc(ev.data)} <span class="activity-dot">●</span>`)
+                  if (ev.data && (ev.data.includes('retrying') || ev.data.includes('Trimmed') || ev.data.includes('Repetition'))) {
+                    if (orchTaskBlockId) {
+                      const toolsEl = document.getElementById(orchTaskBlockId + '-tools')
+                      if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--muted)">🔍 ${esc(ev.data)}</div>`)
+                    }
+                  }
+                }
+                updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: ev.subtype === 'debug' ? ev.data : ev.subtype })
+                scrollOutput()
+                break
+              case 'compaction-stats':
+                if (!ev.data.source || ev.data.source !== 'tool-result') {
+                  _lastCompactionStats = ev.data
+                } else if (!_lastCompactionStats) {
+                  _lastCompactionStats = ev.data
+                }
+                updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: 'Compressed context' })
+                break
+              case 'usage':
+                if (ev.usage) {
+                  inputTokens = ev.usage.input_tokens || ev.usage.prompt_tokens || inputTokens
+                  outputTokens = ev.usage.output_tokens || ev.usage.completion_tokens || outputTokens
+                }
+                updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens })
+                break
               case 'session-end':
                 // Finalize current task block and prepare for next
                 stopPromptProgress()
@@ -3742,6 +3827,18 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         stopPromptProgress()
         orchToolName = ev.name || ''
         _agentToolCount++
+        // Route update_todos to the todo panel instead of showing a tool block
+        if (ev.name === 'update_todos' && ev.input?.todos) {
+          const mapped = ev.input.todos.map(t => ({
+            id: t.id,
+            content: t.content || t.title || t.text || '',
+            status: t.status === 'done' ? 'completed' : t.status === 'in_progress' ? 'in_progress' : 'pending',
+          }))
+          updateTodoPanel(mapped, 'running')
+          updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Updating progress...' })
+          scrollOutput()
+          break
+        }
         document.getElementById(orchTaskBlockId + '-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
         document.getElementById(orchTaskBlockId + '-status').textContent = `🔧 Using tool: ${ev.name}`
         { const actEl = document.getElementById(orchTaskBlockId + '-activity')
@@ -3753,6 +3850,11 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         break
       case 'tool-result': {
         if (!orchTaskBlockId) break
+        // Skip rendering tool-result for update_todos
+        if (orchToolName === 'update_todos') {
+          updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Thinking about next step...' })
+          break
+        }
         const toolsDiv = document.getElementById(orchTaskBlockId + '-tools')
         const lastTool = toolsDiv?.querySelector('.tool-block:last-child')
         if (lastTool) {
@@ -3795,6 +3897,74 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         }
         break
       }
+      case 'lsp-activity': {
+        const lspDot = document.getElementById('lspDot')
+        const action = ev.action || ''
+        const filePath = ev.path ? ev.path.split('/').pop() : ''
+        if (lspDot) {
+          lspDot.style.background = 'var(--accent2)'
+          lspDot.style.boxShadow = '0 0 6px var(--accent2)'
+          setTimeout(() => {
+            const colors = { ready: 'var(--green)', starting: '#f5a623', degraded: '#f5a623', error: 'var(--red)', stopped: 'var(--muted)' }
+            lspDot.style.background = colors[currentLspStatus] || 'var(--muted)'
+            lspDot.style.boxShadow = ''
+          }, 800)
+        }
+        if (orchTaskBlockId) {
+          const toolsEl = document.getElementById(orchTaskBlockId + '-tools')
+          if (action === 'speculative-check') {
+            setOrchActivity(`🔬 LSP: validating ${filePath}... <span class="activity-dot">●</span>`)
+          } else if (action === 'speculative-ok' && toolsEl) {
+            toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--green)">✅ LSP validated ${filePath} — no new errors</div>`)
+          } else if (action === 'speculative-warn' && toolsEl) {
+            toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--yellow)">⚠️ LSP found ${ev.count} issue${ev.count > 1 ? 's' : ''} in ${filePath}</div>`)
+          } else if (action === 'diagnostics-check') {
+            setOrchActivity(`🔬 LSP: checking ${filePath}... <span class="activity-dot">●</span>`)
+          } else if (action === 'diagnostics-ok' && toolsEl) {
+            toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--green)">✅ LSP: ${filePath} — clean</div>`)
+          } else if (action === 'diagnostics-errors' && toolsEl) {
+            toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--red)">⚠️ LSP: ${filePath} — ${ev.count} error${ev.count > 1 ? 's' : ''} found</div>`)
+          } else if (action === 'session-diagnostics' && toolsEl) {
+            toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--accent2)">📋 LSP: ${ev.count} existing error${ev.count > 1 ? 's' : ''} in project</div>`)
+          }
+        }
+        break
+      }
+      case 'memory-extract': {
+        if (orchTaskBlockId && ev.message) {
+          const toolsEl = document.getElementById(orchTaskBlockId + '-tools')
+          if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--muted);font-size:10px;opacity:0.7">${esc(ev.message)}</div>`)
+        }
+        break
+      }
+      case 'system':
+        if (ev.subtype === 'debug') {
+          setOrchActivity(`🔍 ${esc(ev.data)} <span class="activity-dot">●</span>`)
+          if (ev.data && (ev.data.includes('retrying') || ev.data.includes('Trimmed') || ev.data.includes('Repetition'))) {
+            if (orchTaskBlockId) {
+              const toolsEl = document.getElementById(orchTaskBlockId + '-tools')
+              if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--muted)">🔍 ${esc(ev.data)}</div>`)
+            }
+          }
+        }
+        updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: ev.subtype === 'debug' ? ev.data : ev.subtype })
+        scrollOutput()
+        break
+      case 'compaction-stats':
+        if (!ev.data.source || ev.data.source !== 'tool-result') {
+          _lastCompactionStats = ev.data
+        } else if (!_lastCompactionStats) {
+          _lastCompactionStats = ev.data
+        }
+        updateAgentStatsBar({ state: 'processing', inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: 'Compressed context' })
+        break
+      case 'usage':
+        if (ev.usage) {
+          inputTokens = ev.usage.input_tokens || ev.usage.prompt_tokens || inputTokens
+          outputTokens = ev.usage.output_tokens || ev.usage.completion_tokens || outputTokens
+        }
+        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens })
+        break
       case 'session-end':
         stopPromptProgress()
         if (orchTaskBlockId) {
