@@ -21,6 +21,12 @@ const { getApiKeys } = require('./projects')
 const compactor = require('./compactor')
 const config = require('./config')
 
+// Xcode MCP tools — gracefully degrades if xcodebuildmcp is not installed
+let xcodeTool = null
+try {
+  xcodeTool = require('./xcode-tool')
+} catch (_) {}
+
 // Memory client — gracefully degrades if memory backend is unavailable
 let memoryClient = null
 try {
@@ -373,6 +379,8 @@ const TOOL_DEFS = [
   },
   ...BROWSER_TOOL_DEFS,
   ...WEB_TOOL_DEFS,
+  // Xcode tools — only included when xcodebuildmcp is installed
+  ...(xcodeTool ? xcodeTool.XCODE_TOOL_DEFS : []),
 ]
 
 // ── LSP tool definitions (same shape as TOOL_DEFS entries) ────────────────────
@@ -579,6 +587,7 @@ const LSP_TOOL_SETS = {
 /**
  * Build the tool definitions array, merging built-in TOOL_DEFS with
  * role-specific LSP tools when the LSP manager is ready.
+ * Xcode tools are already in TOOL_DEFS when xcodebuildmcp is installed.
  * @param {object|null} lspManager
  * @param {string} agentRole
  * @returns {object[]}
@@ -1575,8 +1584,13 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
           return { result: `(User input timed out: ${err.message})` }
         }
       }
-      default:
+      default: {
+        // Route xcode_* tools to XcodeBuildMCP
+        if (name.startsWith('xcode_') && xcodeTool) {
+          return xcodeTool.executeXcodeTool(name, args, cwd)
+        }
         return { error: `Unknown tool: ${name}` }
+      }
     }
   } catch (err) {
     return { error: err.message || String(err) }

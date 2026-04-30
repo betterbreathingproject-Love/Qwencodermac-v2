@@ -26,8 +26,8 @@ const CATEGORY_KEYWORDS = {
   'requirements': ['requirement', 'requirements', 'spec', 'specification', 'user story', 'acceptance', 'define', 'criteria'],
   'design': ['design', 'architecture', 'diagram', 'interface', 'schema', 'model', 'plan', 'structure', 'layout', 'api design'],
   'debug': ['debug', 'debugg', 'diagnose', 'trace', 'stack trace', 'error', 'exception', 'crash', 'failing', 'broken', 'not working', 'reproduce', 'root cause', 'why is', 'why does', "doesn't work", "not loading", "won't load", "fails to", "not starting"],
-  'tester': ['test', 'testing', 'verify', 'check', 'playwright', 'browser test', 'e2e', 'end to end', 'screenshot', 'click', 'navigate', 'ui test', 'visual test', 'does it work', 'validate', 'qa', 'acceptance test'],
-  'implementation': ['implement', 'code', 'build', 'create', 'write', 'develop', 'refactor', 'fix', 'bug', 'add', 'update', 'modify', 'change', 'set up', 'configure', 'install', 'upgrade', 'migrate', 'integrate', 'wire', 'connect', 'replace', 'rewrite', 'patch', 'extend', 'enable', 'disable', 'render', 'display', 'handle', 'parse', 'generate', 'emit', 'register'],
+  'tester': ['test', 'testing', 'verify', 'check', 'playwright', 'browser test', 'e2e', 'end to end', 'screenshot', 'click', 'navigate', 'ui test', 'visual test', 'does it work', 'validate', 'qa', 'acceptance test', 'xcode test', 'xctest', 'simulator', 'ios test', 'unit test'],
+  'implementation': ['implement', 'code', 'build', 'create', 'write', 'develop', 'refactor', 'fix', 'bug', 'add', 'update', 'modify', 'change', 'set up', 'configure', 'install', 'upgrade', 'migrate', 'integrate', 'wire', 'connect', 'replace', 'rewrite', 'patch', 'extend', 'enable', 'disable', 'render', 'display', 'handle', 'parse', 'generate', 'emit', 'register', 'xcode', 'swift', 'swiftui', 'xcodebuild', 'cocoapods', 'spm', 'swift package'],
 };
 
 // --- AgentPool ---

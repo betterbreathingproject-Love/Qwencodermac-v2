@@ -1021,6 +1021,8 @@ app.on('window-all-closed', () => {
   if (telegramBot) telegramBot.stop()
   if (miniAppTunnel) { miniAppTunnel.kill(); miniAppTunnel = null }
   if (miniAppServer) { miniAppServer.stop(); miniAppServer = null }
+  // Shut down XcodeBuildMCP subprocess if running
+  try { require('./xcode-tool').shutdown() } catch { /* not installed */ }
   app.quit()
 })
 app.on('activate', () => { if (!mainWindow) createWindow() })
