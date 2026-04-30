@@ -413,7 +413,22 @@
       <div class="welcome-hero">
         <span class="welcome-icon">🧠</span>
         <h1>Welcome to <span>QwenCoder</span></h1>
-        <p>Local AI coding on Apple Silicon — no cloud, no API keys, no data leaving your Mac. Let's get you set up in three steps.</p>
+        <p>Local AI coding on Apple Silicon — no cloud, no API keys, no data leaving your Mac.</p>
+
+        <!-- Live prep status — shown while background install runs -->
+        <div id="welcomePrepStatus" style="
+          display:flex; align-items:center; gap:10px; justify-content:center;
+          background:var(--surface); border:1px solid var(--border); border-radius:10px;
+          padding:12px 20px; margin:0 auto 24px; max-width:480px; font-size:13px;
+        ">
+          <span id="welcomePrepSpinner" style="
+            width:14px; height:14px; border-radius:50%;
+            border:2px solid var(--border); border-top-color:var(--accent);
+            animation:spin 0.7s linear infinite; flex-shrink:0;
+          "></span>
+          <span id="welcomePrepText" style="color:var(--muted);">Checking Python environment…</span>
+        </div>
+
         <div class="welcome-steps">
           <div class="welcome-step">
             <div class="welcome-step-icon">🔍</div>
@@ -720,21 +735,32 @@ function appendInstallLog(line) {
 
 async function startDepsCheck() {
   const subtitle = document.getElementById('depsSubtitle')
-  subtitle.textContent = 'Checking your Python environment…'
   nextBtn.disabled = true
 
   // Show all deps as pending first
-  const allSet = new Set(ALL_DEPS.map(d => d.imp))
-  const emptySet = new Set()
-  renderDepsList(emptySet, emptySet)
+  renderDepsList(new Set(), new Set(), [])
 
-  let checkResult
-  try {
-    checkResult = await ipc.checkDeps()
-  } catch (e) {
-    subtitle.textContent = '⚠ Could not check Python — install Python 3.12+ and try again.'
-    nextBtn.disabled = false
-    return
+  // If background install is still running, wait for it and show live status
+  if (!_bgInstallDone && _bgInstallPromise) {
+    subtitle.textContent = 'Installing dependencies in the background…'
+    // Re-wire log listener to the install log panel
+    ipc.onInstallLog((line) => appendInstallLog(line))
+    await _bgInstallPromise
+    ipc.offInstallLog()
+  }
+
+  // Now use the cached check result (or re-check if background failed to run)
+  let checkResult = _bgDepCheckResult
+  if (!checkResult) {
+    subtitle.textContent = 'Checking your Python environment…'
+    try {
+      checkResult = await ipc.checkDeps()
+      _bgDepCheckResult = checkResult
+    } catch (e) {
+      subtitle.textContent = '⚠ Could not check Python — install Python 3.12+ and try again.'
+      nextBtn.disabled = false
+      return
+    }
   }
 
   const installedSet = new Set((checkResult.installed || []).map(p => p.import))
@@ -761,35 +787,35 @@ async function startDepsCheck() {
     if (missingSet.size === 0) return
   }
 
-  // Auto-install missing Python packages — no user input needed
-  subtitle.textContent = `Installing ${missingSet.size} missing package${missingSet.size > 1 ? 's' : ''}… this may take a few minutes.`
-  footerHint.textContent = 'Installing…'
+  // If background already installed, use that result — no need to re-run
+  let result = _bgInstallResult
+  if (!result) {
+    subtitle.textContent = `Installing ${missingSet.size} missing package${missingSet.size > 1 ? 's' : ''}… this may take a few minutes.`
+    footerHint.textContent = 'Installing…'
+    missingSet.forEach(imp => updateDepRow(imp, 'installing'))
 
-  // Mark all missing as installing
-  missingSet.forEach(imp => updateDepRow(imp, 'installing'))
-
-  // Listen for log lines
-  ipc.onInstallLog((line) => {
-    appendInstallLog(line)
-    // Detect "Successfully installed X" lines and mark rows green
-    const match = line.match(/Successfully installed (.+)/i)
-    if (match) {
-      const pkgs = match[1].split(' ')
-      pkgs.forEach(pkg => {
-        // pkg is like "mlx-lm-0.31.1" — strip version suffix
-        const name = pkg.replace(/-[\d.]+$/, '').replace(/-/g, '_').toLowerCase()
-        ALL_DEPS.forEach(d => {
-          if (d.pip.toLowerCase().replace(/-/g, '_') === name ||
-              d.imp.toLowerCase() === name) {
-            updateDepRow(d.imp, 'ok')
-          }
+    ipc.onInstallLog((line) => {
+      appendInstallLog(line)
+      const match = line.match(/Successfully installed (.+)/i)
+      if (match) {
+        match[1].split(' ').forEach(pkg => {
+          const name = pkg.replace(/-[\d.]+$/, '').replace(/-/g, '_').toLowerCase()
+          ALL_DEPS.forEach(d => {
+            if (d.pip.toLowerCase().replace(/-/g, '_') === name || d.imp.toLowerCase() === name)
+              updateDepRow(d.imp, 'ok')
+          })
         })
-      })
-    }
-  })
+      }
+    })
 
-  const result = await ipc.installDeps()
-  ipc.offInstallLog()
+    result = await ipc.installDeps()
+    ipc.offInstallLog()
+  } else {
+    subtitle.textContent = _bgInstallResult.ok
+      ? 'Installation completed in the background.'
+      : '⚠ Some packages may have failed — check the log.'
+    missingSet.forEach(imp => updateDepRow(imp, _bgInstallResult.ok ? 'ok' : 'missing'))
+  }
 
   // Use postCheck to get accurate final state
   const finalInstalled = new Set((result.postCheck?.installed || []).map(p => p.import))
@@ -1086,7 +1112,79 @@ document.getElementById('showOtherTiers').addEventListener('click', () => {
 })
 
 // ── Init ───────────────────────────────────────────────────────────────────
+// ── Background dep install state ──────────────────────────────────────────────
+// Runs immediately on load — before the user clicks anything.
+// The deps panel reads this state when the user navigates to it.
+let _bgDepCheckResult = null   // result of checkDeps
+let _bgInstallDone = false     // true when install finished (ok or failed)
+let _bgInstallResult = null    // result of installDeps
+let _bgInstallPromise = null   // the in-flight install promise
+
+function _setPrepStatus(text, done) {
+  const el = document.getElementById('welcomePrepText')
+  const spinner = document.getElementById('welcomePrepSpinner')
+  if (el) el.textContent = text
+  if (spinner) {
+    if (done === true) {
+      spinner.style.animation = 'none'
+      spinner.style.borderTopColor = 'var(--green)'
+      spinner.style.borderColor = 'var(--green)'
+    } else if (done === false) {
+      spinner.style.animation = 'none'
+      spinner.style.borderTopColor = 'var(--orange)'
+      spinner.style.borderColor = 'var(--orange)'
+    }
+  }
+}
+
+async function _runBackgroundDeps() {
+  _setPrepStatus('Checking Python environment…')
+  try {
+    _bgDepCheckResult = await ipc.checkDeps()
+  } catch (e) {
+    _setPrepStatus('⚠ Could not check Python — install Python 3.12+', false)
+    _bgInstallDone = true
+    return
+  }
+
+  const missing = (_bgDepCheckResult.missing || []).length
+  if (missing === 0) {
+    _setPrepStatus('✅ All dependencies ready', true)
+    _bgInstallDone = true
+    _bgInstallResult = { ok: true, alreadyInstalled: true }
+    return
+  }
+
+  _setPrepStatus(`Installing ${missing} package${missing > 1 ? 's' : ''}… (this runs once)`)
+
+  // Wire log listener before calling installDeps
+  ipc.onInstallLog((line) => {
+    const lower = line.trim().toLowerCase()
+    if (lower.startsWith('collecting') || lower.startsWith('downloading')) {
+      const pkg = line.trim().replace(/^(Collecting|Downloading)\s+/i, '').split(' ')[0]
+      _setPrepStatus(`Downloading ${pkg}…`)
+    } else if (lower.includes('successfully installed')) {
+      _setPrepStatus('Finalising installation…')
+    } else if (lower.startsWith('▶')) {
+      _setPrepStatus(line.trim().replace('▶ ', ''))
+    }
+  })
+
+  _bgInstallResult = await ipc.installDeps()
+  ipc.offInstallLog()
+  _bgInstallDone = true
+
+  if (_bgInstallResult.ok) {
+    _setPrepStatus('✅ All dependencies installed', true)
+  } else {
+    _setPrepStatus('⚠ Some packages failed — see Dependencies step', false)
+  }
+}
+
 async function init() {
+  // Kick off background dep install immediately — don't wait for it
+  _bgInstallPromise = _runBackgroundDeps()
+
   try {
     setupInfo = await ipc.getInfo()
 
