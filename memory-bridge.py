@@ -75,6 +75,7 @@ class ArchiveRecordRequest(BaseModel):
     agent_name: Optional[str] = None
     session_id: Optional[str] = None
     turn_number: Optional[int] = None
+    project_id: Optional[str] = None  # project directory basename — scopes this record to a project
 
 
 class ArchiveEvent(BaseModel):
@@ -107,6 +108,7 @@ class RetrieveRequest(BaseModel):
     agent_name: Optional[str] = None
     top_k: int = 10
     mode: str = "fast"  # "fast" or "thorough"
+    project_id: Optional[str] = None  # project directory basename — scopes retrieval to this project
 
 
 class RetrievalResult(BaseModel):
@@ -729,10 +731,19 @@ async def archive_record(req: ArchiveRecordRequest):
         except OSError:
             pass  # non-fatal — archive.record() will fail with a clear error if needed
 
+    # Embed project_id in the data dict so it can be filtered on retrieval
+    data_dict: dict
+    if isinstance(filtered_payload, dict):
+        data_dict = filtered_payload
+    else:
+        data_dict = {"content": str(filtered_payload)}
+    if req.project_id:
+        data_dict = {**data_dict, "_project_id": req.project_id}
+
     try:
         record = await _archive.record(
             event_type=req.event_type,
-            data=filtered_payload if isinstance(filtered_payload, dict) else {"content": str(filtered_payload)},
+            data=data_dict,
             summary=filtered_summary,
             agent_name=req.agent_name,
             app_id=req.session_id,
@@ -751,10 +762,12 @@ async def archive_record(req: ArchiveRecordRequest):
 
 
 @router.get("/archive/search")
-async def archive_search(query: str, limit: int = 20):
+async def archive_search(query: str, limit: int = 20, project_id: Optional[str] = None):
     """FTS5 full-text search over archived records.
 
-    Accepts a query string and optional limit parameter.
+    Accepts a query string, optional limit, and optional project_id for scoping.
+    When project_id is provided, only returns records tagged with that project
+    (or untagged records, which are treated as global/cross-project facts).
     Performs full-text search via Archive.search_fts().
     Returns HTTP 503 if Archive is unavailable.
     """
@@ -765,7 +778,26 @@ async def archive_search(query: str, limit: int = 20):
         )
 
     try:
-        results = await _archive.search_fts(query, limit=limit)
+        results = await _archive.search_fts(query, limit=limit * 2 if project_id else limit)
+        # Filter by project_id when provided
+        if project_id:
+            filtered = []
+            for r in results:
+                payload = _parse_archive_payload(r)
+                item_project = None
+                if isinstance(payload, dict):
+                    item_project = payload.get("_project_id")
+                elif isinstance(payload, str) and "_project_id" in payload:
+                    # Try to extract from stringified dict
+                    import re as _re
+                    m = _re.search(r'"_project_id"\s*:\s*"([^"]+)"', payload)
+                    if m:
+                        item_project = m.group(1)
+                if item_project is None or item_project == project_id:
+                    filtered.append(r)
+                if len(filtered) >= limit:
+                    break
+            results = filtered
         return {
             "results": [
                 {
@@ -1227,6 +1259,26 @@ async def retrieve(req: RetrieveRequest):
         all_results = all_results[:req.top_k]
 
     # ── Token budget enforcement ──────────────────────────────────────────────
+    # Filter by project_id when provided — only return results that belong to
+    # this project or have no project tag (global facts like language preferences).
+    if req.project_id:
+        def _matches_project(item: dict) -> bool:
+            meta = item.get("metadata") or {}
+            # Archive results embed _project_id in the payload string
+            content = item.get("content", "")
+            item_project = meta.get("project_id") or meta.get("_project_id")
+            if item_project:
+                return item_project == req.project_id
+            # If no project tag, allow through (global/cross-project facts)
+            # but deprioritise by halving the score so project-specific results rank higher
+            if f"_project_id" not in content:
+                item["score"] = item.get("score", 0.5) * 0.5
+                return True
+            return False
+        all_results = [r for r in all_results if _matches_project(r)]
+        # Re-sort after score adjustment
+        all_results.sort(key=lambda r: r.get("score", 0.0), reverse=True)
+
     # Truncate lower-scored results to fit within the token budget
     budget_remaining = token_budget
     trimmed_results = []

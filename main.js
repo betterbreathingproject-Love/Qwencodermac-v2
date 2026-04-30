@@ -112,8 +112,7 @@ const ROLE_OVERLAYS = {
   'implementation':
     'You are in IMPLEMENTATION mode. Focus on writing and modifying code.\n' +
     'Read relevant files first, then make surgical changes with write_file/edit_file.\n' +
-    'Use LSP diagnostics to validate changes. Verify with bash. Each write_file under 300 lines.\n' +
-    'For Swift/Xcode projects: call xcode_setup_project() first to detect iOS vs macOS and get the right build commands.',
+    'Use LSP diagnostics to validate changes. Verify with bash. Each write_file under 300 lines.',
 
   'general':
     'You are a general-purpose coding assistant. Adapt your approach to whatever the task requires.',
@@ -316,6 +315,17 @@ ipcMain.handle('setup-launch-main', async () => {
       setupWindow?.close()
       setupWindow = null
     }, 400)
+  }
+  return { ok: true }
+})
+
+// ── Setup: open wizard from main app (settings panel) ────────────────────────
+ipcMain.handle('open-setup-wizard', async () => {
+  ipcSetup.resetSetup()
+  if (!setupWindow) {
+    createSetupWindow()
+  } else {
+    setupWindow.focus()
   }
   return { ok: true }
 })

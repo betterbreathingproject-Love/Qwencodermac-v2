@@ -6205,3 +6205,12 @@ if (typeof window !== 'undefined') {
     if (!_memoryLoaded) memoryRefresh()
   }
 }
+
+// ── Setup Wizard launcher ─────────────────────────────────────────────────────
+async function openSetupWizard() {
+  try {
+    await window.app.openSetupWizard()
+  } catch (e) {
+    console.error('[setup-wizard] Failed to open:', e)
+  }
+}

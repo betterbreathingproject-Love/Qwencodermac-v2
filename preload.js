@@ -110,6 +110,9 @@ contextBridge.exposeInMainWorld('app', {
   getAppSettings: ()        => ipcRenderer.invoke('get-app-settings'),
   saveAppSettings:(s)       => ipcRenderer.invoke('save-app-settings', s),
 
+  // setup wizard
+  openSetupWizard:()        => ipcRenderer.invoke('open-setup-wizard'),
+
   // compactor
   compactorStatus:()        => ipcRenderer.invoke('compactor-status'),
   compactMessages:(m, o)    => ipcRenderer.invoke('compactor-compress-messages', m, o),

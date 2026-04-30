@@ -111,7 +111,7 @@ function httpRequest(method, path, body, timeoutMs) {
  * Retrieve relevant memory context for a query.
  *
  * @param {string} query - The search query
- * @param {{ mode?: 'fast'|'thorough', agentName?: string, topK?: number }} options
+ * @param {{ mode?: 'fast'|'thorough', agentName?: string, topK?: number, projectId?: string }} options
  * @returns {Promise<{ results: Array<{source, content, score, metadata}>, tokenCount: number }>}
  */
 async function retrieve(query, options = {}) {
@@ -121,6 +121,7 @@ async function retrieve(query, options = {}) {
       mode: options.mode || 'fast',
       agent_name: options.agentName || null,
       top_k: options.topK || 10,
+      project_id: options.projectId || null,
     }
     const result = await httpRequest('POST', '/memory/retrieve', body, TIMEOUTS.retrieve)
     if (!result || !Array.isArray(result.results)) {
@@ -141,7 +142,7 @@ async function retrieve(query, options = {}) {
  * @param {'conversation'|'tool_call'|'decision'|'error'|'pre_compaction'|'session_start'|'session_end'|'task_completion'|'workflow_start'} eventType
  * @param {string|object} payload - Verbatim content
  * @param {string} summary - Short description
- * @param {{ agentName?: string, sessionId?: string, turnNumber?: number }} options
+ * @param {{ agentName?: string, sessionId?: string, turnNumber?: number, projectId?: string }} options
  * @returns {Promise<{ok: boolean}>}
  */
 async function archiveRecord(eventType, payload, summary, options = {}) {
@@ -153,6 +154,7 @@ async function archiveRecord(eventType, payload, summary, options = {}) {
       agent_name: options.agentName || null,
       session_id: options.sessionId || null,
       turn_number: options.turnNumber || null,
+      project_id: options.projectId || null,
     }
     const result = await httpRequest('POST', '/memory/archive/record', body, TIMEOUTS.archive)
     return result && result.ok ? { ok: true } : { ok: false }
@@ -243,13 +245,15 @@ async function vectorSearch(query, options = {}) {
  * Full-text search over the Archive.
  *
  * @param {string} query - Search query
- * @param {{ limit?: number }} options
+ * @param {{ limit?: number, projectId?: string }} options
  * @returns {Promise<Array<{id, event_type, payload, summary, agent_name, session_id, timestamp}>>}
  */
 async function archiveSearch(query, options = {}) {
   try {
     const limit = options.limit || 20
-    const result = await httpRequest('GET', `/memory/archive/search?query=${encodeURIComponent(query)}&limit=${limit}`, null, TIMEOUTS.retrieve)
+    let url = `/memory/archive/search?query=${encodeURIComponent(query)}&limit=${limit}`
+    if (options.projectId) url += `&project_id=${encodeURIComponent(options.projectId)}`
+    const result = await httpRequest('GET', url, null, TIMEOUTS.retrieve)
     if (!result || !Array.isArray(result.results)) return []
     return result.results
   } catch (_) {
