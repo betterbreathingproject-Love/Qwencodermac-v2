@@ -96,6 +96,43 @@ function register(ipcMain, { getMainWindow, getCurrentProject, setCurrentProject
       }
     } catch {}
   })
+
+  // ── File undo ─────────────────────────────────────────────────────────────
+  // Exposes the undo store from direct-bridge.js to the renderer.
+  // sessionId scopes the undo stack to the current conversation.
+
+  ipcMain.handle('undo-list', (_, sessionId) => {
+    try {
+      const { undoList } = require('../direct-bridge')
+      return undoList(sessionId || '')
+    } catch (e) {
+      return []
+    }
+  })
+
+  ipcMain.handle('undo-apply', (_, sessionId, index) => {
+    try {
+      const { undoApply } = require('../direct-bridge')
+      const result = undoApply(sessionId || '', index ?? 0)
+      if (result.ok) {
+        // Notify renderer that a file changed
+        getMainWindow()?.webContents.send('files-changed', { path: result.filePath, action: 'undo' })
+      }
+      return result
+    } catch (e) {
+      return { error: e.message }
+    }
+  })
+
+  ipcMain.handle('undo-clear', (_, sessionId) => {
+    try {
+      const { undoClear } = require('../direct-bridge')
+      undoClear(sessionId || '')
+      return { ok: true }
+    } catch (e) {
+      return { error: e.message }
+    }
+  })
 }
 
 module.exports = { register, safePath }

@@ -59,6 +59,115 @@ const pythonPath = _findPythonPath()
 const VALIDATED_TOOLS = new Set(['edit_file', 'write_file', 'bash', 'read_file'])
 const GIT_CMD_RE = /^git\s+(status|log|diff|show)\b/
 
+// ── File undo store ───────────────────────────────────────────────────────────
+// Snapshots the before-state of every file touched by write_file or edit_file.
+// Keyed by sessionId → array of { filePath, beforeContent, afterContent, tool, timestamp }
+// Max 50 operations per session to cap memory. Persisted to disk for cross-restart undo.
+const _undoStore = new Map()  // sessionId → [{filePath, beforeContent, afterContent, tool, ts}]
+const UNDO_MAX_PER_SESSION = 50
+const UNDO_STORE_PATH = require('path').join(require('os').homedir(), '.qwencoder', 'undo-store.json')
+
+function _loadUndoStore() {
+  try {
+    if (!fs.existsSync(UNDO_STORE_PATH)) return
+    const raw = JSON.parse(fs.readFileSync(UNDO_STORE_PATH, 'utf-8'))
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000  // 24h
+    for (const [sid, ops] of Object.entries(raw)) {
+      const fresh = ops.filter(op => op.ts > cutoff)
+      if (fresh.length > 0) _undoStore.set(sid, fresh)
+    }
+  } catch { /* non-fatal */ }
+}
+
+let _undoSaveTimer = null
+function _scheduleUndoSave() {
+  if (_undoSaveTimer) return
+  _undoSaveTimer = setTimeout(() => {
+    _undoSaveTimer = null
+    try {
+      const dir = require('path').dirname(UNDO_STORE_PATH)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+      const obj = {}
+      for (const [sid, ops] of _undoStore.entries()) obj[sid] = ops
+      fs.writeFileSync(UNDO_STORE_PATH, JSON.stringify(obj), 'utf-8')
+    } catch { /* non-fatal */ }
+  }, 2000)
+}
+
+_loadUndoStore()
+
+/**
+ * Record a file operation for undo. Called before write_file / edit_file executes.
+ * @param {string} sessionId
+ * @param {string} filePath  absolute path
+ * @param {string|null} beforeContent  null if file didn't exist
+ * @param {string} afterContent
+ * @param {string} tool  'write_file' | 'edit_file'
+ */
+function undoRecord(sessionId, filePath, beforeContent, afterContent, tool) {
+  if (!sessionId) return
+  if (!_undoStore.has(sessionId)) _undoStore.set(sessionId, [])
+  const ops = _undoStore.get(sessionId)
+  ops.push({ filePath, beforeContent, afterContent, tool, ts: Date.now() })
+  // Cap per session
+  if (ops.length > UNDO_MAX_PER_SESSION) ops.splice(0, ops.length - UNDO_MAX_PER_SESSION)
+  _scheduleUndoSave()
+}
+
+/**
+ * Return the undo stack for a session (most recent first).
+ */
+function undoList(sessionId) {
+  const ops = _undoStore.get(sessionId) || []
+  return [...ops].reverse().map((op, i) => ({
+    index: i,
+    filePath: op.filePath,
+    tool: op.tool,
+    ts: op.ts,
+    isNew: op.beforeContent === null,
+    beforeSize: op.beforeContent ? op.beforeContent.length : 0,
+    afterSize: op.afterContent ? op.afterContent.length : 0,
+  }))
+}
+
+/**
+ * Undo the Nth most recent operation for a session (0 = most recent).
+ * Removes the entry from the stack after applying it.
+ * Returns { ok, filePath, restored } or { error }.
+ */
+function undoApply(sessionId, index = 0) {
+  const ops = _undoStore.get(sessionId) || []
+  const opIndex = ops.length - 1 - index
+  const op = ops[opIndex]
+  if (!op) return { error: 'No undo entry at that index' }
+  try {
+    let restored
+    if (op.beforeContent === null) {
+      // File was created — delete it
+      if (fs.existsSync(op.filePath)) fs.unlinkSync(op.filePath)
+      restored = 'deleted (file was new)'
+    } else {
+      // Restore previous content
+      fs.writeFileSync(op.filePath, op.beforeContent, 'utf-8')
+      restored = `${op.beforeContent.length} chars`
+    }
+    // Remove the applied entry from the stack
+    ops.splice(opIndex, 1)
+    _scheduleUndoSave()
+    return { ok: true, filePath: op.filePath, restored }
+  } catch (e) {
+    return { error: `Undo failed: ${e.message}` }
+  }
+}
+
+/**
+ * Clear the undo stack for a session.
+ */
+function undoClear(sessionId) {
+  _undoStore.delete(sessionId)
+  _scheduleUndoSave()
+}
+
 // ── EventSink implementations ─────────────────────────────────────────────────
 
 /**
@@ -1147,6 +1256,13 @@ function detectContentType(toolName, content) {
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
 async function executeTool(name, args, cwd, browserInstance, lspManager, inputRequester, notify) {
+  // notify can be a plain function (legacy) or { send, _sessionId } object
+  // Normalise so callers can use notify._sessionId for undo tracking
+  if (typeof notify === 'function') {
+    notify = { send: notify, _sessionId: '' }
+  }
+  notify = notify || { send: () => {}, _sessionId: '' }
+
   // Route web_* tools to the web tools module
   if (name === 'web_search' || name === 'web_fetch') {
     const apiKeys = getApiKeys()
@@ -1297,7 +1413,10 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
 
         const dir = path.dirname(p)
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+        // Snapshot before-state for undo
+        const _beforeWrite = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : null
         fs.writeFileSync(p, args.content, 'utf-8')
+        if (notify && notify._sessionId) undoRecord(notify._sessionId, p, _beforeWrite, args.content, 'write_file')
         return { result: `Wrote ${args.content.length} chars to ${args.path}` }
       }
       case 'edit_file': {
@@ -1320,7 +1439,10 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         if (!content.includes(args.old_string)) return { error: `old_string not found in ${args.path}. Make sure it matches exactly. Tip: re-read the file with read_file first to get the current content, then use the exact text from that read.` }
         const count = content.split(args.old_string).length - 1
         if (count > 1) return { error: `old_string found ${count} times in ${args.path}. Make it more specific so it matches exactly once.` }
-        fs.writeFileSync(p, content.replace(args.old_string, args.new_string), 'utf-8')
+        const _editedContent = content.replace(args.old_string, args.new_string)
+        // Snapshot before-state for undo
+        if (notify && notify._sessionId) undoRecord(notify._sessionId, p, content, _editedContent, 'edit_file')
+        fs.writeFileSync(p, _editedContent, 'utf-8')
         return { result: `Edited ${args.path}` }
       }
       case 'list_dir': {
@@ -1484,8 +1606,8 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
             const silentSecs = Math.round((Date.now() - lastOutputAt) / 1000)
             if (silentSecs >= 60) {
               const elapsedTotal = Math.round((Date.now() - (lastOutputAt - silentSecs * 1000 + silentSecs * 1000)) / 1000)
-              if (typeof notify === 'function') {
-                notify('qwen-event', {
+              if (notify && notify.send) {
+                notify.send('qwen-event', {
                   type: 'bash-waiting',
                   command: args.command.slice(0, 80),
                   elapsedSecs: silentSecs,
@@ -2679,7 +2801,7 @@ class DirectBridge {
         }
 
         // Execute
-        const result = await executeTool(fnName, fnArgs, cwd, this._browserInstance, this._lspManager, undefined, this.send.bind(this))
+        const result = await executeTool(fnName, fnArgs, cwd, this._browserInstance, this._lspManager, undefined, { send: this.send.bind(this), _sessionId })
         const isError = !!result.error
         let content = result.error || result.result
 
@@ -3535,4 +3657,4 @@ ${autoEdit ? '\nAuto-edit mode: proceed with all changes without asking for conf
   }
 }
 
-module.exports = { DirectBridge, WindowSink, CallbackSink, WorkerSink, InputRequester, executeTool, getToolDefs, LSP_TOOL_SETS, LSP_TOOL_DEFS, buildProjectContext, detectEntryPoints, formatSymbolOutline, detectContentType }
+module.exports = { DirectBridge, WindowSink, CallbackSink, WorkerSink, InputRequester, executeTool, getToolDefs, LSP_TOOL_SETS, LSP_TOOL_DEFS, buildProjectContext, detectEntryPoints, formatSymbolOutline, detectContentType, undoList, undoApply, undoClear, undoRecord }

@@ -168,6 +168,11 @@ contextBridge.exposeInMainWorld('app', {
   prefixCacheSet:  (opts)  => ipcRenderer.invoke('prefix-cache-set', opts),
   prefixCacheStatus: ()    => ipcRenderer.invoke('prefix-cache-status'),
 
+  // File undo — restore files to their state before the last agent write/edit
+  undoList:        (sid)        => ipcRenderer.invoke('undo-list', sid),
+  undoApply:       (sid, idx)   => ipcRenderer.invoke('undo-apply', sid, idx),
+  undoClear:       (sid)        => ipcRenderer.invoke('undo-clear', sid),
+
   // Telegram
   telegramPair:      ()      => ipcRenderer.invoke('telegram-pair'),
   telegramStatus:    ()      => ipcRenderer.invoke('telegram-status'),
