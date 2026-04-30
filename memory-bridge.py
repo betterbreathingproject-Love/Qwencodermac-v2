@@ -477,10 +477,9 @@ async def get_memory_stats():
     kg_triples = 0
     if _kg is not None:
         try:
-            if hasattr(_kg, "count"):
-                kg_triples = await _kg.count()
-            elif hasattr(_kg, "triple_count"):
-                kg_triples = await _kg.stats()
+            # taosmd KnowledgeGraph.stats() returns {"entities": N, "triples": N, "active_triples": N}
+            kg_stats = await _kg.stats()
+            kg_triples = kg_stats.get("triples", 0) if isinstance(kg_stats, dict) else 0
         except Exception as e:
             logger.warning(f"Failed to get KG triple count: {e}")
 
@@ -1295,23 +1294,59 @@ _extraction_source = None  # "extraction_model" or "primary_model"
 
 # Regex patterns for fast entity-relationship extraction (15ms)
 _EXTRACTION_PATTERNS = [
-    # "X uses Y", "X is a Y", "X has Y", "X works with Y"
-    re.compile(r'\b(\w+)\s+(uses|is a|is an|has|works with|depends on|created by|located in|part of|related to|knows|owns|manages)\s+(\w+)', re.I),
-    # "X: Y" (key-value style)
-    re.compile(r'\b([A-Z][a-zA-Z]+):\s+([A-Z][a-zA-Z]+)'),
+    # "X uses Y", "X is a Y", "X has Y", "X works with Y" etc.
+    re.compile(
+        r'\b([A-Za-z][A-Za-z0-9_]{1,40})\s+'
+        r'(uses|is a|is an|has|works with|depends on|created by|located in|'
+        r'part of|related to|knows|owns|manages|implements|extends|imports|'
+        r'calls|returns|contains|defines|exports|inherits from|conforms to)\s+'
+        r'([A-Za-z][A-Za-z0-9_]{1,40})',
+        re.I
+    ),
+    # CamelCase/PascalCase class/type relationships: "PhotoRanker: EmbeddingService"
+    re.compile(r'\b([A-Z][a-zA-Z0-9]{2,40}):\s+([A-Z][a-zA-Z0-9]{2,40})'),
+    # File path → component: extract top-level dir and filename as entities
+    # e.g. "PhotoRanker/Services/EmbeddingService.swift" → PhotoRanker contains EmbeddingService
+    re.compile(r'["\']([A-Z][a-zA-Z0-9]+)/(?:[^"\']+/)([A-Z][a-zA-Z0-9]+)\.[a-z]+["\']'),
+    # "X.swift", "X.py", "X.js" → entity name extraction for tool call context
+    # Produces (filename_stem, "is_file", extension) triples
+    re.compile(r'\b([A-Z][a-zA-Z0-9]{2,40})\.(swift|py|js|ts|rs|kt|java|cpp|h)\b'),
+    # "import X" / "from X import" patterns
+    re.compile(r'\b(?:import|from)\s+([A-Za-z][A-Za-z0-9_.]{2,40})\b'),
 ]
 
 
 def _regex_extract_triples(text: str) -> list[tuple[str, str, str]]:
     """Fast regex-based triple extraction (~15ms). Returns list of (subject, predicate, object)."""
     triples = []
-    for pattern in _EXTRACTION_PATTERNS:
+    seen = set()  # deduplicate within a single extraction call
+
+    for i, pattern in enumerate(_EXTRACTION_PATTERNS):
         for match in pattern.finditer(text):
             groups = match.groups()
-            if len(groups) >= 3:
-                triples.append((groups[0], groups[1], groups[2]))
-            elif len(groups) == 2:
-                triples.append((groups[0], "is", groups[1]))
+            if i == 0 and len(groups) >= 3:
+                # Standard S-P-O pattern
+                triple = (groups[0], groups[1], groups[2])
+            elif i == 1 and len(groups) == 2:
+                # CamelCase key-value → "X is Y"
+                triple = (groups[0], "is", groups[1])
+            elif i == 2 and len(groups) == 2:
+                # File path: component contains file
+                triple = (groups[0], "contains", groups[1])
+            elif i == 3 and len(groups) == 2:
+                # Filename.ext → "X is_file ext"
+                triple = (groups[0], "is_file", groups[1])
+            elif i == 4 and len(groups) == 1:
+                # import X → "codebase imports X"
+                triple = ("codebase", "imports", groups[0])
+            else:
+                continue
+
+            key = (triple[0].lower(), triple[1].lower(), triple[2].lower())
+            if key not in seen:
+                seen.add(key)
+                triples.append(triple)
+
     return triples
 
 

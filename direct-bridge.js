@@ -241,7 +241,7 @@ const TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'bash',
-      description: 'Execute a shell command and return its output. Use for running tests, installing packages, git operations, building projects, etc. Timeout: 30s for general commands, 5 minutes for install/build commands (npm install, pip install, swift build, xcodebuild, pod install, cargo build, etc.). For interactive commands that ask questions, add flags to suppress prompts (e.g. npm init -y, pip install --no-input).',
+      description: 'Execute a shell command and return its output. Use for running tests, installing packages, git operations, building projects, etc. Timeout: 30s for general commands, 5 minutes for install/build commands (npm install, pip install, swift build, xcodebuild, pod install, cargo build, etc.). For interactive commands that ask questions, add flags to suppress prompts (e.g. npm init -y, pip install --no-input). IMPORTANT: Do NOT call agent tools (xcode_*, lsp_*, browser_*, web_*, read_file, write_file, etc.) via bash — they are not shell commands. Use the tool-call interface directly.',
       parameters: {
         type: 'object',
         properties: {
@@ -1408,6 +1408,20 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         // Block obviously dangerous commands
         const dangerous = /\b(rm\s+-rf\s+\/|mkfs|dd\s+if=|:(){ :|fork\s*bomb)\b/i
         if (dangerous.test(args.command)) return { error: 'Command blocked for safety' }
+
+        // Detect tool-call syntax used as a bash command — e.g. xcode_list_schemes(project_path="...")
+        // This happens when the model confuses agent tool names with shell commands.
+        // Catch: identifier followed immediately by ( with no spaces before it.
+        const toolCallPattern = /^([a-z][a-z0-9_]*)\s*\(/i
+        const toolCallMatch = args.command.trim().match(toolCallPattern)
+        if (toolCallMatch) {
+          const calledName = toolCallMatch[1]
+          // Only flag if it looks like one of our known tool names (contains underscore or matches known prefixes)
+          const looksLikeTool = calledName.includes('_') || /^(xcode|lsp|browser|web|read|write|edit|list|search|bash|task|ask|update)\w+/.test(calledName)
+          if (looksLikeTool) {
+            return { error: `"${calledName}(...)" is not a shell command — it looks like an agent tool call written in function-call syntax. Do NOT run agent tools via bash. Instead, call the tool directly using the tool-call interface. For example, to list Xcode schemes, use the xcode_list_schemes tool with {"project_path": "..."} as arguments, not bash.` }
+          }
+        }
 
         // Redirect cat/head/tail on source files to read_file — bash output is capped
         // at 2MB and has no line-range support, causing truncation on large files.
