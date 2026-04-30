@@ -1382,15 +1382,44 @@ async def extractor_load(req: ExtractorLoadRequest):
 
     try:
         import mlx_lm
+        import mlx_vlm
+        from mlx_vlm.utils import load_config as vlm_load_config
+        import json
+        from pathlib import Path as _Path
+
         logger.info(f"Loading extraction model: {req.model_path}")
-        _extract_model, _extract_processor = mlx_lm.load(req.model_path)
+
+        # Detect whether the model has real vision weights.
+        # Load via mlx_vlm if it does (enables image analysis),
+        # fall back to mlx_lm for text-only models.
+        _has_vision = False
+        try:
+            _cfg_path = _Path(req.model_path) / "config.json"
+            _idx_path = _Path(req.model_path) / "model.safetensors.index.json"
+            if _cfg_path.exists() and _idx_path.exists():
+                _cfg = json.loads(_cfg_path.read_text())
+                _idx = json.loads(_idx_path.read_text())
+                _has_vision_cfg = "vision_config" in _cfg or "image_token_id" in _cfg
+                _has_vision_weights = any("vision" in k for k in _idx.get("weight_map", {}).keys())
+                _has_vision = _has_vision_cfg and _has_vision_weights
+        except Exception as _e:
+            logger.warning(f"Could not detect vision capability: {_e}")
+
+        if _has_vision:
+            logger.info(f"Loading extraction model as vision-capable (mlx_vlm): {req.model_path}")
+            _extract_model, _extract_processor = mlx_vlm.load(req.model_path)
+        else:
+            logger.info(f"Loading extraction model as text-only (mlx_lm): {req.model_path}")
+            _extract_model, _extract_processor = mlx_lm.load(req.model_path)
+
         _extract_model_path = req.model_path
         _extraction_source = "extraction_model"
-        logger.info(f"Extraction model loaded: {req.model_path}")
+        logger.info(f"Extraction model loaded ({'vision' if _has_vision else 'text-only'}): {req.model_path}")
         return {
             "ok": True,
             "model": req.model_path,
-            "message": f"Extraction model loaded: {req.model_path}",
+            "vision": _has_vision,
+            "message": f"Extraction model loaded ({'vision' if _has_vision else 'text-only'}): {req.model_path}",
         }
     except ImportError:
         raise HTTPException(
@@ -1851,7 +1880,11 @@ VISION_MAX_CHARS = 2000  # ~500 tokens
 
 
 async def _handle_vision(payload: dict) -> AssistResponse:
-    """2.1 Vision — decode base64 image and describe it via the VLM model."""
+    """Vision — decode base64 image and describe it via the fast VLM model.
+
+    Uses the extraction model which is loaded via mlx_vlm when it has vision
+    weights (e.g. Qwen3.5-0.8B). Falls back gracefully if not available.
+    """
     import time, base64, tempfile, os as _os
     t0 = time.monotonic()
 
@@ -1859,10 +1892,12 @@ async def _handle_vision(payload: dict) -> AssistResponse:
     mime_type: str = payload.get("mime_type", "image/png")
     prompt: str = payload.get("prompt", "Describe this image in detail.")
 
+    if _extract_model is None or _extract_processor is None:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result=None, elapsed_ms=elapsed_ms, output_tokens=0)
+
     try:
-        import mlx_vlm
         from mlx_vlm import generate as vlm_generate
-        from mlx_vlm.utils import load_config
 
         # Decode the base64 image to a temp file
         image_data = base64.b64decode(image_b64)

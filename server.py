@@ -251,26 +251,19 @@ def load_model(model_path: str):
     global _model, _processor, _config, _model_id, _model_path, _chat_template, _model_is_vision
     print(f"[server] Loading {model_path} ...")
 
-    # Try mlx_vlm first (vision-capable), fall back to mlx_lm (text-only)
-    # if the model is missing vision tower weights (e.g. distilled text-only
-    # models that inherit vision config fields from the base architecture).
+    # ── Always load the primary model as text-only via mlx_lm ────────────────
+    # Reason: mlx_vlm is ~2× slower for text generation (26 vs 53 tok/s on 35B).
+    # Vision requests are delegated to the fast/extractor model (0.8B) which is
+    # loaded separately via memory-bridge and handles images via mlx_vlm.
+    # This gives full generation speed on all text tasks with no quality loss.
     try:
-        from mlx_vlm import load
-        from mlx_vlm.utils import load_config
-        _model, _processor = load(model_path)
-        _config = load_config(model_path)
-        _model_is_vision = True
-        print(f"[server] Loaded as vision model (mlx_vlm)")
-    except ValueError as e:
-        if "Missing" in str(e) and "vision_tower" in str(e):
-            print(f"[server] Vision weights missing — falling back to text-only (mlx_lm)")
-            from mlx_lm import load as lm_load
-            _model, _processor = lm_load(model_path)
-            _config = None
-            _model_is_vision = False
-            print(f"[server] Loaded as text-only model (mlx_lm)")
-        else:
-            raise
+        from mlx_lm import load as lm_load
+        _model, _processor = lm_load(model_path)
+        _config = None
+        _model_is_vision = False
+        print(f"[server] Loaded as text-only model (mlx_lm) — vision delegated to fast model")
+    except Exception as e:
+        raise RuntimeError(f"Failed to load model via mlx_lm: {e}") from e
 
     _model_path = model_path
 
@@ -1335,6 +1328,66 @@ async def benchmark():
             raise HTTPException(status_code=500, detail=str(e))
 
 
+async def _route_vision_request(req: ChatRequest):
+    """
+    Route an image-containing request to the fast model via memory-bridge.
+
+    Extracts all images from the request, calls memory-bridge's _handle_vision
+    for each image, then returns a standard OpenAI chat completion response.
+    Falls back gracefully if the fast model isn't loaded.
+    """
+    import uuid as _uuid
+    import base64 as _b64
+
+    text, images = extract_text_and_images(req.messages)
+    user_prompt = text or "Describe this image in detail."
+
+    descriptions = []
+    errors = []
+
+    for img_path in images:
+        try:
+            with open(img_path, "rb") as f:
+                img_bytes = f.read()
+            img_b64 = _b64.b64encode(img_bytes).decode()
+            ext = img_path.rsplit(".", 1)[-1].lower() if "." in img_path else "png"
+            mime = f"image/{'jpeg' if ext in ('jpg', 'jpeg') else ext}"
+
+            if _memory_bridge is not None and hasattr(_memory_bridge, '_handle_vision'):
+                payload = {"image_b64": img_b64, "mime_type": mime, "prompt": user_prompt}
+                result = await _memory_bridge._handle_vision(payload)
+                if result and result.result:
+                    descriptions.append(result.result)
+                else:
+                    errors.append("Vision model returned no description — is the fast model loaded?")
+            else:
+                errors.append("Fast vision model not available (load the 0.8B model in the app)")
+        except Exception as e:
+            errors.append(f"Vision analysis failed: {e}")
+            print(f"[server] Vision routing error: {e}", file=sys.stderr)
+        finally:
+            _cleanup_images([img_path])
+
+    if descriptions:
+        content = "\n\n".join(descriptions)
+        if errors:
+            content += f"\n\n(Note: {len(errors)} image(s) could not be analyzed)"
+    elif errors:
+        content = f"Could not analyze image(s): {'; '.join(errors)}"
+    else:
+        content = "No images could be processed."
+
+    cid = f"chatcmpl-{_uuid.uuid4().hex[:12]}"
+    return {
+        "id": cid,
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": _model_id or "fast-vision",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 0, "completion_tokens": len(content) // 4, "total_tokens": len(content) // 4},
+    }
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(req: ChatRequest):
     if _model is None:
@@ -1345,6 +1398,14 @@ async def chat_completions(req: ChatRequest):
     has_images = bool(images_check)
     # clean up the check images (they'll be re-extracted in _build_prompt_and_kwargs)
     _cleanup_images(images_check)
+
+    # ── vision routing: delegate image requests to the fast model ─────────────
+    # The primary model is loaded as text-only (mlx_lm) for 2× generation speed.
+    # Image requests are routed to the fast/extractor model (0.8B) via the
+    # memory-bridge /memory/assist vision endpoint, which uses mlx_vlm.
+    # This matches how playwright screenshots and image uploads already work.
+    if has_images:
+        return await _route_vision_request(req)
 
     # ── auto-build prefix cache on first request with a system prompt ─────────
     # If no cache exists yet and this request has a system prompt, build it now
