@@ -308,6 +308,36 @@
       color: var(--green);
     }
 
+
+    /* ── DEPS STEP ── */
+    .deps-list { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+    .dep-row {
+      display: flex; align-items: center; gap: 12px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 10px 16px;
+      transition: border-color .2s;
+    }
+    .dep-row.dep-ok    { border-color: rgba(52,211,153,0.25); }
+    .dep-row.dep-miss  { border-color: rgba(251,146,60,0.25); }
+    .dep-row.dep-installing { border-color: rgba(124,106,247,0.3); }
+    .dep-icon { font-size: 16px; flex-shrink: 0; width: 22px; text-align: center; }
+    .dep-label { flex: 1; font-size: 13px; font-weight: 500; }
+    .dep-status { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; flex-shrink: 0; }
+    .dep-status-ok      { background: rgba(52,211,153,0.12); color: var(--green); }
+    .dep-status-missing { background: rgba(251,146,60,0.1);  color: var(--orange); }
+    .dep-status-installing { background: rgba(124,106,247,0.12); color: var(--accent3); }
+    .install-log {
+      background: #0d0d14; border: 1px solid var(--border); border-radius: 10px;
+      padding: 12px 14px; font-family: 'SF Mono','Fira Code',monospace;
+      font-size: 11px; color: #a0a0c0; line-height: 1.6;
+      max-height: 160px; overflow-y: auto; margin-top: 12px;
+      display: none;
+    }
+    .install-log.visible { display: block; }
+    .log-line-ok   { color: var(--green); }
+    .log-line-err  { color: var(--red); }
+    .log-line-info { color: var(--accent2); }
+
     /* ── MODELS DIR ROW ── */
     .models-dir-row {
       display: flex; align-items: center; gap: 10px;
@@ -368,6 +398,11 @@
       </div>
       <div class="step-line"></div>
       <div class="step-item" id="step-nav-3">
+        <div class="step-dot">4</div>
+        <span>Calibrate</span>
+      </div>
+      <div class="step-line"></div>
+      <div class="step-item" id="step-nav-4">
         <div class="step-dot">✓</div>
         <span>Ready</span>
       </div>
@@ -399,8 +434,21 @@
       </div>
     </div>
 
-    <!-- ── PANEL 1: MODELS ── -->
+
+    <!-- ── PANEL 1: DEPENDENCIES ── -->
     <div class="panel" id="panel-1">
+      <div class="section-title">Python Dependencies</div>
+      <div class="section-sub" id="depsSubtitle">Checking your Python environment…</div>
+
+      <div class="deps-list" id="depsList">
+        <!-- populated by JS -->
+      </div>
+
+      <div class="install-log" id="installLog"></div>
+    </div>
+
+    <!-- ── PANEL 1: MODELS ── -->
+    <div class="panel" id="panel-2">
       <div class="section-title">Recommended Models</div>
       <div class="section-sub" id="tierSubtitle">Based on your hardware, here are the models we recommend.</div>
 
@@ -455,7 +503,7 @@
     </div>
 
     <!-- ── PANEL 2: CALIBRATE ── -->
-    <div class="panel" id="panel-2">
+    <div class="panel" id="panel-3">
       <div class="section-title">Calibrating Your Mac</div>
       <div class="section-sub">We run a quick benchmark to tune token budgets and timeouts for your exact hardware.</div>
 
@@ -488,7 +536,7 @@
     </div>
 
     <!-- ── PANEL 3: DONE ── -->
-    <div class="panel" id="panel-3">
+    <div class="panel" id="panel-4">
       <div class="done-hero">
         <span class="done-icon">🚀</span>
         <h1>You're all set!</h1>
@@ -522,13 +570,17 @@ let setupInfo = null          // from setup-get-info
 let selectedTierIdx = 0       // which tier is shown
 let calibDone = false
 let calibSkipped = false
-const TOTAL_STEPS = 4
+const TOTAL_STEPS = 5
 
 // ── IPC bridge (Electron preload exposes window.setup) ─────────────────────
 const ipc = window.setup || {
   getInfo:    () => Promise.resolve({ hardware: { ramGb: 64, chip: 'Apple M2 Ultra' }, tier: null, allTiers: [], primaryInstalled: false, fastInstalled: false, lmStudioInstalled: true }),
   openUrl:    (u) => { window.open(u, '_blank'); return Promise.resolve({ ok: true }) },
   scanModels:    () => Promise.resolve({ installed: [], installedFolders: [] }),
+  checkDeps:     () => Promise.resolve({ missing: [], installed: [], python: 'python3' }),
+  installDeps:   () => Promise.resolve({ ok: true }),
+  onInstallLog:  (cb) => {},
+  offInstallLog: () => {},
   getModelsDir:  () => Promise.resolve({ dir: '~/.lmstudio/models', isDefault: true }),
   pickModelsDir: () => Promise.resolve({ canceled: true }),
   saveModelsDir: (d) => Promise.resolve({ ok: true }),
@@ -576,16 +628,159 @@ function showPanel(idx) {
     footerHint.textContent = ''
   } else if (idx === 1) {
     nextBtn.textContent = 'Continue →'
-    updateModelsFooterHint()
+    nextBtn.disabled = true
+    footerHint.textContent = ''
+    startDepsCheck()
   } else if (idx === 2) {
+    nextBtn.textContent = 'Continue →'
+    updateModelsFooterHint()
+  } else if (idx === 3) {
     nextBtn.textContent = 'Continue →'
     nextBtn.disabled = true
     footerHint.textContent = ''
     startCalibrationWatch()
-  } else if (idx === 3) {
+  } else if (idx === 4) {
     nextBtn.textContent = 'Launch QwenCoder →'
     footerHint.textContent = ''
     buildDoneSummary()
+  }
+}
+
+
+// ── Step 1: Dependencies ───────────────────────────────────────────────────
+const ALL_DEPS = [
+  { imp: 'mlx',                pip: 'mlx',                  label: 'MLX',                desc: 'Apple Silicon inference engine' },
+  { imp: 'mlx_lm',             pip: 'mlx-lm',               label: 'mlx-lm',             desc: 'Text model inference + tool calling' },
+  { imp: 'mlx_vlm',            pip: 'mlx-vlm',              label: 'mlx-vlm',            desc: 'Vision-language model inference' },
+  { imp: 'fastapi',            pip: 'fastapi',              label: 'FastAPI',            desc: 'Local inference server framework' },
+  { imp: 'uvicorn',            pip: 'uvicorn',              label: 'Uvicorn',            desc: 'ASGI server' },
+  { imp: 'pydantic',           pip: 'pydantic',             label: 'Pydantic',           desc: 'Data validation' },
+  { imp: 'jinja2',             pip: 'Jinja2',               label: 'Jinja2',             desc: 'Chat template engine' },
+  { imp: 'PIL',                pip: 'Pillow',               label: 'Pillow',             desc: 'Image processing' },
+  { imp: 'psutil',             pip: 'psutil',               label: 'psutil',             desc: 'Memory monitoring' },
+  { imp: 'sentence_transformers', pip: 'sentence-transformers', label: 'sentence-transformers', desc: 'Vector memory embeddings' },
+  { imp: 'transformers',       pip: 'transformers',         label: 'transformers',       desc: 'Model tokenizers' },
+  { imp: 'numpy',              pip: 'numpy',                label: 'numpy',              desc: 'Numerical computing' },
+]
+
+let depsState = {}  // imp → 'ok' | 'missing' | 'installing'
+
+function renderDepsList(installedSet, missingSet) {
+  const list = document.getElementById('depsList')
+  list.innerHTML = ''
+  ALL_DEPS.forEach(dep => {
+    const state = depsState[dep.imp] || (installedSet.has(dep.imp) ? 'ok' : missingSet.has(dep.imp) ? 'missing' : 'ok')
+    const row = document.createElement('div')
+    row.className = 'dep-row dep-' + (state === 'ok' ? 'ok' : state === 'installing' ? 'installing' : 'miss')
+    row.id = 'dep-row-' + dep.imp
+    row.innerHTML = `
+      <span class="dep-icon">${state === 'ok' ? '✅' : state === 'installing' ? '⏳' : '��'}</span>
+      <span class="dep-label">${dep.label} <span style="color:var(--muted);font-size:11px;font-weight:400;">— ${dep.desc}</span></span>
+      <span class="dep-status dep-status-${state === 'ok' ? 'ok' : state === 'installing' ? 'installing' : 'missing'}">${state === 'ok' ? 'Installed' : state === 'installing' ? 'Installing…' : 'Missing'}</span>
+    `
+    list.appendChild(row)
+  })
+}
+
+function updateDepRow(imp, state) {
+  depsState[imp] = state
+  const row = document.getElementById('dep-row-' + imp)
+  if (!row) return
+  row.className = 'dep-row dep-' + (state === 'ok' ? 'ok' : state === 'installing' ? 'installing' : 'miss')
+  row.querySelector('.dep-icon').textContent = state === 'ok' ? '✅' : state === 'installing' ? '⏳' : '📦'
+  const s = row.querySelector('.dep-status')
+  s.className = 'dep-status dep-status-' + (state === 'ok' ? 'ok' : state === 'installing' ? 'installing' : 'missing')
+  s.textContent = state === 'ok' ? 'Installed' : state === 'installing' ? 'Installing…' : 'Missing'
+}
+
+function appendInstallLog(line) {
+  const log = document.getElementById('installLog')
+  log.classList.add('visible')
+  const trimmed = line.trim()
+  if (!trimmed) return
+  const div = document.createElement('div')
+  const lower = trimmed.toLowerCase()
+  if (lower.includes('error') || lower.includes('failed')) div.className = 'log-line-err'
+  else if (lower.includes('successfully installed') || lower.includes('already satisfied')) div.className = 'log-line-ok'
+  else if (lower.startsWith('collecting') || lower.startsWith('downloading') || lower.startsWith('installing')) div.className = 'log-line-info'
+  div.textContent = trimmed
+  log.appendChild(div)
+  log.scrollTop = log.scrollHeight
+}
+
+async function startDepsCheck() {
+  const subtitle = document.getElementById('depsSubtitle')
+  subtitle.textContent = 'Checking your Python environment…'
+  nextBtn.disabled = true
+
+  // Show all deps as pending first
+  const allSet = new Set(ALL_DEPS.map(d => d.imp))
+  const emptySet = new Set()
+  renderDepsList(emptySet, emptySet)
+
+  let checkResult
+  try {
+    checkResult = await ipc.checkDeps()
+  } catch (e) {
+    subtitle.textContent = '⚠ Could not check Python — install Python 3.12+ and try again.'
+    nextBtn.disabled = false
+    return
+  }
+
+  const installedSet = new Set((checkResult.installed || []).map(p => p.import))
+  const missingSet   = new Set((checkResult.missing  || []).map(p => p.import))
+
+  // Initialise state
+  ALL_DEPS.forEach(d => { depsState[d.imp] = installedSet.has(d.imp) ? 'ok' : 'missing' })
+  renderDepsList(installedSet, missingSet)
+
+  if (missingSet.size === 0) {
+    subtitle.textContent = '✅ All dependencies installed — you're good to go.'
+    nextBtn.disabled = false
+    footerHint.innerHTML = '<span style="color:var(--green);">✓ All packages present</span>'
+    return
+  }
+
+  // Auto-install missing packages — no user input needed
+  subtitle.textContent = `Installing ${missingSet.size} missing package${missingSet.size > 1 ? 's' : ''}… this may take a few minutes.`
+  footerHint.textContent = 'Installing…'
+
+  // Mark all missing as installing
+  missingSet.forEach(imp => updateDepRow(imp, 'installing'))
+
+  // Listen for log lines
+  ipc.onInstallLog((line) => {
+    appendInstallLog(line)
+    // Detect "Successfully installed X" lines and mark rows green
+    const match = line.match(/Successfully installed (.+)/i)
+    if (match) {
+      const pkgs = match[1].split(' ')
+      pkgs.forEach(pkg => {
+        // pkg is like "mlx-lm-0.31.1" — strip version suffix
+        const name = pkg.replace(/-[\d.]+$/, '').replace(/-/g, '_').toLowerCase()
+        ALL_DEPS.forEach(d => {
+          if (d.pip.toLowerCase().replace(/-/g, '_') === name ||
+              d.imp.toLowerCase() === name) {
+            updateDepRow(d.imp, 'ok')
+          }
+        })
+      })
+    }
+  })
+
+  const result = await ipc.installDeps()
+  ipc.offInstallLog()
+
+  if (result.ok) {
+    // Mark any still-installing as ok
+    ALL_DEPS.forEach(d => { if (depsState[d.imp] === 'installing') updateDepRow(d.imp, 'ok') })
+    subtitle.textContent = '✅ All dependencies installed successfully.'
+    footerHint.innerHTML = '<span style="color:var(--green);">✓ Ready</span>'
+    nextBtn.disabled = false
+  } else {
+    subtitle.textContent = '⚠ Some packages failed to install — check the log below.'
+    footerHint.innerHTML = '<span style="color:var(--orange);">⚠ Install issues</span>'
+    nextBtn.disabled = false  // let user continue anyway
   }
 }
 

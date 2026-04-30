@@ -1108,10 +1108,12 @@ app.whenReady().then(() => {
   let setupComplete = ipcSetup.isSetupComplete()
   if (!setupComplete) {
     const { scanInstalledModels, selectTier, getHardwareInfo } = ipcSetup
-    // Quick sync check: if both recommended models are present, skip the wizard
+    // Quick sync check: if both recommended models are present, skip the wizard.
+    // This handles the case where the flag was deleted but the user already has
+    // everything set up. On a genuine first install, no models exist so this
+    // check fails and the wizard shows correctly.
     try {
       const { installed, installedFolders } = scanInstalledModels()
-      // We don't have RAM yet synchronously, but check if any Qwen3.6 35B model exists
       const hasAnyPrimary = Array.from(installedFolders).some(f => f.includes('Qwen3') && f.includes('35B'))
       const hasFast = installedFolders.has('Qwen3.5-0.8B-MLX-8bit')
       if (hasAnyPrimary && hasFast) {

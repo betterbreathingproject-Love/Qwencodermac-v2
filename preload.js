@@ -13,6 +13,10 @@ contextBridge.exposeInMainWorld('setup', {
   getModelsDir:   ()     => ipcRenderer.invoke('setup-get-models-dir'),
   pickModelsDir:  ()     => ipcRenderer.invoke('setup-pick-models-dir'),
   saveModelsDir:  (dir)  => ipcRenderer.invoke('setup-save-models-dir', dir),
+  checkDeps:      ()     => ipcRenderer.invoke('setup-check-deps'),
+  installDeps:    ()     => ipcRenderer.invoke('setup-install-deps'),
+  onInstallLog:   (cb)   => ipcRenderer.on('setup-install-log', (_, line) => cb(line)),
+  offInstallLog:  ()     => ipcRenderer.removeAllListeners('setup-install-log'),
   onCalibComplete:  (cb) => ipcRenderer.on('calibration-complete', (_, d) => cb(d)),
   offCalibComplete: ()   => ipcRenderer.removeAllListeners('calibration-complete'),
 })

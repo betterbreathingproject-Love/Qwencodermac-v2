@@ -3,7 +3,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
-const { execFile } = require('node:child_process')
+const { execFile, spawn } = require('node:child_process')
 const { shell, dialog } = require('electron')
 
 // ── Model recommendations by RAM tier ────────────────────────────────────────
@@ -206,7 +206,75 @@ function scanInstalledModels(modelsRoot) {
   return { installed, installedFolders }
 }
 
-// ── Tier selection ────────────────────────────────────────────────────────────
+// ── Dependency checking & installation ───────────────────────────────────────
+const REQUIRED_PACKAGES = [
+  { import: 'mlx',                 pip: 'mlx',                    label: 'MLX (Apple Silicon inference)' },
+  { import: 'mlx_lm',             pip: 'mlx-lm',                 label: 'mlx-lm (text model inference)' },
+  { import: 'mlx_vlm',            pip: 'mlx-vlm',                label: 'mlx-vlm (vision model inference)' },
+  { import: 'fastapi',            pip: 'fastapi',                label: 'FastAPI (server framework)' },
+  { import: 'uvicorn',            pip: 'uvicorn',                label: 'Uvicorn (ASGI server)' },
+  { import: 'pydantic',           pip: 'pydantic',               label: 'Pydantic (data validation)' },
+  { import: 'jinja2',             pip: 'Jinja2',                 label: 'Jinja2 (chat templates)' },
+  { import: 'PIL',                pip: 'Pillow',                 label: 'Pillow (image processing)' },
+  { import: 'psutil',             pip: 'psutil',                 label: 'psutil (memory monitoring)' },
+]
+
+function checkPythonDeps(pyPath) {
+  return new Promise((resolve) => {
+    // Build a one-liner that checks each import and reports missing ones
+    const checks = REQUIRED_PACKAGES.map(p =>
+      `("${p.import}","${p.pip}","${p.label}")`
+    ).join(',')
+    const script = `
+import sys, importlib.util
+pkgs=[${checks}]
+missing=[]
+installed=[]
+for imp,pip,label in pkgs:
+    if importlib.util.find_spec(imp) is None:
+        missing.append({"import":imp,"pip":pip,"label":label})
+    else:
+        installed.append({"import":imp,"pip":pip,"label":label})
+import json,sys
+print(json.dumps({"missing":missing,"installed":installed,"python":sys.version}))
+`
+    execFile(pyPath, ['-c', script], { timeout: 15000 }, (err, stdout, stderr) => {
+      if (err) {
+        resolve({ error: err.message, missing: REQUIRED_PACKAGES, installed: [] })
+        return
+      }
+      try {
+        resolve(JSON.parse(stdout.trim()))
+      } catch {
+        resolve({ error: 'Could not parse output', missing: REQUIRED_PACKAGES, installed: [] })
+      }
+    })
+  })
+}
+
+let _installProcess = null
+
+function installDeps(pyPath, requirementsPath, onData) {
+  return new Promise((resolve) => {
+    if (_installProcess) {
+      resolve({ error: 'Install already in progress' })
+      return
+    }
+    _installProcess = spawn(pyPath, ['-m', 'pip', 'install', '-r', requirementsPath, '--progress-bar', 'off'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    _installProcess.stdout.on('data', d => onData && onData(d.toString()))
+    _installProcess.stderr.on('data', d => onData && onData(d.toString()))
+    _installProcess.on('exit', (code) => {
+      _installProcess = null
+      resolve({ ok: code === 0, exitCode: code })
+    })
+    _installProcess.on('error', (err) => {
+      _installProcess = null
+      resolve({ error: err.message })
+    })
+  })
+}
 function selectTier(ramGb) {
   for (const tier of MODEL_TIERS) {
     if (ramGb >= tier.minRamGb) return tier
@@ -280,6 +348,33 @@ function register(ipcMain) {
   // Get current models directory (default or overridden)
   ipcMain.handle('setup-get-models-dir', async () => {
     return { dir: getModelsDir(), isDefault: !fs.existsSync(_modelsDirOverridePath()) }
+  })
+
+  // ── Dependency check & auto-install ──────────────────────────────────────
+  ipcMain.handle('setup-check-deps', async () => {
+    const { findPython } = require('../main/ipc-server')
+    const py = findPython()
+    const result = await checkPythonDeps(py)
+    return { ...result, python: py }
+  })
+
+  // Streams install log lines back via 'setup-install-log' events on the window
+  ipcMain.handle('setup-install-deps', async () => {
+    const { BrowserWindow } = require('electron')
+    const { findPython } = require('../main/ipc-server')
+    const py = findPython()
+    const reqPath = path.join(__dirname, '..', 'requirements.txt')
+    if (!fs.existsSync(reqPath)) return { error: 'requirements.txt not found at ' + reqPath }
+
+    const wins = BrowserWindow.getAllWindows()
+    const notify = (line) => {
+      for (const w of wins) {
+        try { w.webContents.send('setup-install-log', line) } catch {}
+      }
+    }
+
+    const result = await installDeps(py, reqPath, notify)
+    return result
   })
 
   // Open a folder picker and save as the models directory
