@@ -15,24 +15,26 @@ const { spawn } = require('child_process')
 const { EventEmitter } = require('node:events')
 
 // ── Tool definitions exposed to the agent ────────────────────────────────────
-// Curated subset of XcodeBuildMCP tools most useful for an AI coding agent.
-// Full tool list: https://xcodebuildmcp.com/docs/tools
+// Updated for XcodeBuildMCP v2.3.2 which uses a session-based API.
+// Call session_set_defaults first, then build/test/etc. with no required args.
 
 const XCODE_TOOL_DEFS = [
   {
     type: 'function',
     function: {
-      name: 'xcode_build_simulator',
-      description: 'Build an Xcode project or workspace for a simulator. Returns structured build output with errors and warnings. Use this instead of running xcodebuild directly.',
+      name: 'xcode_set_defaults',
+      description: 'Configure the active XcodeBuildMCP session: set project/workspace path, scheme, simulator, and other build defaults. Call this FIRST before any build/test/run operation. Settings persist for the session.',
       parameters: {
         type: 'object',
         properties: {
-          project_path: { type: 'string', description: 'Path to .xcodeproj or .xcworkspace file' },
-          scheme: { type: 'string', description: 'Xcode scheme to build' },
-          configuration: { type: 'string', description: 'Build configuration: Debug or Release (default: Debug)' },
-          destination: { type: 'string', description: 'Simulator destination, e.g. "platform=iOS Simulator,name=iPhone 16"' },
+          project_path:       { type: 'string', description: 'Path to .xcodeproj file' },
+          workspace_path:     { type: 'string', description: 'Path to .xcworkspace file (use instead of project_path for CocoaPods/SPM workspaces)' },
+          scheme:             { type: 'string', description: 'Xcode scheme to use for build/test' },
+          configuration:      { type: 'string', description: 'Build configuration: Debug or Release (default: Debug)' },
+          simulator_name:     { type: 'string', description: 'Simulator name, e.g. "iPhone 16"' },
+          simulator_platform: { type: 'string', description: 'Simulator platform, e.g. "iOS Simulator"' },
+          platform:           { type: 'string', description: 'Platform: iOS, macOS, watchOS, tvOS' },
         },
-        required: ['scheme'],
         additionalProperties: false,
       },
     },
@@ -40,50 +42,23 @@ const XCODE_TOOL_DEFS = [
   {
     type: 'function',
     function: {
-      name: 'xcode_build_macos',
-      description: 'Build an Xcode project or workspace for macOS. Returns structured build output with errors and warnings.',
-      parameters: {
-        type: 'object',
-        properties: {
-          project_path: { type: 'string', description: 'Path to .xcodeproj or .xcworkspace file' },
-          scheme: { type: 'string', description: 'Xcode scheme to build' },
-          configuration: { type: 'string', description: 'Build configuration: Debug or Release (default: Debug)' },
-        },
-        required: ['scheme'],
-        additionalProperties: false,
-      },
+      name: 'xcode_show_defaults',
+      description: 'Show the current XcodeBuildMCP session defaults (project, scheme, simulator, etc.). Call this to check what is configured before building.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
   {
     type: 'function',
     function: {
-      name: 'xcode_test',
-      description: 'Run tests for an Xcode scheme. Returns pass/fail counts and detailed failure messages.',
+      name: 'xcode_discover_projects',
+      description: 'Scan a directory to find Xcode project (.xcodeproj) and workspace (.xcworkspace) files. Use this to find the project path before calling xcode_set_defaults.',
       parameters: {
         type: 'object',
         properties: {
-          project_path: { type: 'string', description: 'Path to .xcodeproj or .xcworkspace file' },
-          scheme: { type: 'string', description: 'Xcode scheme to test' },
-          destination: { type: 'string', description: 'Test destination, e.g. "platform=iOS Simulator,name=iPhone 16"' },
-          test_filter: { type: 'string', description: 'Optional test filter, e.g. "MyTests/testFoo"' },
+          workspace_root: { type: 'string', description: 'Directory to scan (defaults to project root)' },
+          max_depth:      { type: 'number', description: 'How deep to scan (default: 3)' },
         },
-        required: ['scheme'],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'xcode_clean',
-      description: 'Clean the build directory for an Xcode scheme.',
-      parameters: {
-        type: 'object',
-        properties: {
-          project_path: { type: 'string', description: 'Path to .xcodeproj or .xcworkspace file' },
-          scheme: { type: 'string', description: 'Xcode scheme to clean' },
-        },
-        required: ['scheme'],
+        required: ['workspace_root'],
         additionalProperties: false,
       },
     },
@@ -96,7 +71,51 @@ const XCODE_TOOL_DEFS = [
       parameters: {
         type: 'object',
         properties: {
-          project_path: { type: 'string', description: 'Path to .xcodeproj or .xcworkspace file. If omitted, auto-discovers in cwd.' },
+          project_path:   { type: 'string', description: 'Path to .xcodeproj file' },
+          workspace_path: { type: 'string', description: 'Path to .xcworkspace file' },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'xcode_build_simulator',
+      description: 'Build the Xcode project for a simulator using the current session defaults. Call xcode_set_defaults first to configure project/scheme/simulator.',
+      parameters: {
+        type: 'object',
+        properties: {
+          extra_args: { type: 'array', items: { type: 'string' }, description: 'Extra xcodebuild arguments' },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'xcode_test',
+      description: 'Run tests for the Xcode project using the current session defaults. Call xcode_set_defaults first.',
+      parameters: {
+        type: 'object',
+        properties: {
+          extra_args: { type: 'array', items: { type: 'string' }, description: 'Extra xcodebuild arguments' },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'xcode_clean',
+      description: 'Clean the build directory for the current session defaults.',
+      parameters: {
+        type: 'object',
+        properties: {
+          platform:   { type: 'string', description: 'Platform override: iOS, macOS, etc.' },
+          extra_args: { type: 'array', items: { type: 'string' }, description: 'Extra xcodebuild arguments' },
         },
         additionalProperties: false,
       },
@@ -106,12 +125,11 @@ const XCODE_TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'xcode_list_simulators',
-      description: 'List available iOS/macOS simulators with their UDID, state, and OS version.',
+      description: 'List available simulators.',
       parameters: {
         type: 'object',
         properties: {
-          platform: { type: 'string', description: 'Filter by platform: iOS, macOS, watchOS, tvOS' },
-          available_only: { type: 'boolean', description: 'Only show available (non-unavailable) simulators (default: true)' },
+          enabled: { type: 'boolean', description: 'Only show enabled simulators' },
         },
         additionalProperties: false,
       },
@@ -121,61 +139,13 @@ const XCODE_TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'xcode_boot_simulator',
-      description: 'Boot a simulator by UDID or name.',
+      description: 'Boot a simulator by name or UDID.',
       parameters: {
         type: 'object',
         properties: {
-          udid: { type: 'string', description: 'Simulator UDID' },
-          name: { type: 'string', description: 'Simulator name (used if udid not provided)' },
+          simulator_name: { type: 'string', description: 'Simulator name' },
+          simulator_id:   { type: 'string', description: 'Simulator UDID' },
         },
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'xcode_install_app_simulator',
-      description: 'Install a built .app bundle on a simulator.',
-      parameters: {
-        type: 'object',
-        properties: {
-          app_path: { type: 'string', description: 'Path to the .app bundle' },
-          udid: { type: 'string', description: 'Target simulator UDID' },
-        },
-        required: ['app_path', 'udid'],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'xcode_launch_app_simulator',
-      description: 'Launch an installed app on a simulator by bundle ID.',
-      parameters: {
-        type: 'object',
-        properties: {
-          bundle_id: { type: 'string', description: 'App bundle identifier, e.g. com.example.MyApp' },
-          udid: { type: 'string', description: 'Target simulator UDID' },
-        },
-        required: ['bundle_id', 'udid'],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'xcode_screenshot_simulator',
-      description: 'Take a screenshot of a running simulator.',
-      parameters: {
-        type: 'object',
-        properties: {
-          udid: { type: 'string', description: 'Simulator UDID' },
-          output_path: { type: 'string', description: 'Path to save the screenshot PNG' },
-        },
-        required: ['udid'],
         additionalProperties: false,
       },
     },
@@ -184,28 +154,19 @@ const XCODE_TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'xcode_get_build_settings',
-      description: 'Get Xcode build settings for a scheme (PRODUCT_BUNDLE_IDENTIFIER, SWIFT_VERSION, DEPLOYMENT_TARGET, etc.).',
-      parameters: {
-        type: 'object',
-        properties: {
-          project_path: { type: 'string', description: 'Path to .xcodeproj or .xcworkspace file' },
-          scheme: { type: 'string', description: 'Xcode scheme' },
-          configuration: { type: 'string', description: 'Build configuration (default: Debug)' },
-        },
-        required: ['scheme'],
-        additionalProperties: false,
-      },
+      description: 'Get Xcode build settings for the current session (PRODUCT_BUNDLE_IDENTIFIER, SWIFT_VERSION, DEPLOYMENT_TARGET, etc.).',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
   {
     type: 'function',
     function: {
-      name: 'xcode_resolve_packages',
-      description: 'Resolve Swift Package Manager dependencies for an Xcode project.',
+      name: 'xcode_screenshot_simulator',
+      description: 'Take a screenshot of the current simulator.',
       parameters: {
         type: 'object',
         properties: {
-          project_path: { type: 'string', description: 'Path to .xcodeproj or .xcworkspace file' },
+          output_path: { type: 'string', description: 'Path to save the screenshot PNG' },
         },
         additionalProperties: false,
       },
@@ -213,30 +174,50 @@ const XCODE_TOOL_DEFS = [
   },
 ]
 
-// Map our tool names to XcodeBuildMCP tool names
-// (XcodeBuildMCP uses camelCase names like "buildForSimulator")
+// Map our tool names to XcodeBuildMCP tool names (v2.3.2 snake_case names)
 const TOOL_NAME_MAP = {
-  xcode_build_simulator:      'buildForSimulator',
-  xcode_build_macos:          'buildForMacOS',
-  xcode_test:                 'runTests',
-  xcode_clean:                'cleanBuildDirectory',
-  xcode_list_schemes:         'listSchemes',
-  xcode_list_simulators:      'listSimulators',
-  xcode_boot_simulator:       'bootSimulator',
-  xcode_install_app_simulator:'installAppOnSimulator',
-  xcode_launch_app_simulator: 'launchAppOnSimulator',
-  xcode_screenshot_simulator: 'takeSimulatorScreenshot',
-  xcode_get_build_settings:   'getBuildSettings',
-  xcode_resolve_packages:     'resolvePackageDependencies',
+  xcode_set_defaults:          'session_set_defaults',
+  xcode_show_defaults:         'session_show_defaults',
+  xcode_discover_projects:     'discover_projs',
+  xcode_build_simulator:       'build_sim',
+  xcode_build_macos:           'build_sim',
+  xcode_test:                  'test_sim',
+  xcode_clean:                 'clean',
+  xcode_list_schemes:          'list_schemes',
+  xcode_list_simulators:       'list_sims',
+  xcode_boot_simulator:        'boot_sim',
+  xcode_install_app_simulator: 'install_app_sim',
+  xcode_launch_app_simulator:  'launch_app_sim',
+  xcode_screenshot_simulator:  'screenshot',
+  xcode_get_build_settings:    'show_build_settings',
+  xcode_resolve_packages:      'clean',
+}
+
+// Map our snake_case arg names to XcodeBuildMCP camelCase arg names
+const ARG_NAME_MAP = {
+  project_path:       'projectPath',
+  workspace_path:     'workspacePath',
+  workspace_root:     'workspaceRoot',
+  scheme:             'scheme',
+  configuration:      'configuration',
+  simulator_name:     'simulatorName',
+  simulator_id:       'simulatorId',
+  simulator_platform: 'simulatorPlatform',
+  device_id:          'deviceId',
+  platform:           'platform',
+  bundle_id:          'bundleId',
+  extra_args:         'extraArgs',
+  max_depth:          'maxDepth',
+  output_path:        'outputPath',
+  enabled:            'enabled',
 }
 
 // Map our arg names to XcodeBuildMCP arg names
 function _mapArgs(toolName, args) {
   const mapped = {}
   for (const [k, v] of Object.entries(args || {})) {
-    // camelCase conversion for known fields
-    const camel = k.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
-    mapped[camel] = v
+    const mappedKey = ARG_NAME_MAP[k] || k.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
+    mapped[mappedKey] = v
   }
   return mapped
 }
@@ -489,18 +470,33 @@ async function executeXcodeTool(toolName, args, cwd) {
   if (!mcpName) return { error: `Unknown xcode tool: ${toolName}` }
 
   const client = getClient()
-
-  // Auto-discover project path if not provided
   const mappedArgs = _mapArgs(toolName, args)
-  if (!mappedArgs.projectPath && cwd) {
+
+  // For session_set_defaults: auto-discover project path if not provided
+  if (mcpName === 'session_set_defaults' && !mappedArgs.projectPath && !mappedArgs.workspacePath && cwd) {
     const fs = require('fs')
     const path = require('path')
-    // Look for .xcworkspace first (CocoaPods/SPM), then .xcodeproj
     const entries = fs.readdirSync(cwd).filter(e => e.endsWith('.xcworkspace') || e.endsWith('.xcodeproj'))
     const workspace = entries.find(e => e.endsWith('.xcworkspace'))
     const project = entries.find(e => e.endsWith('.xcodeproj'))
-    const found = workspace || project
-    if (found) mappedArgs.projectPath = path.join(cwd, found)
+    if (workspace) mappedArgs.workspacePath = path.join(cwd, workspace)
+    else if (project) mappedArgs.projectPath = path.join(cwd, project)
+  }
+
+  // For list_schemes: auto-discover project path if not provided
+  if (mcpName === 'list_schemes' && !mappedArgs.projectPath && !mappedArgs.workspacePath && cwd) {
+    const fs = require('fs')
+    const path = require('path')
+    const entries = fs.readdirSync(cwd).filter(e => e.endsWith('.xcworkspace') || e.endsWith('.xcodeproj'))
+    const workspace = entries.find(e => e.endsWith('.xcworkspace'))
+    const project = entries.find(e => e.endsWith('.xcodeproj'))
+    if (workspace) mappedArgs.workspacePath = path.join(cwd, workspace)
+    else if (project) mappedArgs.projectPath = path.join(cwd, project)
+  }
+
+  // discover_projs: default workspaceRoot to cwd
+  if (mcpName === 'discover_projs' && !mappedArgs.workspaceRoot && cwd) {
+    mappedArgs.workspaceRoot = cwd
   }
 
   try {
@@ -516,7 +512,6 @@ async function executeXcodeTool(toolName, args, cwd) {
     }
     return { result: JSON.stringify(result) }
   } catch (err) {
-    // If not installed, give a clear actionable message
     if (err.message.includes('not installed') || err.message.includes('ENOENT')) {
       return { error: `XcodeBuildMCP not installed. Install with: npm install -g xcodebuildmcp@latest\nThen restart the app.\n\nFalling back: use bash with xcodebuild directly.` }
     }
