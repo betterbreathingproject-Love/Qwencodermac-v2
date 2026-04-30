@@ -110,6 +110,20 @@
           </div>
         </div>
         <div style="height:1px;background:var(--border);margin:4px 0 2px;"></div>
+
+        <div class="sp-header" style="margin-top:2px;"><span class="section-label">MODELS DIRECTORY</span></div>
+        <div class="setup-compact">
+          <div class="sc-field" style="flex-wrap:wrap;gap:4px;">
+            <span class="sc-label">Path</span>
+            <input type="text" id="modelsDirInput" class="cs-input cs-wide" placeholder="~/.lmstudio/models" style="flex:1;min-width:120px;" onchange="saveModelsDirSetting(this.value)">
+            <button class="btn-sm" onclick="pickModelsDirSetting()" title="Browse for folder" style="flex-shrink:0;">📂</button>
+          </div>
+          <div class="sc-field">
+            <span class="sc-label"></span>
+            <span id="modelsDirStatus" style="font-size:10px;color:var(--muted);">Default location</span>
+          </div>
+        </div>
+
         <div class="setup-compact">
           <div class="sc-field"><span class="sc-label">Provider</span><code>OpenAI Compatible</code></div>
           <div class="sc-field"><span class="sc-label">Base URL</span><code id="f-baseurl">http://localhost:8090/v1</code><button class="copy-sm" onclick="copy('f-baseurl',this)">⎘</button></div>

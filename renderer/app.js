@@ -6214,3 +6214,64 @@ async function openSetupWizard() {
     console.error('[setup-wizard] Failed to open:', e)
   }
 }
+
+// ── Models directory setting (settings panel) ─────────────────────────────────
+async function loadModelsDirSetting() {
+  try {
+    const result = await window.setup.getModelsDir()
+    const input = document.getElementById('modelsDirInput')
+    const status = document.getElementById('modelsDirStatus')
+    if (!input) return
+    if (result && result.dir) {
+      input.value = result.dir
+      status.textContent = result.isDefault ? 'Default location' : '✓ Custom location saved'
+      status.style.color = result.isDefault ? 'var(--muted)' : 'var(--green)'
+    }
+  } catch (_) {}
+}
+
+async function saveModelsDirSetting(dir) {
+  const status = document.getElementById('modelsDirStatus')
+  if (!dir || !dir.trim()) return
+  try {
+    const result = await window.setup.saveModelsDir(dir.trim())
+    if (result.error) {
+      if (status) { status.textContent = '✗ ' + result.error; status.style.color = 'var(--red)' }
+    } else {
+      if (status) { status.textContent = '✓ Saved'; status.style.color = 'var(--green)' }
+    }
+  } catch (e) {
+    if (status) { status.textContent = '✗ Failed'; status.style.color = 'var(--red)' }
+  }
+}
+
+async function pickModelsDirSetting() {
+  try {
+    const result = await window.setup.pickModelsDir()
+    if (result.canceled) return
+    if (result.error) return
+    const input = document.getElementById('modelsDirInput')
+    const status = document.getElementById('modelsDirStatus')
+    if (input) input.value = result.dir
+    if (status) { status.textContent = '✓ Saved'; status.style.color = 'var(--green)' }
+  } catch (_) {}
+}
+
+// Load models dir when the setup panel is shown
+document.addEventListener('DOMContentLoaded', () => {
+  // Patch showPanel to load models dir when setup panel opens
+  const _origShowPanel = typeof showPanel === 'function' ? showPanel : null
+  if (_origShowPanel) {
+    window._origShowPanelForModelsDir = _origShowPanel
+  }
+})
+
+// Hook into the activity bar setup button click
+;(function() {
+  const setupBtn = document.querySelector('[data-panel="setup"]')
+  if (setupBtn) {
+    setupBtn.addEventListener('click', () => {
+      loadModelsDirSetting()
+    })
+  }
+})()

@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
 const { execFile } = require('node:child_process')
-const { shell } = require('electron')
+const { shell, dialog } = require('electron')
 
 // ── Model recommendations by RAM tier ────────────────────────────────────────
 // Each tier lists primary + fast model with exact LM Studio model IDs
@@ -152,9 +152,35 @@ function getHardwareInfo() {
   })
 }
 
+// ── Models directory (persisted override) ────────────────────────────────────
+function _modelsDirOverridePath() {
+  return path.join(os.homedir(), '.qwencoder', 'models-dir.json')
+}
+
+function getModelsDir() {
+  try {
+    const p = _modelsDirOverridePath()
+    if (fs.existsSync(p)) {
+      const data = JSON.parse(fs.readFileSync(p, 'utf-8'))
+      if (data && data.dir && fs.existsSync(data.dir)) return data.dir
+    }
+  } catch {}
+  return path.join(os.homedir(), '.lmstudio', 'models')
+}
+
+function saveModelsDir(dir) {
+  try {
+    const base = path.join(os.homedir(), '.qwencoder')
+    if (!fs.existsSync(base)) fs.mkdirSync(base, { recursive: true })
+    fs.writeFileSync(_modelsDirOverridePath(), JSON.stringify({ dir }, null, 2))
+  } catch (err) {
+    console.warn('[setup] Failed to save models dir:', err.message)
+  }
+}
+
 // ── Model scanning ────────────────────────────────────────────────────────────
-function scanInstalledModels() {
-  const modelsRoot = path.join(os.homedir(), '.lmstudio', 'models')
+function scanInstalledModels(modelsRoot) {
+  if (!modelsRoot) modelsRoot = getModelsDir()
   const installed = new Set()        // exact: "org/model"
   const installedFolders = new Set() // fuzzy: "model" (folder name only)
   try {
@@ -194,7 +220,8 @@ function register(ipcMain) {
   ipcMain.handle('setup-get-info', async () => {
     const hw = await getHardwareInfo()
     const tier = selectTier(hw.ramGb)
-    const { installed, installedFolders } = scanInstalledModels()
+    const modelsDir = getModelsDir()
+    const { installed, installedFolders } = scanInstalledModels(modelsDir)
 
     // Check installed: exact org/model match OR folder-name-only match
     function isInstalled(model) {
@@ -209,6 +236,7 @@ function register(ipcMain) {
       primaryInstalled: isInstalled(tier.primary),
       fastInstalled: isInstalled(tier.fast),
       lmStudioInstalled: fs.existsSync('/Applications/LM Studio.app'),
+      modelsDir,
     }
   })
 
@@ -225,7 +253,7 @@ function register(ipcMain) {
 
   // Re-scan models (called after user downloads)
   ipcMain.handle('setup-scan-models', async () => {
-    const { installed, installedFolders } = scanInstalledModels()
+    const { installed, installedFolders } = scanInstalledModels(getModelsDir())
     return {
       installed: Array.from(installed),
       installedFolders: Array.from(installedFolders),
@@ -248,6 +276,40 @@ function register(ipcMain) {
     resetSetup()
     return { ok: true }
   })
+
+  // Get current models directory (default or overridden)
+  ipcMain.handle('setup-get-models-dir', async () => {
+    return { dir: getModelsDir(), isDefault: !fs.existsSync(_modelsDirOverridePath()) }
+  })
+
+  // Open a folder picker and save as the models directory
+  ipcMain.handle('setup-pick-models-dir', async () => {
+    // Find the frontmost window to attach the sheet to
+    const { BrowserWindow } = require('electron')
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Select LM Studio Models Folder',
+      defaultPath: getModelsDir(),
+      buttonLabel: 'Use This Folder',
+      properties: ['openDirectory'],
+    })
+    if (result.canceled || !result.filePaths.length) return { canceled: true }
+    const dir = result.filePaths[0].trim()
+    saveModelsDir(dir)
+    // Re-scan with the new dir and return updated status
+    const { installed, installedFolders } = scanInstalledModels(dir)
+    return { ok: true, dir, installed: Array.from(installed), installedFolders: Array.from(installedFolders) }
+  })
+
+  // Save a models dir directly (from settings panel text field)
+  ipcMain.handle('setup-save-models-dir', async (_, dir) => {
+    if (typeof dir !== 'string' || !dir.trim()) return { error: 'invalid path' }
+    const trimmed = dir.trim()
+    if (!fs.existsSync(trimmed)) return { error: 'path does not exist' }
+    saveModelsDir(trimmed)
+    const { installed, installedFolders } = scanInstalledModels(trimmed)
+    return { ok: true, dir: trimmed, installed: Array.from(installed), installedFolders: Array.from(installedFolders) }
+  })
 }
 
-module.exports = { register, isSetupComplete, markSetupComplete, resetSetup, getHardwareInfo, scanInstalledModels, selectTier, MODEL_TIERS }
+module.exports = { register, isSetupComplete, markSetupComplete, resetSetup, getHardwareInfo, scanInstalledModels, selectTier, MODEL_TIERS, getModelsDir, saveModelsDir }

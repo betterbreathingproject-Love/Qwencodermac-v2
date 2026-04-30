@@ -302,6 +302,22 @@
       background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.2);
       color: var(--green);
     }
+
+    /* ── MODELS DIR ROW ── */
+    .models-dir-row {
+      display: flex; align-items: center; gap: 10px;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 10px; padding: 10px 14px; margin-bottom: 16px;
+    }
+    .models-dir-icon { font-size: 18px; flex-shrink: 0; }
+    .models-dir-label { font-size: 11px; color: var(--muted); font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
+    .models-dir-path {
+      flex: 1; font-size: 12px; color: var(--accent2);
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      min-width: 0;
+    }
   </style>
 </head>
 <body>
@@ -404,6 +420,15 @@
         </div>
       </div>
 
+
+      <!-- Models directory picker -->
+      <div class="models-dir-row" id="modelsDirRow">
+        <span class="models-dir-icon">📂</span>
+        <span class="models-dir-label">Models folder</span>
+        <span class="models-dir-path" id="modelsDirPath" title="">~/.lmstudio/models</span>
+        <button class="btn btn-sm btn-lmstudio" id="browseModelsDirBtn">Browse…</button>
+      </div>
+
       <!-- Tier selector (other hardware options) -->
       <div style="margin-bottom:12px;">
         <span style="font-size:12px;color:var(--muted);font-weight:600;letter-spacing:0.5px;text-transform:uppercase;">Your tier</span>
@@ -496,7 +521,10 @@ const TOTAL_STEPS = 4
 const ipc = window.setup || {
   getInfo:    () => Promise.resolve({ hardware: { ramGb: 64, chip: 'Apple M2 Ultra' }, tier: null, allTiers: [], primaryInstalled: false, fastInstalled: false, lmStudioInstalled: true }),
   openUrl:    (u) => { window.open(u, '_blank'); return Promise.resolve({ ok: true }) },
-  scanModels: () => Promise.resolve({ installed: [] }),
+  scanModels:    () => Promise.resolve({ installed: [], installedFolders: [] }),
+  getModelsDir:  () => Promise.resolve({ dir: '~/.lmstudio/models', isDefault: true }),
+  pickModelsDir: () => Promise.resolve({ canceled: true }),
+  saveModelsDir: (d) => Promise.resolve({ ok: true }),
   complete:   (i) => Promise.resolve({ ok: true }),
   isComplete: () => Promise.resolve({ complete: false }),
   calibStatus:() => Promise.resolve({ status: 'unavailable', profile: null }),
@@ -665,10 +693,15 @@ async function rescanModels() {
   try {
     const result = await ipc.scanModels()
     const installed = new Set(result.installed || [])
+    const installedFolders = new Set(result.installedFolders || [])
     if (setupInfo) {
       const tier = setupInfo.allTiers[selectedTierIdx] || setupInfo.tier
-      setupInfo.primaryInstalled = installed.has(tier.primary.dirName)
-      setupInfo.fastInstalled    = installed.has(tier.fast.dirName)
+      function chk(model) {
+        return installed.has(model.dirName) ||
+               installedFolders.has(model.modelFolderName || model.dirName.split('/')[1])
+      }
+      setupInfo.primaryInstalled = chk(tier.primary)
+      setupInfo.fastInstalled    = chk(tier.fast)
     }
     renderModels(setupInfo)
   } finally {
@@ -840,6 +873,19 @@ async function init() {
     renderHardware(setupInfo)
     renderTierSelector(setupInfo)
     renderModels(setupInfo)
+
+    // Show models directory
+    const dirInfo = await ipc.getModelsDir().catch(() => null)
+    if (dirInfo && dirInfo.dir) {
+      const home = dirInfo.dir.replace(/^\/Users\/[^\/]+/, '~')
+      document.getElementById('modelsDirPath').textContent = home
+      document.getElementById('modelsDirPath').title = dirInfo.dir
+      setupInfo.modelsDir = dirInfo.dir
+    } else if (setupInfo.modelsDir) {
+      const home = setupInfo.modelsDir.replace(/^\/Users\/[^\/]+/, '~')
+      document.getElementById('modelsDirPath').textContent = home
+      document.getElementById('modelsDirPath').title = setupInfo.modelsDir
+    }
   } catch (e) {
     console.error('setup-get-info failed:', e)
   } finally {
@@ -848,6 +894,40 @@ async function init() {
     showPanel(0)
   }
 }
+
+// ── Models dir browse ──────────────────────────────────────────────────────
+document.getElementById('browseModelsDirBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('browseModelsDirBtn')
+  btn.textContent = '…'
+  btn.disabled = true
+  try {
+    const result = await ipc.pickModelsDir()
+    if (result.canceled) return
+    if (result.error) { console.error('pickModelsDir error:', result.error); return }
+    // Update display
+    const home = result.dir.replace(/^\/Users\/[^\/]+/, '~')
+    document.getElementById('modelsDirPath').textContent = home
+    document.getElementById('modelsDirPath').title = result.dir
+    // Update installed status from the new scan
+    if (setupInfo) {
+      const installed = new Set(result.installed || [])
+      const installedFolders = new Set(result.installedFolders || [])
+      const tier = setupInfo.allTiers[selectedTierIdx] || setupInfo.tier
+      function chk(model) {
+        return installed.has(model.dirName) ||
+               installedFolders.has(model.modelFolderName || model.dirName.split('/')[1])
+      }
+      setupInfo.primaryInstalled = chk(tier.primary)
+      setupInfo.fastInstalled    = chk(tier.fast)
+      setupInfo.modelsDir = result.dir
+      renderModels(setupInfo)
+    }
+  } finally {
+    btn.textContent = 'Browse…'
+    btn.disabled = false
+  }
+})
+
 
 init()
 </script>
