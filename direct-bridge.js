@@ -2113,7 +2113,7 @@ class DirectBridge {
       memoryClient.archiveRecord('session_start', { session_id: _sessionId }, 'Session started', {
         agentName: this._agentRole || 'main-agent',
         sessionId: _sessionId,
-        projectId: path.basename(workDir),
+        projectId: path.basename(cwd),
       }).catch(() => {})
     }
 
@@ -2161,7 +2161,7 @@ class DirectBridge {
                   agentName: this._agentRole || 'main-agent',
                   sessionId: _sessionId,
                   turnNumber: turn,
-                  projectId: path.basename(workDir),
+                  projectId: path.basename(cwd),
                 })
                 _archivedCount++
               }
@@ -2251,7 +2251,7 @@ class DirectBridge {
             mode: recallMode,
             agentName: this._agentRole || 'main-agent',
             topK: 10,
-            projectId: path.basename(workDir),
+            projectId: path.basename(cwd),
           })
           if (memResult && memResult.results && memResult.results.length > 0) {
             // Build memory context string
@@ -2452,7 +2452,7 @@ class DirectBridge {
         memoryClient.archiveRecord('decision', text, summary, {
           agentName: this._agentRole || 'main-agent',
           sessionId: _sessionId,
-          projectId: path.basename(workDir),
+          projectId: path.basename(cwd),
         }).catch(() => {})
       }
 
@@ -2929,7 +2929,7 @@ class DirectBridge {
           memoryClient.archiveRecord('tool_call', { ...archivePayload, result: archiveContent }, `${fnName}: ${argsSummary.slice(0, 100)}`, {
             agentName: this._agentRole || 'main-agent',
             sessionId: _sessionId,
-            projectId: path.basename(workDir),
+            projectId: path.basename(cwd),
           }).catch(() => {})
         }
 
@@ -3400,7 +3400,7 @@ class DirectBridge {
             memoryClient.archiveRecord('session_end', { session_id: _sessionId, summary }, 'Session ended', {
               agentName: this._agentRole || 'main-agent',
               sessionId: _sessionId,
-              projectId: path.basename(workDir),
+              projectId: path.basename(cwd),
             }).catch(() => {})
             memoryClient._httpRequest?.('POST', '/memory/session/enrich', { session_id: _sessionId }, 5000).catch(() => {})
           }
