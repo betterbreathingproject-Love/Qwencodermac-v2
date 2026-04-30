@@ -2862,30 +2862,61 @@ class DirectBridge {
 
         // ── Swift build check: after writing a .swift file, trigger a fast build ──
         // Gives the agent immediate compiler feedback without it having to ask.
-        // Only runs when xcodebuildmcp is available and the file is Swift.
+        // Only runs when xcodebuildmcp is available, the file is Swift, and the
+        // project is iOS (macOS builds use xcodebuild directly via bash).
         if ((fnName === 'write_file' || fnName === 'edit_file') && !isError
             && xcodeTool && xcodeTool.isXcodeMCPAvailable()
             && (fnArgs.path || '').endsWith('.swift')) {
-          try {
-            this.send('qwen-event', { type: 'system', subtype: 'debug', data: '🔨 Swift file changed — running incremental build...' })
-            const buildResult = await xcodeTool.executeXcodeTool('xcode_build_simulator', {}, cwd)
-            if (buildResult.result) {
-              // Extract errors/warnings from build output
-              const lines = buildResult.result.split('\n')
-              const errors = lines.filter(l => /error:|warning:/.test(l)).slice(0, 20)
-              if (errors.length > 0) {
-                const hasErrors = errors.some(l => /\berror:/.test(l))
-                const prefix = hasErrors ? '🔴 Build errors after edit:' : '⚠️ Build warnings after edit:'
-                content = `${prefix}\n${errors.join('\n')}\n\n${content}`
-                this.send('qwen-event', { type: 'system', subtype: 'debug', data: `${prefix} ${errors.length} issue(s)` })
+          // Check if a macOS config exists — if so, skip xcodebuildmcp build_sim
+          const _macosConfig = (() => {
+            try {
+              const p = require('path').join(cwd, '.xcodebuildmcp', 'macos-config.json')
+              return require('fs').existsSync(p) ? JSON.parse(require('fs').readFileSync(p, 'utf-8')) : null
+            } catch { return null }
+          })()
+
+          if (_macosConfig) {
+            // macOS project — run xcodebuild directly
+            try {
+              this.send('qwen-event', { type: 'system', subtype: 'debug', data: '🔨 Swift file changed — running macOS build check...' })
+              const { execSync } = require('child_process')
+              const buildOut = execSync(
+                `xcodebuild ${_macosConfig.projectArg} -scheme "${_macosConfig.scheme}" -configuration Debug build 2>&1 | grep -E "error:|warning:|BUILD SUCCEEDED|BUILD FAILED" | tail -20`,
+                { timeout: 60000, encoding: 'utf-8', cwd }
+              )
+              const hasErrors = /error:/.test(buildOut)
+              const hasFailed = /BUILD FAILED/.test(buildOut)
+              if (hasErrors || hasFailed) {
+                const errors = buildOut.split('\n').filter(l => /error:|warning:/.test(l)).slice(0, 15)
+                content = `🔴 macOS build errors after edit:\n${errors.join('\n')}\n\n${content}`
+                this.send('qwen-event', { type: 'system', subtype: 'debug', data: `🔴 macOS build failed: ${errors.length} issue(s)` })
               } else {
-                this.send('qwen-event', { type: 'system', subtype: 'debug', data: '✅ Build succeeded after Swift edit' })
+                this.send('qwen-event', { type: 'system', subtype: 'debug', data: '✅ macOS build succeeded after Swift edit' })
               }
-            } else if (buildResult.error && !buildResult.error.includes('Missing required session defaults')) {
-              // Only surface real errors, not "no project configured" noise
-              content = `⚠️ Build check: ${buildResult.error.slice(0, 200)}\n\n${content}`
+            } catch (e) {
+              // Build timed out or xcodebuild not available — skip silently
             }
-          } catch { /* non-fatal — don't block the agent loop */ }
+          } else {
+            // iOS project — use xcodebuildmcp build_sim
+            try {
+              this.send('qwen-event', { type: 'system', subtype: 'debug', data: '🔨 Swift file changed — running incremental build...' })
+              const buildResult = await xcodeTool.executeXcodeTool('xcode_build_simulator', {}, cwd)
+              if (buildResult.result) {
+                const lines = buildResult.result.split('\n')
+                const errors = lines.filter(l => /error:|warning:/.test(l)).slice(0, 20)
+                if (errors.length > 0) {
+                  const hasErrors = errors.some(l => /\berror:/.test(l))
+                  const prefix = hasErrors ? '🔴 Build errors after edit:' : '⚠️ Build warnings after edit:'
+                  content = `${prefix}\n${errors.join('\n')}\n\n${content}`
+                  this.send('qwen-event', { type: 'system', subtype: 'debug', data: `${prefix} ${errors.length} issue(s)` })
+                } else {
+                  this.send('qwen-event', { type: 'system', subtype: 'debug', data: '✅ Build succeeded after Swift edit' })
+                }
+              } else if (buildResult.error && !buildResult.error.includes('Missing required session defaults')) {
+                content = `⚠️ Build check: ${buildResult.error.slice(0, 200)}\n\n${content}`
+              }
+            } catch { /* non-fatal */ }
+          }
         }
 
         // Post-bash diagnostic hook: detect file-writing bash commands and check diagnostics

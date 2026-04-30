@@ -23,7 +23,7 @@ const XCODE_TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'xcode_setup_project',
-      description: 'Auto-discover and configure the Xcode project in the current directory. Finds .xcodeproj/.xcworkspace, lists schemes, picks the best one, finds a simulator, and configures the session — all in one step. Call this FIRST when starting work on an iOS/Swift project. Also validates that xcode-select points to Xcode.app.',
+      description: 'Auto-discover and configure the Xcode project in the current directory. Works for both iOS and macOS apps. For macOS: detects the platform and returns the exact xcodebuild commands to use (macOS apps build and run directly, no simulator needed). For iOS: configures xcodebuildmcp session with scheme + simulator. Call this FIRST when starting work on any Swift/Xcode project.',
       parameters: {
         type: 'object',
         properties: {},
@@ -188,7 +188,7 @@ const XCODE_TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'xcode_build_run_simulator',
-      description: 'Build, install, and launch the app on the iOS Simulator in one step. Boots the simulator automatically. Preferred over separate build + launch steps.',
+      description: 'Build, install, and launch the app on the iOS Simulator in one step. Boots the simulator automatically. Preferred over separate build + launch steps. NOTE: iOS only — for macOS apps use xcode_setup_project() first then bash with xcodebuild.',
       parameters: {
         type: 'object',
         properties: {
@@ -745,10 +745,11 @@ function ensureXcodePath() {
 
 /**
  * Auto-discover and configure an Xcode project in the given directory.
- * Finds .xcworkspace/.xcodeproj, lists schemes, picks the first one,
- * finds a simulator, and calls session_set_defaults.
+ * Detects whether it's an iOS or macOS project and configures accordingly.
+ * For macOS: uses xcodebuild directly (xcodebuildmcp doesn't support macOS builds).
+ * For iOS: configures xcodebuildmcp session with scheme + simulator.
  *
- * Returns { ok, projectPath, workspacePath, scheme, simulator, message }.
+ * Returns { ok, projectPath, workspacePath, scheme, platform, simulator, message }.
  */
 async function setupXcodeProject(cwd) {
   const fs = require('fs')
@@ -766,12 +767,10 @@ async function setupXcodeProject(cwd) {
     if (depth > 3) return null
     try {
       const entries = fs.readdirSync(dir)
-      // Prefer .xcworkspace (CocoaPods/SPM) over .xcodeproj
       const workspace = entries.find(e => e.endsWith('.xcworkspace') && !e.includes('.xcodeproj'))
       if (workspace) return { type: 'workspace', path: path.join(dir, workspace) }
       const project = entries.find(e => e.endsWith('.xcodeproj'))
       if (project) return { type: 'project', path: path.join(dir, project) }
-      // Recurse into subdirectories (skip hidden, node_modules, build dirs)
       const SKIP = new Set(['.git', 'node_modules', 'build', 'DerivedData', '.build', 'Pods'])
       for (const entry of entries) {
         if (SKIP.has(entry) || entry.startsWith('.')) continue
@@ -796,8 +795,9 @@ async function setupXcodeProject(cwd) {
   const workspacePath = found.type === 'workspace' ? found.path : undefined
   const projectArg = workspacePath ? `-workspace "${workspacePath}"` : `-project "${projectPath}"`
 
-  // 3. List schemes
+  // 3. List schemes and detect platform
   let scheme = null
+  let platform = 'iOS'  // default
   try {
     const schemesOut = execSync(
       `xcodebuild ${projectArg} -list 2>/dev/null`,
@@ -806,11 +806,25 @@ async function setupXcodeProject(cwd) {
     const schemeMatch = schemesOut.match(/Schemes:\s*\n([\s\S]*?)(?:\n\n|\nBuild Configurations:|\nTargets:|$)/)
     if (schemeMatch) {
       const schemes = schemeMatch[1].split('\n').map(s => s.trim()).filter(Boolean)
-      // Prefer scheme matching project name, then first non-test scheme
       const projName = path.basename(projectPath || workspacePath, path.extname(projectPath || workspacePath))
       scheme = schemes.find(s => s === projName)
         || schemes.find(s => !s.toLowerCase().includes('test') && !s.toLowerCase().includes('ui'))
         || schemes[0]
+    }
+
+    // Detect platform from build settings
+    if (scheme) {
+      try {
+        const settingsOut = execSync(
+          `xcodebuild ${projectArg} -scheme "${scheme}" -showBuildSettings 2>/dev/null | grep -E "SDKROOT|SUPPORTED_PLATFORMS|PLATFORM_NAME"`,
+          { timeout: 20000, encoding: 'utf-8', cwd }
+        )
+        if (/macosx|macos/i.test(settingsOut) && !/iphoneos|iphonesimulator/i.test(settingsOut)) {
+          platform = 'macOS'
+        } else if (/iphoneos|iphonesimulator/i.test(settingsOut)) {
+          platform = 'iOS'
+        }
+      } catch { /* use default */ }
     }
   } catch (e) {
     return { ok: false, message: `Failed to list schemes: ${e.message}\n\nMake sure Xcode is installed and xcode-select points to Xcode.app:\n  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` }
@@ -820,7 +834,37 @@ async function setupXcodeProject(cwd) {
     return { ok: false, message: `No schemes found in ${found.path}` }
   }
 
-  // 4. Find a good simulator (prefer iPhone 16/17, fall back to any iPhone)
+  const projDisplay = path.basename(workspacePath || projectPath)
+
+  if (platform === 'macOS') {
+    // macOS: xcodebuildmcp doesn't support macOS builds — use xcodebuild directly via bash.
+    // Store config in a simple JSON file so subsequent calls can read it.
+    const configPath = path.join(cwd, '.xcodebuildmcp', 'macos-config.json')
+    try {
+      fs.mkdirSync(path.dirname(configPath), { recursive: true })
+      fs.writeFileSync(configPath, JSON.stringify({
+        platform: 'macOS',
+        scheme,
+        projectPath: projectPath || null,
+        workspacePath: workspacePath || null,
+        projectArg,
+      }, null, 2))
+    } catch { /* non-fatal */ }
+
+    return {
+      ok: true,
+      projectPath,
+      workspacePath,
+      scheme,
+      platform: 'macOS',
+      message: `✅ macOS project configured:\n  Project: ${projDisplay}\n  Scheme: ${scheme}\n  Platform: macOS (builds run directly, no simulator)\n\n` +
+        `To build:  bash({command: "xcodebuild ${projectArg} -scheme \\"${scheme}\\" -configuration Debug build 2>&1 | tail -50"})\n` +
+        `To run:    bash({command: "xcodebuild ${projectArg} -scheme \\"${scheme}\\" -configuration Debug build && open \\"$(xcodebuild ${projectArg} -scheme \\"${scheme}\\" -showBuildSettings 2>/dev/null | grep BUILT_PRODUCTS_DIR | head -1 | awk '{print $3}')/${scheme}.app\\""})\n` +
+        `To test:   bash({command: "xcodebuild ${projectArg} -scheme \\"${scheme}\\" -destination \\"platform=macOS\\" test 2>&1 | tail -80"})`,
+    }
+  }
+
+  // iOS: configure xcodebuildmcp session
   let simulatorName = 'iPhone 16'
   try {
     const simsOut = execSync('xcrun simctl list devices available --json 2>/dev/null', { timeout: 10000, encoding: 'utf-8' })
@@ -831,13 +875,8 @@ async function setupXcodeProject(cwd) {
     if (preferred) simulatorName = preferred.name
   } catch { /* use default */ }
 
-  // 5. Configure the session
   const client = getClient()
-  const setArgs = {
-    scheme,
-    simulatorName,
-    simulatorPlatform: 'iOS Simulator',
-  }
+  const setArgs = { scheme, simulatorName, simulatorPlatform: 'iOS Simulator' }
   if (workspacePath) setArgs.workspacePath = workspacePath
   else setArgs.projectPath = projectPath
 
@@ -847,14 +886,14 @@ async function setupXcodeProject(cwd) {
     return { ok: false, message: `session_set_defaults failed: ${e.message}` }
   }
 
-  const projDisplay = path.basename(workspacePath || projectPath)
   return {
     ok: true,
     projectPath,
     workspacePath,
     scheme,
+    platform: 'iOS',
     simulator: simulatorName,
-    message: `✅ Xcode project configured:\n  Project: ${projDisplay}\n  Scheme: ${scheme}\n  Simulator: ${simulatorName}\n\nReady to build. Use xcode_build_run_simulator() to build and launch.`,
+    message: `✅ iOS project configured:\n  Project: ${projDisplay}\n  Scheme: ${scheme}\n  Simulator: ${simulatorName}\n\nReady to build. Use xcode_build_run_simulator() to build and launch.`,
   }
 }
 

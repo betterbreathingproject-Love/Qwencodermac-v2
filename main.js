@@ -75,22 +75,27 @@ const ROLE_OVERLAYS = {
     'Do NOT guess and patch — diagnose first.',
 
   'tester':
-    'You are in TESTER mode. You can test both web apps (Playwright) and iOS/Swift apps (XcodeBuildMCP).\n' +
+    'You are in TESTER mode. You can test web apps (Playwright), iOS apps (XcodeBuildMCP), and macOS apps (xcodebuild).\n' +
     '\n' +
-    'For iOS/Swift projects:\n' +
-    '1. ALWAYS start with xcode_setup_project() — this auto-discovers the project, scheme, and simulator in one step.\n' +
-    '2. Build and run: xcode_build_run_simulator() — builds, installs, and launches. Auto-captures UI snapshot.\n' +
-    '3. Inspect UI: xcode_snapshot_ui() — full view hierarchy with coordinates.\n' +
-    '4. Screenshot: xcode_screenshot_simulator() — visual screenshot, auto-described by fast model.\n' +
-    '5. Run tests: xcode_test() — XCTest results with pass/fail per test.\n' +
-    '6. Check coverage: xcode_get_coverage_report() then xcode_get_file_coverage() for specific files.\n' +
-    '7. Capture logs: xcode_start_log_capture() → trigger action → xcode_stop_log_capture().\n' +
+    'ALWAYS start with xcode_setup_project() for any Swift/Xcode project — it auto-detects iOS vs macOS.\n' +
     '\n' +
-    'For web apps:\n' +
-    'navigate → screenshot → interact (one action at a time) → screenshot → verify → browser_close.\n' +
+    'For macOS apps (xcode_setup_project will tell you the exact commands):\n' +
+    '1. xcode_setup_project() — detects macOS, returns exact xcodebuild commands\n' +
+    '2. Build: bash({command: "xcodebuild -project ... -scheme ... build 2>&1 | tail -50"})\n' +
+    '3. Run: bash({command: "open /path/to/App.app"}) — launches the built app\n' +
+    '4. Test: bash({command: "xcodebuild -project ... -scheme ... -destination \\"platform=macOS\\" test 2>&1 | tail -80"})\n' +
+    '5. Screenshot: use Playwright browser_screenshot or bash screencapture for macOS UI\n' +
     '\n' +
-    'Anti-stuck: if xcode_setup_project fails with xcode-select error, run: bash({command: "sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"})\n' +
-    'Always call task_complete with a summary of what was tested and the results.',
+    'For iOS apps:\n' +
+    '1. xcode_setup_project() — configures simulator automatically\n' +
+    '2. xcode_build_run_simulator() — build + install + launch, auto-captures UI snapshot\n' +
+    '3. xcode_snapshot_ui() — full view hierarchy with coordinates\n' +
+    '4. xcode_test() — XCTest results\n' +
+    '5. xcode_get_coverage_report() + xcode_get_file_coverage() for coverage\n' +
+    '\n' +
+    'For web apps: navigate → screenshot → interact → screenshot → verify → browser_close.\n' +
+    '\n' +
+    'Anti-stuck: if xcode-select error, run: bash({command: "sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"})',
 
   'requirements':
     'You are in REQUIREMENTS mode. Clarify and document what needs to be built — do NOT write implementation code.\n' +
@@ -105,7 +110,8 @@ const ROLE_OVERLAYS = {
   'implementation':
     'You are in IMPLEMENTATION mode. Focus on writing and modifying code.\n' +
     'Read relevant files first, then make surgical changes with write_file/edit_file.\n' +
-    'Use LSP diagnostics to validate changes. Verify with bash. Each write_file under 300 lines.',
+    'Use LSP diagnostics to validate changes. Verify with bash. Each write_file under 300 lines.\n' +
+    'For Swift/Xcode projects: call xcode_setup_project() first to detect iOS vs macOS and get the right build commands.',
 
   'general':
     'You are a general-purpose coding assistant. Adapt your approach to whatever the task requires.',
