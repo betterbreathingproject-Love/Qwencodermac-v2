@@ -66,6 +66,9 @@ function showToast(message, type = 'info', duration = 5000) {
 
 // ── init ──────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', async () => {
+  // Inject undo panel into DOM
+  _initUndoPanel()
+
   // Show startup overlay immediately — will be dismissed once model loads or skipped
   _initStartupOverlay()
 
@@ -491,6 +494,111 @@ function _hideModelLoadingOverlay() {
     overlay.classList.add('fade-out')
     setTimeout(() => overlay.remove(), 300)
   }
+}
+
+// ── file undo panel ───────────────────────────────────────────────────────────
+
+function _initUndoPanel() {
+  const panel = document.createElement('div')
+  panel.id = 'undo-panel'
+  panel.innerHTML = `
+    <div class="undo-panel-header">
+      <span class="undo-panel-title">↩ File Undo History</span>
+      <button class="undo-panel-close" onclick="toggleUndoPanel()" title="Close">✕</button>
+    </div>
+    <div class="undo-panel-body" id="undo-panel-body">
+      <div class="undo-panel-empty">No file changes recorded yet.<br>Changes made by the agent will appear here.</div>
+    </div>
+    <div class="undo-panel-footer">
+      <span class="undo-panel-count" id="undo-panel-count">0 operations</span>
+      <button class="undo-clear-btn" onclick="clearUndoHistory()">Clear all</button>
+    </div>
+  `
+  document.body.appendChild(panel)
+}
+
+function toggleUndoPanel() {
+  const panel = document.getElementById('undo-panel')
+  if (!panel) return
+  const isOpen = panel.classList.contains('open')
+  if (isOpen) {
+    panel.classList.remove('open')
+  } else {
+    panel.classList.add('open')
+    refreshUndoPanel()
+  }
+}
+
+async function refreshUndoPanel() {
+  if (!activeSessionId) return
+  const body = document.getElementById('undo-panel-body')
+  const countEl = document.getElementById('undo-panel-count')
+  if (!body) return
+
+  try {
+    const entries = await window.app.undoList(activeSessionId)
+    if (!entries || entries.length === 0) {
+      body.innerHTML = '<div class="undo-panel-empty">No file changes recorded yet.<br>Changes made by the agent will appear here.</div>'
+      if (countEl) countEl.textContent = '0 operations'
+      return
+    }
+
+    if (countEl) countEl.textContent = `${entries.length} operation${entries.length !== 1 ? 's' : ''}`
+
+    body.innerHTML = entries.map(e => {
+      const fileName = e.filePath.split('/').pop()
+      const dirPart = e.filePath.split('/').slice(-2, -1)[0] || ''
+      const icon = e.tool === 'write_file' ? '📝' : '✏️'
+      const label = e.isNew ? 'Created' : e.tool === 'write_file' ? 'Overwritten' : 'Edited'
+      const time = new Date(e.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      const sizeInfo = e.isNew ? 'new file' : `${(e.beforeSize/1024).toFixed(1)}KB → ${(e.afterSize/1024).toFixed(1)}KB`
+      return `
+        <div class="undo-entry">
+          <span class="undo-entry-icon">${icon}</span>
+          <div class="undo-entry-info">
+            <div class="undo-entry-file" title="${esc(e.filePath)}">${esc(fileName)}</div>
+            <div class="undo-entry-meta">${esc(dirPart)} · ${label} · ${time} · ${sizeInfo}</div>
+          </div>
+          <button class="undo-entry-restore" onclick="applyUndo(${e.index})" title="Restore this file to its previous state">↩ Undo</button>
+        </div>
+      `
+    }).join('')
+  } catch (err) {
+    body.innerHTML = `<div class="undo-panel-empty">Error loading undo history: ${esc(err.message)}</div>`
+  }
+}
+
+async function applyUndo(index) {
+  if (!activeSessionId) return showToast('No active session', 'error')
+  try {
+    const result = await window.app.undoApply(activeSessionId, index)
+    if (result.ok) {
+      const fileName = result.filePath.split('/').pop()
+      showToast(`↩ Restored ${fileName} (${result.restored})`, 'info')
+      refreshUndoPanel()
+      // Refresh file tree
+      if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
+    } else {
+      showToast(`Undo failed: ${result.error}`, 'error')
+    }
+  } catch (err) {
+    showToast(`Undo error: ${err.message}`, 'error')
+  }
+}
+
+async function clearUndoHistory() {
+  if (!activeSessionId) return
+  await window.app.undoClear(activeSessionId)
+  refreshUndoPanel()
+  updateUndoToggleBtn(0)
+}
+
+function updateUndoToggleBtn(count) {
+  const btn = document.getElementById('undo-toggle-btn')
+  if (!btn) return
+  const badge = btn.querySelector('.undo-count-badge')
+  if (badge) badge.textContent = count
+  btn.style.display = count > 0 ? '' : 'none'
 }
 
 // ── startup overlay ───────────────────────────────────────────────────────────
@@ -1631,6 +1739,29 @@ async function sendAgentMode(prompt, opts = {}) {
         const FILE_TOOLS = ['write_file', 'edit_file', 'create_file', 'bash', 'str_replace_editor']
         if (!ev.is_error && FILE_TOOLS.some(t => lastToolName.includes(t))) {
           if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
+        }
+        // Add inline undo button for write_file / edit_file
+        if (!ev.is_error && (lastToolName === 'write_file' || lastToolName === 'edit_file') && lastTool) {
+          const undoBtn = document.createElement('button')
+          undoBtn.className = 'undo-btn'
+          undoBtn.innerHTML = '↩ Undo this change'
+          undoBtn.title = 'Restore this file to its state before the agent changed it'
+          undoBtn.onclick = async () => {
+            undoBtn.disabled = true
+            undoBtn.textContent = 'Restoring...'
+            const entries = await window.app.undoList(activeSessionId)
+            if (entries && entries.length > 0) {
+              await applyUndo(0)
+              undoBtn.textContent = '✓ Restored'
+              undoBtn.style.color = 'var(--green)'
+            } else {
+              undoBtn.textContent = '✗ Nothing to undo'
+              undoBtn.disabled = false
+            }
+          }
+          lastTool.appendChild(undoBtn)
+          // Update the undo toggle button count
+          window.app.undoList(activeSessionId).then(entries => updateUndoToggleBtn(entries?.length || 0))
         }
         document.getElementById(respId+'-status').innerHTML = `🤖 ${lastToolName ? esc(lastToolName) + ' done — ' : ''}deciding next step <span class="activity-dot">●</span>`
         setActivity(`🤖 ${lastToolName ? esc(lastToolName) + ' done — ' : ''}deciding next step <span class="activity-dot">●</span>`)

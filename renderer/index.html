@@ -476,6 +476,13 @@
           <!-- stats bar (unified: status + tokens above input) -->
           <div class="agent-stats" id="agentStats" style="display:none"></div>
 
+          <!-- undo toggle button — shown when there are undoable changes -->
+          <div style="padding: 0 12px 4px; display:flex; justify-content:flex-end;">
+            <button class="undo-toggle-btn" id="undo-toggle-btn" onclick="toggleUndoPanel()" style="display:none" title="View and undo recent file changes">
+              ↩ Undo <span class="undo-count-badge">0</span>
+            </button>
+          </div>
+
           <!-- input -->
           <div class="agent-input-area">
             <div class="agent-input-row">

@@ -1196,3 +1196,35 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .about-card-license { font-size: 9px; color: var(--muted); opacity: 0.7; font-family: 'SF Mono', monospace; }
 .about-footer { text-align: center; padding: 24px; border-top: 1px solid var(--border); margin-top: 8px; }
 .about-footer-text { font-size: 12px; color: var(--muted); }
+
+/* ── File undo ──────────────────────────────────────────────────────────────── */
+.undo-btn { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; background: rgba(250,204,21,0.08); border: 1px solid rgba(250,204,21,0.2); border-radius: 6px; color: var(--yellow); font-size: 10px; font-weight: 600; cursor: pointer; transition: all 0.15s; margin: 4px 12px 6px; }
+.undo-btn:hover { background: rgba(250,204,21,0.15); border-color: rgba(250,204,21,0.4); }
+.undo-btn:active { transform: scale(0.97); }
+
+/* Undo history panel — floating drawer */
+#undo-panel { position: fixed; bottom: 64px; right: 16px; width: 340px; max-height: 420px; background: var(--bg2); border: 1px solid rgba(250,204,21,0.25); border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); z-index: 900; display: none; flex-direction: column; overflow: hidden; }
+#undo-panel.open { display: flex; }
+.undo-panel-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.undo-panel-title { font-size: 12px; font-weight: 700; color: var(--yellow); display: flex; align-items: center; gap: 6px; }
+.undo-panel-close { background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 0 2px; line-height: 1; }
+.undo-panel-close:hover { color: var(--text); }
+.undo-panel-body { flex: 1; overflow-y: auto; padding: 8px; }
+.undo-entry { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 4px; background: var(--bg1); transition: border-color 0.15s; }
+.undo-entry:hover { border-color: rgba(250,204,21,0.3); }
+.undo-entry-icon { font-size: 14px; flex-shrink: 0; }
+.undo-entry-info { flex: 1; min-width: 0; }
+.undo-entry-file { font-size: 11px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.undo-entry-meta { font-size: 10px; color: var(--muted); margin-top: 1px; }
+.undo-entry-restore { padding: 4px 10px; background: rgba(250,204,21,0.1); border: 1px solid rgba(250,204,21,0.25); border-radius: 5px; color: var(--yellow); font-size: 10px; font-weight: 600; cursor: pointer; white-space: nowrap; flex-shrink: 0; transition: all 0.15s; }
+.undo-entry-restore:hover { background: rgba(250,204,21,0.2); }
+.undo-panel-empty { text-align: center; padding: 24px 16px; color: var(--muted); font-size: 12px; }
+.undo-panel-footer { padding: 8px 12px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+.undo-panel-count { font-size: 10px; color: var(--muted); }
+.undo-clear-btn { padding: 4px 10px; background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.2); border-radius: 5px; color: var(--red); font-size: 10px; cursor: pointer; transition: all 0.15s; }
+.undo-clear-btn:hover { background: rgba(248,113,113,0.15); }
+
+/* Undo toggle button in status bar / toolbar */
+.undo-toggle-btn { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; background: rgba(250,204,21,0.06); border: 1px solid rgba(250,204,21,0.15); border-radius: 6px; color: var(--yellow); font-size: 11px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+.undo-toggle-btn:hover { background: rgba(250,204,21,0.12); border-color: rgba(250,204,21,0.3); }
+.undo-toggle-btn .undo-count-badge { background: rgba(250,204,21,0.2); border-radius: 10px; padding: 1px 5px; font-size: 9px; font-weight: 700; }
