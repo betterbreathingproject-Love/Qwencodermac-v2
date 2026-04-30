@@ -2100,6 +2100,13 @@ class DirectBridge {
     // don't immediately re-inflate the context we just compressed.
     let _postCompactionCooldown = 0
 
+    // ── Compile-error loop detection ──────────────────────────────────────────
+    // Tracks consecutive compile failures per file. When the same file fails
+    // to compile 3+ times in a row, inject targeted guidance so the agent
+    // can break out of the patch loop instead of spinning forever.
+    const _compileFailCounts = new Map()  // filePath → consecutive fail count
+    let _lastCompileFile = null
+
     // ── Memory: session start ─────────────────────────────────────────────────
     const _sessionId = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     if (memoryClient) {
@@ -2933,6 +2940,16 @@ class DirectBridge {
 
         // Post-edit diagnostic hook: check for errors after write_file/edit_file
         if ((fnName === 'write_file' || fnName === 'edit_file') && !isError && this._lspManager?.getStatus().status === 'ready') {
+          // Reset compile-error loop counter when the file is successfully rewritten
+          // A fresh write means the agent is trying a new approach — give it a clean slate
+          if (fnArgs.path) {
+            const basename = path.basename(fnArgs.path)
+            for (const key of _compileFailCounts.keys()) {
+              if (key.endsWith(basename) || key === fnArgs.path) {
+                _compileFailCounts.delete(key)
+              }
+            }
+          }
           this.send('qwen-event', { type: 'lsp-activity', action: 'diagnostics-check', path: fnArgs.path })
           try {
             const diags = await Promise.race([
@@ -3054,6 +3071,60 @@ class DirectBridge {
                 }
               }
             } catch { /* skip */ }
+          }
+        }
+
+        // ── Compile-error loop detection ──────────────────────────────────────
+        // When the agent runs a compile command (swiftc, swift build, xcodebuild,
+        // kotlinc, etc.) and it fails, track the failure count per target file.
+        // After 3 consecutive failures on the same file, inject targeted guidance
+        // to break the patch loop — including Swift 6 specific API notes.
+        if (fnName === 'bash' && typeof content === 'string') {
+          const cmd = fnArgs.command || ''
+          const isCompileCmd = /\b(swiftc|swift\s+build|xcodebuild|kotlinc|javac|tsc|rustc|go\s+build|gcc|g\+\+|clang)\b/i.test(cmd)
+          if (isCompileCmd) {
+            // Extract the primary source file from the command
+            const fileMatch = cmd.match(/\b(\S+\.(swift|kt|java|ts|rs|go|c|cpp|m))\b/)
+            const compileTarget = fileMatch ? fileMatch[1] : cmd.slice(0, 60)
+            const hasError = /error:/i.test(content) || /exit.*[1-9]/.test(content) || /Command failed/i.test(content)
+
+            if (hasError) {
+              const prev = _compileFailCounts.get(compileTarget) || 0
+              _compileFailCounts.set(compileTarget, prev + 1)
+              _lastCompileFile = compileTarget
+
+              const failCount = prev + 1
+              if (failCount >= 3) {
+                // Build targeted guidance based on the errors seen
+                const isSwift = /\.swift\b|swiftc|swift\s+build|xcodebuild/i.test(cmd)
+                let guidance = `\n\n⚠️ COMPILE LOOP DETECTED: "${compileTarget}" has failed to compile ${failCount} times in a row. Stop patching and take a different approach:\n`
+                guidance += `1. Re-read the ENTIRE file with read_file before making any more edits.\n`
+                guidance += `2. Identify ALL errors at once — don't fix one at a time.\n`
+                guidance += `3. If the approach is fundamentally broken, rewrite the file from scratch with a simpler design.\n`
+
+                if (isSwift) {
+                  guidance += `\nSwift 6 API notes (common sources of compile errors):\n`
+                  guidance += `- FileHandle.availableData returns Data (non-optional) — use "let data = stdin.availableData; guard !data.isEmpty else { return nil }"\n`
+                  guidance += `- posix_spawn_pid_t does NOT exist — use pid_t instead: "var pid: pid_t = 0"\n`
+                  guidance += `- posix_spawnattr_setbininfo_np does NOT exist — use posix_spawn directly with nil for attr\n`
+                  guidance += `- For raw terminal mode, use: bash({"command": "stty -icanon -echo"}) and restore with stty icanon echo — do NOT use posix_spawn in Swift\n`
+                  guidance += `- For non-blocking stdin reads, use: FileHandle.standardInput.availableData (returns Data, not Optional<Data>)\n`
+                  guidance += `- Conditional binding (guard let / if let) requires Optional type — don't use it on non-optional values\n`
+                  guidance += `- "private func" is not accessible from outside the class — use "func" or "internal func"\n`
+                  guidance += `- For a terminal game, the simplest approach is: use stty via bash for raw mode, read from FileHandle.standardInput.availableData directly\n`
+                }
+
+                content += guidance
+                this.send('qwen-event', {
+                  type: 'system', subtype: 'warning',
+                  data: `⚠️ Compile loop on ${compileTarget} (${failCount} failures) — injecting guidance to break the loop`,
+                })
+              }
+            } else {
+              // Successful compile — reset the counter for this file
+              _compileFailCounts.delete(compileTarget)
+              _lastCompileFile = null
+            }
           }
         }
 
