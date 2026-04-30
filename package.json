@@ -49,6 +49,7 @@
       "steering-loader.js",
       "steering-generator.js",
       "projects.js",
+      "xcode-tool.js",
       "telegram-bot.js",
       "telegram-miniapp-server.js",
       "telegram-miniapp.html",
@@ -60,7 +61,8 @@
       "node_modules/@qwen-code/sdk/**/*",
       "node_modules/openai/**/*",
       "node_modules/playwright/**/*",
-      "node_modules/playwright-core/**/*"
+      "node_modules/playwright-core/**/*",
+      "node_modules/xcodebuildmcp/**/*"
     ],
     "extraResources": [
       {
@@ -86,7 +88,8 @@
     "openai": "^4.0.0",
     "playwright": "^1.59.1",
     "sharp": "^0.34.5",
-    "ws": "^8.20.0"
+    "ws": "^8.20.0",
+    "xcodebuildmcp": "2.3.2"
   },
   "devDependencies": {
     "electron": "^41.3.0",

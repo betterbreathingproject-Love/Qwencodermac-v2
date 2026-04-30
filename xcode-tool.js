@@ -257,22 +257,28 @@ class XcodeMCPClient extends EventEmitter {
 
   /**
    * Find the xcodebuildmcp binary.
-   * Checks npm global bin, homebrew, and PATH.
+   * Checks local node_modules/.bin first (npm dependency), then global npm/homebrew.
    */
   static _findBinary() {
     const { execSync } = require('child_process')
+    const path = require('path')
+    const fs = require('fs')
+
+    // Local node_modules/.bin (preferred — bundled with the app)
+    const localBin = path.join(__dirname, 'node_modules', '.bin', 'xcodebuildmcp')
+
     const candidates = [
-      'xcodebuildmcp',
+      localBin,
       '/opt/homebrew/bin/xcodebuildmcp',
       '/usr/local/bin/xcodebuildmcp',
+      'xcodebuildmcp',
     ]
-    // Try npm global bin
+    // Also check npm global bin
     try {
       const npmBin = execSync('npm bin -g 2>/dev/null', { timeout: 3000 }).toString().trim()
-      if (npmBin) candidates.unshift(`${npmBin}/xcodebuildmcp`)
+      if (npmBin) candidates.push(`${npmBin}/xcodebuildmcp`)
     } catch { /* ignore */ }
 
-    const fs = require('fs')
     for (const c of candidates) {
       try {
         if (c === 'xcodebuildmcp') {
