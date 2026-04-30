@@ -278,6 +278,23 @@ async function getStatus() {
 }
 
 /**
+ * Load the extraction model on the server side.
+ * Safe to call even if already loaded — server returns ok:true in both cases.
+ *
+ * @param {string} modelPath - Absolute path to the MLX model directory
+ * @returns {Promise<{ok: boolean, model?: string, message?: string}|null>}
+ */
+async function extractorLoad(modelPath) {
+  try {
+    const result = await httpRequest('POST', '/memory/extractor/load', { model_path: modelPath }, 60000)
+    if (!result) return null
+    return { ok: !!result.ok, model: result.model, message: result.message }
+  } catch (_) {
+    return null
+  }
+}
+
+/**
  * Ask the small extraction model to pick the best agent type for a task.
  * Returns the agent type string (e.g. 'implementation', 'explore') or null
  * when the extraction model is not loaded (degraded mode) or on any error.
@@ -313,6 +330,7 @@ module.exports = {
   vectorSearch,
   archiveSearch,
   getStatus,
+  extractorLoad,
   assistRouteTask,
   // Expose for testing
   _httpRequest: httpRequest,

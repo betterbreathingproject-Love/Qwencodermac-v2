@@ -101,6 +101,18 @@ window.addEventListener('DOMContentLoaded', async () => {
       setServerStatus(false)
     }
   })
+
+  // Refresh extraction model section when the background fast-model load completes
+  window.app.onFastModelStatus?.((s) => {
+    if (s.loaded) {
+      _extractionModelStatus = { loaded: true, modelName: s.modelName || s.modelPath?.split('/').pop() || null, memoryGb: null }
+    } else {
+      _extractionModelStatus = { loaded: false, modelName: null, memoryGb: null }
+    }
+    _renderExtractionModelSection()
+    // Refresh from server to get accurate memoryGb
+    refreshExtractionModelStatus()
+  })
   await refreshStatus()
   await _tryAutoLoad()
 
@@ -5639,6 +5651,8 @@ async function loadExtractionModel() {
       showToast(`Failed to load extraction model: ${result.error}`, 'error')
     } else {
       showToast('Extraction model loaded', 'success')
+      // Persist as the preferred fast model for next startup
+      window.app.saveAppSettings({ lastFastModelPath: modelPath })
       await refreshExtractionModelStatus()
     }
   } catch (err) {

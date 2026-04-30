@@ -153,6 +153,8 @@ contextBridge.exposeInMainWorld('app', {
   unloadExtractionModel: ()          => ipcRenderer.invoke('memory-extractor-unload'),
   getMemoryStatus:       ()          => ipcRenderer.invoke('memory-status'),
   assistChatReply:       (msg, role) => ipcRenderer.invoke('assist-chat-reply', msg, role),
+  onFastModelStatus:     (cb)        => ipcRenderer.on('fast-model-status', (_, d) => cb(d)),
+  offFastModelStatus:    ()          => ipcRenderer.removeAllListeners('fast-model-status'),
 
   // Memory bank — archive viewer, KG query, stats
   memoryArchiveSearch:   (q, limit)  => ipcRenderer.invoke('memory-archive-search', q, limit),

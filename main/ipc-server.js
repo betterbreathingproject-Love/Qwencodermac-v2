@@ -235,11 +235,20 @@ async function _reloadModel(port, modelPath, mainWindow, appDir) {
       mainWindow?.webContents.send('server-log', `✅ Model reloaded: ${modelName}`)
       mainWindow?.webContents.send('server-status', { running: true, reloaded: true, modelId: result.model_id || modelName })
 
-      // Re-run calibration and reload fast model
+      // Re-run calibration and reload fast model using user's saved preference
       runCalibration(`http://127.0.0.1:${port}`, port, mainWindow, modelPath)
       const config = require('../config')
       const memClient = require('../memory-client.js')
-      memClient._httpRequest('POST', '/memory/extractor/load', { model_path: config.DEFAULT_FAST_MODEL }, 60000)
+      const projects = require('../projects.js')
+      const appSettings = projects.getAppSettings ? projects.getAppSettings() : {}
+      const fastModelPath = appSettings.lastFastModelPath || config.DEFAULT_FAST_MODEL
+      memClient._httpRequest('POST', '/memory/extractor/load', { model_path: fastModelPath }, 60000)
+        .then(r => {
+          if (r && !r.error) {
+            const fastModelName = fastModelPath.split('/').pop()
+            mainWindow?.webContents.send('fast-model-status', { loaded: true, modelPath: fastModelPath, modelName: fastModelName })
+          }
+        })
         .catch(() => {})
     }
   } catch (err) {
@@ -456,21 +465,32 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
       _lastLoadedModelPath = modelPath  // remember for post-crash reload
       runCalibration(serverUrl(), serverPort(), getMainWindow(), modelPath)
 
-      // Auto-load the dedicated fast extraction model (fire-and-forget)
+      // Auto-load the fast extraction model (fire-and-forget).
+      // Use the user's saved fast model preference; fall back to DEFAULT_FAST_MODEL.
       // This enables all fast-assist features: todo bootstrap, error diagnosis,
-      // file section extraction, search ranking, etc.
+      // file section extraction, search ranking, memory extraction, etc.
       const memClient = require('../memory-client.js')
-      const fastModelPath = config.DEFAULT_FAST_MODEL
+      const projects = require('../projects.js')
+      const appSettings = projects.getAppSettings ? projects.getAppSettings() : {}
+      const fastModelPath = appSettings.lastFastModelPath || config.DEFAULT_FAST_MODEL
       memClient._httpRequest('POST', '/memory/extractor/load', { model_path: fastModelPath }, 60000)
         .then(r => {
           if (r && !r.error) {
+            const modelName = fastModelPath.split('/').pop()
             console.log(`[main] Fast assist model loaded: ${fastModelPath}`)
-            getMainWindow()?.webContents.send('server-log', `⚡ Fast assist model ready (Qwen3.5 0.8B)`)
+            getMainWindow()?.webContents.send('server-log', `⚡ Fast assist model ready (${modelName})`)
+            getMainWindow()?.webContents.send('fast-model-status', { loaded: true, modelPath: fastModelPath, modelName })
+            // Persist the successfully loaded fast model path
+            projects.saveAppSettings({ lastFastModelPath: fastModelPath })
           } else {
             console.log(`[main] Fast assist model load failed: ${r?.error || 'no response'}`)
+            getMainWindow()?.webContents.send('fast-model-status', { loaded: false, error: r?.error || 'load failed' })
           }
         })
-        .catch(err => console.log(`[main] Fast assist model load error: ${err.message}`))
+        .catch(err => {
+          console.log(`[main] Fast assist model load error: ${err.message}`)
+          getMainWindow()?.webContents.send('fast-model-status', { loaded: false, error: err.message })
+        })
     }
 
     return result
@@ -502,6 +522,13 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
     try {
       const memClient = require('../memory-client.js')
       const result = await memClient._httpRequest('POST', '/memory/extractor/load', { model_path: modelPath }, 30000)
+      if (result && !result.error) {
+        // Persist user's choice so it auto-loads next time
+        const projects = require('../projects.js')
+        projects.saveAppSettings({ lastFastModelPath: modelPath })
+        const modelName = modelPath.split('/').pop()
+        getMainWindow()?.webContents.send('fast-model-status', { loaded: true, modelPath, modelName })
+      }
       return result || { error: 'No response from memory backend' }
     } catch (err) {
       return { error: err.message || 'Failed to load extraction model' }

@@ -333,6 +333,10 @@ async def _startup_memory():
     Runs as a fire-and-forget background task so the server starts accepting
     requests immediately — memory init (especially VectorMemory loading
     sentence-transformers) can take 2-5s and must not block startup.
+
+    The fast extraction model is loaded by the Electron main process after the
+    primary model loads successfully (via the load-model IPC handler), using
+    the user's saved lastFastModelPath preference.
     """
     if _memory_bridge is not None:
         import asyncio
@@ -342,6 +346,7 @@ async def _startup_memory():
                 print("[server] Memory-bridge initialized ✅", flush=True)
             except Exception as e:
                 print(f"[server] WARNING: Memory-bridge initialization failed: {e}", file=sys.stderr, flush=True)
+
         # Schedule as background task — server is already serving by the time this runs
         asyncio.create_task(_init_bg())
 
