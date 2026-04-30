@@ -320,7 +320,19 @@ ipcMain.handle('setup-launch-main', async () => {
 })
 
 // ── Setup: open wizard from main app (settings panel) ────────────────────────
+// Does NOT clear the setup-complete flag — a restart won't re-trigger the wizard.
+// The flag is only cleared if the user explicitly clicks "Reset & Start Fresh".
 ipcMain.handle('open-setup-wizard', async () => {
+  if (!setupWindow) {
+    createSetupWindow()
+  } else {
+    setupWindow.focus()
+  }
+  return { ok: true }
+})
+
+// ── Setup: reset flag and reopen (explicit "start fresh" action) ──────────────
+ipcMain.handle('setup-reset-and-open', async () => {
   ipcSetup.resetSetup()
   if (!setupWindow) {
     createSetupWindow()
@@ -1090,8 +1102,28 @@ function createWindow() {
 
 // ── lifecycle ─────────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
-  // Check if first-time setup is needed
-  const setupComplete = ipcSetup.isSetupComplete()
+  // Check if first-time setup is needed.
+  // Also auto-complete setup if models are already installed — handles the case
+  // where the flag was deleted but the user already has everything set up.
+  let setupComplete = ipcSetup.isSetupComplete()
+  if (!setupComplete) {
+    const { scanInstalledModels, selectTier, getHardwareInfo } = ipcSetup
+    // Quick sync check: if both recommended models are present, skip the wizard
+    try {
+      const { installed, installedFolders } = scanInstalledModels()
+      // We don't have RAM yet synchronously, but check if any Qwen3.6 35B model exists
+      const hasAnyPrimary = Array.from(installedFolders).some(f => f.includes('Qwen3') && f.includes('35B'))
+      const hasFast = installedFolders.has('Qwen3.5-0.8B-MLX-8bit')
+      if (hasAnyPrimary && hasFast) {
+        ipcSetup.markSetupComplete({ autoCompleted: true, reason: 'models already installed' })
+        setupComplete = true
+        console.log('[setup] Models already installed — skipping wizard')
+      }
+    } catch (e) {
+      console.warn('[setup] Pre-check failed:', e.message)
+    }
+  }
+
   if (!setupComplete) {
     createSetupWindow()
     // Start the MLX server in the background so calibration can begin
