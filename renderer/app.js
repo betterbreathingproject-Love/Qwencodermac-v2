@@ -1096,15 +1096,17 @@ function renderAttachedImages() {
 const THINK_OPEN=/<think>/i, THINK_CLOSE=/<\/think>/i
 
 function sendAgent() {
-  if(isGenerating) return
   const prompt = document.getElementById('agentPrompt').value.trim()
   if(!prompt) return
 
   // ── orchestrator injection mode ──────────────────────────────────────────
   // When the task graph / spec orchestrator is running, the main chat input
   // acts as a live injection channel rather than starting a new agent session.
+  // This check must come BEFORE the isGenerating guard — orchestrator sets
+  // isGenerating=true, which would otherwise block injection entirely.
   if (_orchestratorRunning) {
     document.getElementById('agentPrompt').value = ''
+    _resetSendBtn()  // revert button back to Stop immediately after send
     window.app.taskGraphInject(prompt).then(result => {
       if (result?.error) {
         appendMsg('system', `⚠️ Inject failed: ${result.error}`)
@@ -1115,6 +1117,8 @@ function sendAgent() {
     })
     return
   }
+
+  if(isGenerating) return
 
   // ── slash command interception (Task 10.7) ──
   if (prompt.startsWith('/')) {
@@ -1818,7 +1822,7 @@ async function sendAgentMode(prompt, opts = {}) {
           isGenerating = true
           const btn = document.getElementById('sendBtn')
           btn.disabled = false; btn.innerHTML = '<span class="spinner"></span>Stop'; btn.className = 'btn-send btn-stop'
-          btn.onclick = () => { window.app.qwenInterrupt(); finishGeneration() }
+          btn.onclick = () => { taskGraphAbort() }
 
           // Sync task graph sidebar buttons to show running state
           document.getElementById('tgRunBtn').style.display = 'none'
@@ -2375,6 +2379,20 @@ function finishGeneration() {
   updateStatusBar('idle')
   // Reset the agent stats bar so it doesn't linger into the next session
   updateAgentStatsBar({ state: 'idle' })
+}
+
+/**
+ * Revert the send button back to "Stop" state during orchestrator mode.
+ * Called after an injection is sent so the button correctly shows Stop again.
+ */
+function _resetSendBtn() {
+  if (!_orchestratorRunning) return
+  const btn = document.getElementById('sendBtn')
+  btn.disabled = false
+  btn.innerHTML = '<span class="spinner"></span>Stop'
+  btn.className = 'btn-send btn-stop'
+  btn.onclick = () => { taskGraphAbort() }
+  document.getElementById('agentPrompt').placeholder = '💬 Agents running — type here to inject context or refine objectives. ⌘↵ to send'
 }
 
 function appendMsg(role, text) {
@@ -3851,7 +3869,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
   isGenerating = true
   const btn = document.getElementById('sendBtn')
   btn.disabled = false; btn.innerHTML = '<span class="spinner"></span>Stop'; btn.className = 'btn-send btn-stop'
-  btn.onclick = () => { window.app.qwenInterrupt(); finishGeneration() }
+  btn.onclick = () => { taskGraphAbort() }
 
   // Sync task graph sidebar buttons
   document.getElementById('tgRunBtn').style.display = 'none'
@@ -4735,6 +4753,23 @@ function initSlashAutocomplete() {
 
   input.addEventListener('input', () => {
     const val = input.value
+
+    // When orchestrator is running, switch the send button between
+    // "Stop" (empty input) and "Inject ↵" (text typed) so the user
+    // knows typing will inject rather than stop.
+    if (_orchestratorRunning) {
+      const btn = document.getElementById('sendBtn')
+      if (val.trim()) {
+        btn.innerHTML = 'Inject ↵'
+        btn.className = 'btn-send'
+        btn.onclick = sendAgent
+      } else {
+        btn.innerHTML = '<span class="spinner"></span>Stop'
+        btn.className = 'btn-send btn-stop'
+        btn.onclick = () => { taskGraphAbort() }
+      }
+    }
+
     if (val.startsWith('/')) {
       const typed = val.slice(1).toLowerCase()
       const matches = SLASH_COMMAND_INFO.filter(c => c.command.startsWith(typed))
