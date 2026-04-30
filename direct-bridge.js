@@ -2307,6 +2307,10 @@ class DirectBridge {
               if (desc) {
                 msg.content[i] = { type: 'text', text: `[Vision: ${desc}]` }
                 this.send('qwen-event', { type: 'fast-assist', task: 'vision', label: '⚡ Fast Assistant — image described', detail: desc.slice(0, 120) })
+              } else {
+                // Fast model not loaded — replace image with a note so the main model
+                // doesn't receive a raw base64 blob it can't process
+                msg.content[i] = { type: 'text', text: '[image attached — vision model not loaded, cannot describe]' }
               }
             }
           }
@@ -3290,6 +3294,11 @@ class DirectBridge {
             if (desc) {
               content = `[Vision: ${desc}]`
               this.send('qwen-event', { type: 'fast-assist', task: 'vision', label: '⚡ Fast Assistant — screenshot described', detail: desc.slice(0, 120) })
+            } else {
+              // Fast model not loaded — strip the base64 blob so it doesn't bloat context,
+              // and tell the agent it can't see the screenshot
+              content = content.replace(/!\[screenshot\]\(data:image\/[^)]+\)/g, '[screenshot captured — vision model not loaded, cannot describe image]')
+              content = content.replace(/data:(image\/[^;]+);base64,[A-Za-z0-9+/=]+/g, '[image data — vision model not loaded]')
             }
           }
         }

@@ -1359,9 +1359,9 @@ async def _route_vision_request(req: ChatRequest):
                 if result and result.result:
                     descriptions.append(result.result)
                 else:
-                    errors.append("Vision model returned no description — is the fast model loaded?")
+                    errors.append("Vision model not loaded — load the 0.8B fast model to enable screenshot analysis")
             else:
-                errors.append("Fast vision model not available (load the 0.8B model in the app)")
+                errors.append("Vision model not available — load the 0.8B fast model in the app")
         except Exception as e:
             errors.append(f"Vision analysis failed: {e}")
             print(f"[server] Vision routing error: {e}", file=sys.stderr)
@@ -1403,9 +1403,33 @@ async def chat_completions(req: ChatRequest):
     # The primary model is loaded as text-only (mlx_lm) for 2× generation speed.
     # Image requests are routed to the fast/extractor model (0.8B) via the
     # memory-bridge /memory/assist vision endpoint, which uses mlx_vlm.
-    # This matches how playwright screenshots and image uploads already work.
+    # Falls back to the primary model if it has vision weights, or strips images
+    # and processes text-only if neither model can handle images.
     if has_images:
-        return await _route_vision_request(req)
+        # Check if the fast model is available for vision
+        fast_model_ready = (
+            _memory_bridge is not None
+            and hasattr(_memory_bridge, '_handle_vision')
+            and getattr(_memory_bridge, '_extract_model', None) is not None
+            and getattr(_memory_bridge, '_has_vision', False)
+        )
+        if fast_model_ready:
+            return await _route_vision_request(req)
+        elif _model_is_vision:
+            # Primary model has vision weights — let it handle the request directly
+            pass  # fall through to normal inference path below
+        else:
+            # Neither model can handle images — strip images and process text-only
+            # so the agent still gets a useful response rather than an error
+            stripped_messages = []
+            for msg in req.messages:
+                if isinstance(msg.content, list):
+                    text_parts = [p for p in msg.content if isinstance(p, dict) and p.get("type") == "text"]
+                    text_only = " ".join(p.get("text", "") for p in text_parts).strip()
+                    stripped_messages.append(type(msg)(role=msg.role, content=text_only or "(image attached — vision model not loaded)"))
+                else:
+                    stripped_messages.append(msg)
+            req = type(req)(**{**req.__dict__, "messages": stripped_messages})
 
     # ── auto-build prefix cache on first request with a system prompt ─────────
     # If no cache exists yet and this request has a system prompt, build it now
