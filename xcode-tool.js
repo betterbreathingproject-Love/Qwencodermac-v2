@@ -725,10 +725,11 @@ function ensureXcodePath() {
           execFileSync('sudo', ['-n', 'xcode-select', '-s', xcodePath], { timeout: 5000 })
           return { ok: true, fixed: true, message: `Switched xcode-select to ${xcodePath}` }
         } catch {
-          // sudo -n failed (needs password) — return instructions
+          // sudo -n failed (needs password) — return instructions for the user, not the agent.
+          // Mark this as a USER_ACTION_REQUIRED so the agent surfaces it and stops retrying.
           return {
-            ok: false, fixed: false,
-            message: `xcode-select points to CommandLineTools. Run this to fix:\n  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`,
+            ok: false, fixed: false, requiresUserAction: true,
+            message: `xcode-select points to CommandLineTools instead of Xcode.app.\n\nUSER_ACTION_REQUIRED: Run this once in your terminal (requires your password):\n  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer\n\nThe agent cannot run this — it requires interactive sudo. Please run it manually and retry.`,
           }
         }
       }

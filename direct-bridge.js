@@ -1533,6 +1533,26 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         const dangerous = /\b(rm\s+-rf\s+\/|mkfs|dd\s+if=|:(){ :|fork\s*bomb)\b/i
         if (dangerous.test(args.command)) return { error: 'Command blocked for safety' }
 
+        // Detect sudo commands that will hang waiting for a password prompt.
+        // Try sudo -n first (non-interactive dry-run) — if it fails with "a password is required",
+        // the real command would hang too. Fail fast with a clear message instead of timing out.
+        // Allow through: sudo -n (already non-interactive), sudo -S (reads from stdin — we don't pipe one).
+        const sudoInteractiveMatch = args.command.trim().match(/(?:^|[;&|]\s*)sudo(?!\s+-[a-zA-Z]*n)(?!\s+-S)\s+/)
+        if (sudoInteractiveMatch) {
+          // Quick non-interactive probe: sudo -n true
+          try {
+            const { execFileSync: _execFileSync } = require('child_process')
+            _execFileSync('sudo', ['-n', 'true'], { timeout: 3000, stdio: 'pipe' })
+            // Credentials are cached — let the command through
+          } catch (_sudoErr) {
+            const msg = (_sudoErr.stderr || '').toString()
+            if (msg.includes('password is required') || msg.includes('a password is required') || _sudoErr.status === 1) {
+              return { error: `This sudo command requires a password and will hang in this environment:\n  ${args.command.trim()}\n\nPlease run it manually in your terminal, then retry the task.` }
+            }
+            // Other error (e.g. sudo not found) — let it through and fail naturally
+          }
+        }
+
         // Detect tool-call syntax used as a bash command — e.g. xcode_list_schemes(project_path="...")
         // This happens when the model confuses agent tool names with shell commands.
         // Catch: identifier followed immediately by ( with no spaces before it.
