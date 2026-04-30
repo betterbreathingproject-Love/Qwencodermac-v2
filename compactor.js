@@ -7,9 +7,12 @@
  *
  * Rewind store lives here in Node (not in the Python process) so it persists
  * across all bridge invocations for the lifetime of the Electron app.
+ * The store is also persisted to disk so rewind keys survive app restarts.
  */
 const { execFile } = require('child_process')
 const path = require('path')
+const fs = require('fs')
+const os = require('os')
 const crypto = require('crypto')
 const builtin = require('./compactor-builtin')
 
@@ -20,6 +23,62 @@ const { REWIND_MAX_ENTRIES, REWIND_TTL_MS } = require('./config')
 
 const _rewindStore = new Map() // key → { original, compressed, storedAt, tokens }
 
+// ── Disk persistence ───────────────────────────────────────────────────────
+function _rewindStorePath() {
+  return path.join(os.homedir(), '.qwencoder', 'rewind-store.json')
+}
+
+function _loadRewindStore() {
+  try {
+    const p = _rewindStorePath()
+    if (!fs.existsSync(p)) return
+    const raw = JSON.parse(fs.readFileSync(p, 'utf-8'))
+    const now = Date.now()
+    let loaded = 0
+    for (const [key, entry] of Object.entries(raw)) {
+      // Skip expired entries on load
+      if (now - entry.storedAt <= REWIND_TTL_MS) {
+        _rewindStore.set(key, entry)
+        loaded++
+      }
+    }
+    if (loaded > 0) console.log(`[compactor] Loaded ${loaded} rewind entries from disk`)
+  } catch (err) {
+    console.warn(`[compactor] Failed to load rewind store: ${err.message}`)
+  }
+}
+
+let _saveTimer = null
+function _scheduleRewindSave() {
+  // Debounce: write at most once per 2s to avoid hammering disk on rapid compression
+  if (_saveTimer) return
+  _saveTimer = setTimeout(() => {
+    _saveTimer = null
+    _persistRewindStore()
+  }, 2000)
+}
+
+function _persistRewindStore() {
+  try {
+    const dir = path.join(os.homedir(), '.qwencoder')
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    const now = Date.now()
+    const obj = {}
+    for (const [key, entry] of _rewindStore.entries()) {
+      // Only persist non-expired entries
+      if (now - entry.storedAt <= REWIND_TTL_MS) {
+        obj[key] = entry
+      }
+    }
+    fs.writeFileSync(_rewindStorePath(), JSON.stringify(obj), 'utf-8')
+  } catch (err) {
+    console.warn(`[compactor] Failed to persist rewind store: ${err.message}`)
+  }
+}
+
+// Load persisted entries on module init
+_loadRewindStore()
+
 function rewindStore(original, compressed, originalTokens = 0) {
   const key = 'rw_' + crypto.randomBytes(12).toString('hex')
   // Evict oldest if at capacity
@@ -28,6 +87,7 @@ function rewindStore(original, compressed, originalTokens = 0) {
     _rewindStore.delete(oldest)
   }
   _rewindStore.set(key, { original, compressed, storedAt: Date.now(), originalTokens })
+  _scheduleRewindSave()
   return key
 }
 
@@ -36,6 +96,7 @@ function rewindRetrieve(key) {
   if (!entry) return null
   if (Date.now() - entry.storedAt > REWIND_TTL_MS) {
     _rewindStore.delete(key)
+    _scheduleRewindSave()
     return null
   }
   return entry.original
@@ -43,6 +104,7 @@ function rewindRetrieve(key) {
 
 function rewindClear() {
   _rewindStore.clear()
+  _persistRewindStore()
 }
 
 function rewindSize() {
