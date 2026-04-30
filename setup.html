@@ -31,6 +31,11 @@
       height: 100vh; display: flex; flex-direction: column;
       -webkit-app-region: drag;
     }
+    /* Centre the wizard content in a max-width column so it looks good at 1400px */
+    .wizard-inner {
+      max-width: 860px; width: 100%; margin: 0 auto;
+      display: flex; flex-direction: column; flex: 1; min-height: 0;
+    }
     .wizard-header {
       padding: 28px 40px 0;
       display: flex; align-items: center; gap: 14px;
@@ -332,6 +337,7 @@
 <div class="wizard" id="wizard" style="display:none;">
 
   <!-- Header -->
+  <div class="wizard-inner">
   <div class="wizard-header">
     <div class="wizard-logo">Qwen<span>Coder</span> Mac Studio</div>
   </div>
@@ -504,6 +510,7 @@
     </div>
   </div>
 
+  </div><!-- /wizard-inner -->
 </div><!-- /wizard -->
 
 <script>

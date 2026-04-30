@@ -594,8 +594,8 @@ agentPool.on('bg-task-event', (evt) => {
 // ── Setup wizard window ───────────────────────────────────────────────────────
 function createSetupWindow() {
   setupWindow = new BrowserWindow({
-    width: 720, height: 620, minWidth: 640, minHeight: 560,
-    resizable: false,
+    width: 1400, height: 900, minWidth: 1000, minHeight: 650,
+    resizable: true,
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#0a0a0f',
     vibrancy: 'under-window',
