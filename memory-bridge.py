@@ -34,6 +34,7 @@ _extractor = None           # MemoryExtractor instance
 _extract_model = None       # Secondary MLX model for extraction
 _extract_processor = None   # Tokenizer/processor for extraction model
 _extract_model_path = None  # Path of the loaded extraction model (for status reporting)
+_extract_model_has_vision = False  # True when extraction model was loaded via mlx_vlm (has vision weights)
 _initialized = False
 _data_path = None           # Path to ~/.qwencoder/memory/ (set during initialize)
 _last_extraction_at = None  # Timestamp of last successful extraction
@@ -155,6 +156,7 @@ class MemoryStatus(BaseModel):
     extraction_model: Optional[str]             # model name or None
     extraction_model_memory_gb: Optional[float]
     fast_assistant_enabled: bool
+    extraction_model_vision: bool = False       # True when extraction model has vision weights
 
 
 class MemoryStats(BaseModel):
@@ -466,6 +468,7 @@ async def get_memory_status():
         extraction_model=extraction_name,
         extraction_model_memory_gb=getattr(_extract_model, "memory_gb", None) if _extract_model is not None else None,
         fast_assistant_enabled=_extract_model is not None,
+        extraction_model_vision=_extract_model_has_vision,
     )
 
 
@@ -1411,7 +1414,7 @@ async def extractor_load(req: ExtractorLoadRequest):
 
     Returns HTTP 507 if insufficient memory, HTTP 500 on load failure.
     """
-    global _extract_model, _extract_processor, _extraction_source, _extract_model_path
+    global _extract_model, _extract_processor, _extraction_source, _extract_model_path, _extract_model_has_vision
 
     # Check Metal memory usage before loading
     try:
@@ -1465,6 +1468,7 @@ async def extractor_load(req: ExtractorLoadRequest):
             _extract_model, _extract_processor = mlx_lm.load(req.model_path)
 
         _extract_model_path = req.model_path
+        _extract_model_has_vision = _has_vision
         _extraction_source = "extraction_model"
         logger.info(f"Extraction model loaded ({'vision' if _has_vision else 'text-only'}): {req.model_path}")
         return {
@@ -1491,6 +1495,8 @@ async def extractor_unload():
     """Unload the extraction model and free its Metal memory allocation."""
     global _extract_model, _extract_processor, _extraction_source, _extract_model_path
 
+    global _extract_model, _extract_processor, _extraction_source, _extract_model_path, _extract_model_has_vision
+
     if _extract_model is None:
         return {"ok": True, "message": "No extraction model loaded"}
 
@@ -1499,6 +1505,7 @@ async def extractor_unload():
         _extract_processor = None
         _extraction_source = None
         _extract_model_path = None
+        _extract_model_has_vision = False
         import gc
         gc.collect()
         try:
@@ -1946,6 +1953,13 @@ async def _handle_vision(payload: dict) -> AssistResponse:
 
     if _extract_model is None or _extract_processor is None:
         elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return AssistResponse(result=None, elapsed_ms=elapsed_ms, output_tokens=0)
+
+    # If the extraction model was loaded as text-only (no vision weights),
+    # it cannot process images — return None so the caller falls back gracefully.
+    if not _extract_model_has_vision:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        logger.debug("[_handle_vision] extraction model is text-only, cannot process images")
         return AssistResponse(result=None, elapsed_ms=elapsed_ms, output_tokens=0)
 
     try:
