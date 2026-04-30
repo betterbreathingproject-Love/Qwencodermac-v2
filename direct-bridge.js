@@ -1928,6 +1928,21 @@ class DirectBridge {
       } catch { /* steering loader not available — skip */ }
     }
 
+    // Inject a compact file tree into the system prompt so the agent always has
+    // spatial awareness of the project — even on turn 0 and after compaction.
+    // The system prompt is never compacted, so this survives the full session.
+    // Cap at 150 lines / ~3000 chars to avoid bloating the system prompt.
+    try {
+      const tree = buildFileTree(workDir, 3)
+      if (tree) {
+        const treeLines = tree.split('\n')
+        const cappedTree = treeLines.length > 150
+          ? treeLines.slice(0, 150).join('\n') + '\n... [truncated — use list_dir for deeper paths]'
+          : tree
+        finalSystemPrompt += `\n\n## Project file tree (${workDir})\n\`\`\`\n${cappedTree}\n\`\`\``
+      }
+    } catch { /* buildFileTree failed — skip */ }
+
     // Build the final prompt — use lightweight project context when conversation
     // history is large (>8 messages), falling back to full transcript for short chats.
     // This prevents oversized prompts that choke local models on session resume.
@@ -2159,11 +2174,24 @@ class DirectBridge {
             this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Compressed context: ${before} → ${messages.length} messages (~${estimateMessagesTokens(messages)} tokens, engine: ${result.stats?.engine || 'unknown'})` })
 
             // Re-inject the original request as a reminder after compaction
-            // so the model doesn't lose track of what it was asked to do
+            // so the model doesn't lose track of what it was asked to do.
+            // Also re-inject the file tree so the agent retains spatial awareness
+            // of the project without needing to re-run list_dir.
             if (originalRequest) {
+              let reminderContent = `REMINDER — the user's original request (continue working on this):\n"${originalRequest}"`
+              try {
+                const tree = buildFileTree(cwd)
+                if (tree) {
+                  const treeLines = tree.split('\n')
+                  const cappedTree = treeLines.length > 80
+                    ? treeLines.slice(0, 80).join('\n') + '\n... [use list_dir for deeper paths]'
+                    : tree
+                  reminderContent += `\n\nProject file tree (refreshed after compaction):\n\`\`\`\n${cappedTree}\n\`\`\``
+                }
+              } catch { /* skip */ }
               messages.push({
                 role: 'system',
-                content: `REMINDER — the user's original request (continue working on this):\n"${originalRequest}"`,
+                content: reminderContent,
               })
             }
           }
@@ -3736,6 +3764,7 @@ ${rolePreamble}
 
 ## Working directory
 ${cwd}
+The project file tree is included at the end of this prompt — read it before calling list_dir on the root.
 
 ## Tool call rules
 - ALWAYS use tools to read, write, and execute. Never output code or file contents as plain text — the user cannot use it.
