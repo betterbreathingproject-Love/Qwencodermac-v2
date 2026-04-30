@@ -1592,10 +1592,7 @@ async def extract(req: ExtractRequest):
                             f"Format: [{{\"s\": \"subject\", \"p\": \"predicate\", \"o\": \"object\"}}]\n\n"
                             f"Text: {filtered_message[:500]}\n\nTriples:"
                         )
-                        response = mlx_lm.generate(
-                            _extract_model, _extract_processor,
-                            prompt=prompt, max_tokens=200, verbose=False
-                        )
+                        response = _extract_generate(prompt, max_tokens=200)
                         import json
                         # Extract JSON array from response
                         json_match = re.search(r'\[.*?\]', response, re.DOTALL)
@@ -1736,10 +1733,7 @@ async def session_enrich(req: SessionEnrichRequest):
                     f"Session: {session_text[:500]}\n\n"
                     f"Output as JSON: {{\"topics\": \"...\", \"description\": \"...\", \"category\": \"...\"}}"
                 )
-                response = mlx_lm.generate(
-                    _extract_model, _extract_processor,
-                    prompt=prompt, max_tokens=150, verbose=False
-                )
+                response = _extract_generate(prompt, max_tokens=150)
                 import json
                 json_match = re.search(r'\{.*?\}', response, re.DOTALL)
                 if json_match:
@@ -1834,10 +1828,7 @@ async def session_crystallize(req: SessionCrystallizeRequest):
                     f"Session: {session_text[:800]}\n\n"
                     f"Output as JSON: {{\"summary\": \"...\", \"outcomes\": \"...\", \"lessons\": \"...\"}}"
                 )
-                response = mlx_lm.generate(
-                    _extract_model, _extract_processor,
-                    prompt=prompt, max_tokens=200, verbose=False
-                )
+                response = _extract_generate(prompt, max_tokens=200)
                 json_match = re.search(r'\{.*?\}', response, re.DOTALL)
                 if json_match:
                     llm_data = json.loads(json_match.group(0))
@@ -1944,6 +1935,28 @@ async def _assist_with_semaphore(handler_coro):
 VISION_MAX_CHARS = 2000  # ~500 tokens
 
 
+def _extract_generate(prompt: str, max_tokens: int = 400) -> str:
+    """Generate text from the extraction model, handling both mlx_lm and mlx_vlm loaded models.
+
+    When the model was loaded via mlx_vlm (vision-capable), mlx_lm.generate fails because
+    the VLM processor (e.g. Qwen3VLProcessor) lacks eos_token_id. In that case we use
+    mlx_vlm.generate with no image, which works for text-only prompts too.
+    """
+    if _extract_model_has_vision:
+        # Model loaded via mlx_vlm — use vlm generate with no image
+        from mlx_vlm import generate as vlm_generate
+        return vlm_generate(
+            _extract_model, _extract_processor,
+            prompt=prompt, max_tokens=max_tokens, verbose=False,
+        )
+    else:
+        import mlx_lm
+        return mlx_lm.generate(
+            _extract_model, _extract_processor,
+            prompt=prompt, max_tokens=max_tokens, verbose=False,
+        )
+
+
 async def _handle_vision(payload: dict) -> AssistResponse:
     """Vision — decode base64 image and describe it via the fast VLM model.
 
@@ -2020,10 +2033,7 @@ async def _handle_todo_bootstrap(payload: dict) -> AssistResponse:
             "Output ONLY the JSON array, no explanation.\n\n"
             f"User request: {user_prompt[:800]}\n\nTodos:"
         )
-        response = mlx_lm.generate(
-            _extract_model, _extract_processor,
-            prompt=prompt, max_tokens=400, verbose=False,
-        )
+        response = _extract_generate(prompt, max_tokens=400)
         json_match = re.search(r'\[.*?\]', response, re.DOTALL)
         if not json_match:
             raise ValueError("No JSON array found in response")
@@ -2076,10 +2086,7 @@ async def _handle_todo_watch(payload: dict) -> AssistResponse:
             f"Tool result (first 600 chars): {tool_result[:600]}\n\n"
             f"Current todos: {todos_json}\n\nUpdated todos:"
         )
-        response = mlx_lm.generate(
-            _extract_model, _extract_processor,
-            prompt=prompt, max_tokens=400, verbose=False,
-        )
+        response = _extract_generate(prompt, max_tokens=400)
         json_match = re.search(r'\[.*?\]', response, re.DOTALL)
         if not json_match:
             raise ValueError("No JSON array found in response")
@@ -2142,10 +2149,7 @@ async def _handle_fetch_summarize(payload: dict) -> AssistResponse:
             f"URL: {url}\n\n"
             f"Content:\n{raw_content[:6000]}\n\nSummary:"
         )
-        response = mlx_lm.generate(
-            _extract_model, _extract_processor,
-            prompt=prompt, max_tokens=max_output_tokens, verbose=False,
-        )
+        response = _extract_generate(prompt, max_tokens=max_output_tokens)
         summary = response.strip() if isinstance(response, str) else str(response).strip()
         output_tokens = len(summary) // 4
         elapsed_ms = int((time.monotonic() - t0) * 1000)
@@ -2266,10 +2270,7 @@ async def _handle_error_diagnose(payload: dict) -> AssistResponse:
             f"Exact error message: {error_message[:500]}\n\n"
             "One-sentence diagnosis (based only on the error message above):"
         )
-        response = mlx_lm.generate(
-            _extract_model, _extract_processor,
-            prompt=prompt, max_tokens=100, verbose=False,
-        )
+        response = _extract_generate(prompt, max_tokens=100)
         diagnosis = response.strip().split("\n")[0]  # take first line only
         output_tokens = len(diagnosis) // 4
         elapsed_ms = int((time.monotonic() - t0) * 1000)
@@ -2303,10 +2304,7 @@ async def _handle_git_summarize(payload: dict) -> AssistResponse:
             f"Command: {command}\n\n"
             f"Output:\n{raw_output[:4000]}\n\nSummary:"
         )
-        response = mlx_lm.generate(
-            _extract_model, _extract_processor,
-            prompt=prompt, max_tokens=300, verbose=False,
-        )
+        response = _extract_generate(prompt, max_tokens=300)
         summary = response.strip() if isinstance(response, str) else str(response).strip()
         output_tokens = len(summary) // 4
         elapsed_ms = int((time.monotonic() - t0) * 1000)
@@ -2414,12 +2412,7 @@ async def _handle_extract_section(payload: dict) -> AssistResponse:
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 None,
-                lambda: mlx_lm.generate(
-                    _extract_model, _extract_processor,
-                    prompt=prompt,
-                    max_tokens=8,
-                    verbose=False,
-                )
+                lambda: _extract_generate(prompt, max_tokens=8)
             )
 
             # Parse the line number from the response
@@ -2543,11 +2536,7 @@ async def _handle_route_task(payload: dict) -> AssistResponse:
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
             None,
-            lambda: mlx_lm.generate(
-                _extract_model, _extract_processor,
-                prompt=ROUTE_TASK_PROMPT.format(task=task_text),
-                max_tokens=10, verbose=False
-            )
+            lambda: _extract_generate(ROUTE_TASK_PROMPT.format(task=task_text), max_tokens=10)
         )
         agent_type = "general"
         response_lower = response.strip().lower()
@@ -2641,12 +2630,7 @@ async def _handle_chat_reply(payload: dict) -> AssistResponse:
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
             None,
-            lambda: mlx_lm.generate(
-                _extract_model, _extract_processor,
-                prompt=prompt,
-                max_tokens=60,
-                verbose=False,
-            )
+            lambda: _extract_generate(prompt, max_tokens=60)
         )
 
         reply = response.strip()
