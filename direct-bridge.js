@@ -1137,7 +1137,7 @@ function detectContentType(toolName, content) {
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
-async function executeTool(name, args, cwd, browserInstance, lspManager, inputRequester) {
+async function executeTool(name, args, cwd, browserInstance, lspManager, inputRequester, notify) {
   // Route web_* tools to the web tools module
   if (name === 'web_search' || name === 'web_fetch') {
     const apiKeys = getApiKeys()
@@ -1461,12 +1461,14 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
             const silentSecs = Math.round((Date.now() - lastOutputAt) / 1000)
             if (silentSecs >= 60) {
               const elapsedTotal = Math.round((Date.now() - (lastOutputAt - silentSecs * 1000 + silentSecs * 1000)) / 1000)
-              this.send('qwen-event', {
-                type: 'bash-waiting',
-                command: args.command.slice(0, 80),
-                elapsedSecs: silentSecs,
-                timeoutSecs: timeoutMs / 1000,
-              })
+              if (typeof notify === 'function') {
+                notify('qwen-event', {
+                  type: 'bash-waiting',
+                  command: args.command.slice(0, 80),
+                  elapsedSecs: silentSecs,
+                  timeoutSecs: timeoutMs / 1000,
+                })
+              }
             }
           }, 60000)
           proc.stdout.on('data', (chunk) => {
@@ -2649,7 +2651,7 @@ class DirectBridge {
         }
 
         // Execute
-        const result = await executeTool(fnName, fnArgs, cwd, this._browserInstance, this._lspManager)
+        const result = await executeTool(fnName, fnArgs, cwd, this._browserInstance, this._lspManager, undefined, this.send.bind(this))
         const isError = !!result.error
         let content = result.error || result.result
 
