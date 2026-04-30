@@ -1451,11 +1451,19 @@ async def extractor_load(req: ExtractorLoadRequest):
         try:
             _cfg_path = _Path(req.model_path) / "config.json"
             _idx_path = _Path(req.model_path) / "model.safetensors.index.json"
-            if _cfg_path.exists() and _idx_path.exists():
+            if _cfg_path.exists():
                 _cfg = json.loads(_cfg_path.read_text())
-                _idx = json.loads(_idx_path.read_text())
                 _has_vision_cfg = "vision_config" in _cfg or "image_token_id" in _cfg
-                _has_vision_weights = any("vision" in k for k in _idx.get("weight_map", {}).keys())
+                # Check weight map if index exists; otherwise check for vision-related files
+                if _idx_path.exists():
+                    _idx = json.loads(_idx_path.read_text())
+                    _has_vision_weights = any("vision" in k for k in _idx.get("weight_map", {}).keys())
+                else:
+                    # Single-file model — check for vision-related config files as proxy
+                    _has_vision_weights = (
+                        (_Path(req.model_path) / "preprocessor_config.json").exists() or
+                        (_Path(req.model_path) / "processor_config.json").exists()
+                    )
                 _has_vision = _has_vision_cfg and _has_vision_weights
         except Exception as _e:
             logger.warning(f"Could not detect vision capability: {_e}")
@@ -1493,8 +1501,6 @@ async def extractor_load(req: ExtractorLoadRequest):
 @router.post("/extractor/unload")
 async def extractor_unload():
     """Unload the extraction model and free its Metal memory allocation."""
-    global _extract_model, _extract_processor, _extraction_source, _extract_model_path
-
     global _extract_model, _extract_processor, _extraction_source, _extract_model_path, _extract_model_has_vision
 
     if _extract_model is None:
