@@ -2,9 +2,854 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>QwenCoder Mac Studio — Setup</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0f;
+      --surface: #111118;
+      --surface2: #1a1a24;
+      --border: rgba(255,255,255,0.07);
+      --accent: #7c6af7;
+      --accent2: #4fc3f7;
+      --accent3: #a78bfa;
+      --green: #34d399;
+      --orange: #fb923c;
+      --red: #f87171;
+      --text: #e8e8f0;
+      --muted: #7a7a9a;
+      --radius: 14px;
+    }
+    html, body {
+      height: 100%; background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+      line-height: 1.6; overflow: hidden;
+    }
+    /* ── WIZARD SHELL ── */
+    .wizard {
+      height: 100vh; display: flex; flex-direction: column;
+      -webkit-app-region: drag;
+    }
+    .wizard-header {
+      padding: 28px 40px 0;
+      display: flex; align-items: center; gap: 14px;
+      flex-shrink: 0;
+    }
+    .wizard-logo { font-size: 18px; font-weight: 800; letter-spacing: -0.4px; }
+    .wizard-logo span { color: var(--accent); }
+    .wizard-body {
+      flex: 1; overflow-y: auto; padding: 32px 40px 24px;
+      -webkit-app-region: no-drag;
+    }
+    .wizard-footer {
+      padding: 20px 40px 28px;
+      display: flex; align-items: center; justify-content: space-between;
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+      -webkit-app-region: no-drag;
+    }
+    /* ── STEPS ── */
+    .steps {
+      display: flex; gap: 0; margin-bottom: 36px;
+    }
+    .step-item {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 13px; color: var(--muted); font-weight: 500;
+    }
+    .step-item.active { color: var(--text); }
+    .step-item.done { color: var(--green); }
+    .step-dot {
+      width: 26px; height: 26px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; flex-shrink: 0;
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .step-item.active .step-dot {
+      background: var(--accent); border-color: var(--accent); color: #fff;
+    }
+    .step-item.done .step-dot {
+      background: rgba(52,211,153,0.15); border-color: rgba(52,211,153,0.4); color: var(--green);
+    }
+    .step-line {
+      flex: 1; height: 1px; background: var(--border); margin: 0 12px; min-width: 24px;
+    }
+    /* ── PANELS ── */
+    .panel { display: none; }
+    .panel.active { display: block; }
+    /* ── WELCOME ── */
+    .welcome-hero {
+      text-align: center; padding: 20px 0 32px;
+    }
+    .welcome-icon {
+      font-size: 64px; margin-bottom: 20px; display: block;
+      filter: drop-shadow(0 0 32px rgba(124,106,247,0.4));
+    }
+    .welcome-hero h1 {
+      font-size: 32px; font-weight: 800; letter-spacing: -1px; margin-bottom: 12px;
+    }
+    .welcome-hero h1 span {
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .welcome-hero p { font-size: 16px; color: var(--muted); max-width: 480px; margin: 0 auto 28px; }
+    .welcome-steps {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
+      max-width: 600px; margin: 0 auto;
+    }
+    .welcome-step {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; padding: 20px 16px; text-align: center;
+    }
+    .welcome-step-icon { font-size: 28px; margin-bottom: 10px; }
+    .welcome-step h3 { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+    .welcome-step p { font-size: 12px; color: var(--muted); }
+    /* ── HARDWARE CARD ── */
+    .hw-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 24px 28px; margin-bottom: 24px;
+      display: flex; align-items: center; gap: 20px;
+    }
+    .hw-icon { font-size: 40px; flex-shrink: 0; }
+    .hw-info h2 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+    .hw-info p { font-size: 14px; color: var(--muted); }
+    .hw-badge {
+      margin-left: auto; flex-shrink: 0;
+      background: rgba(124,106,247,0.12); border: 1px solid rgba(124,106,247,0.3);
+      border-radius: 8px; padding: 8px 16px; text-align: center;
+    }
+    .hw-badge-num { font-size: 22px; font-weight: 800; color: var(--accent3); }
+    .hw-badge-label { font-size: 11px; color: var(--muted); }
+    /* ── MODEL CARDS ── */
+    .models-grid { display: flex; flex-direction: column; gap: 14px; }
+    .model-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px 24px;
+      display: flex; align-items: center; gap: 18px;
+      transition: border-color .2s;
+    }
+    .model-card.primary-model { border-color: rgba(124,106,247,0.3); }
+    .model-card.fast-model { border-color: rgba(79,195,247,0.2); }
+    .model-role-badge {
+      flex-shrink: 0; width: 48px; height: 48px; border-radius: 12px;
+      display: flex; align-items: center; justify-content: center; font-size: 22px;
+    }
+    .role-primary { background: rgba(124,106,247,0.15); }
+    .role-fast { background: rgba(79,195,247,0.12); }
+    .model-info { flex: 1; min-width: 0; }
+    .model-name { font-size: 15px; font-weight: 700; margin-bottom: 3px; }
+    .model-desc { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+    .model-meta { display: flex; gap: 8px; flex-wrap: wrap; }
+    .model-tag {
+      font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px;
+    }
+    .tag-quant { background: rgba(124,106,247,0.12); color: var(--accent3); }
+    .tag-size  { background: rgba(251,146,60,0.1); color: var(--orange); }
+    .tag-role  { background: rgba(52,211,153,0.1); color: var(--green); }
+    .model-status { flex-shrink: 0; text-align: right; }
+    .status-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 100px;
+    }
+    .status-installed {
+      background: rgba(52,211,153,0.12); color: var(--green);
+      border: 1px solid rgba(52,211,153,0.3);
+    }
+    .status-missing {
+      background: rgba(251,146,60,0.1); color: var(--orange);
+      border: 1px solid rgba(251,146,60,0.25);
+    }
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .model-actions { margin-top: 10px; display: flex; gap: 8px; justify-content: flex-end; }
+    /* ── LM STUDIO NOTICE ── */
+    .lmstudio-notice {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 12px; padding: 18px 22px; margin-bottom: 20px;
+      display: flex; align-items: flex-start; gap: 14px;
+    }
+    .lmstudio-notice-icon { font-size: 24px; flex-shrink: 0; margin-top: 2px; }
+    .lmstudio-notice h3 { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+    .lmstudio-notice p { font-size: 13px; color: var(--muted); }
+    .lmstudio-notice a { color: var(--accent2); cursor: pointer; text-decoration: none; }
+    .lmstudio-notice a:hover { text-decoration: underline; }
+    /* ── CALIBRATION ── */
+    .calib-status {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 28px; text-align: center;
+      margin-bottom: 20px;
+    }
+    .calib-spinner {
+      width: 48px; height: 48px; border-radius: 50%;
+      border: 3px solid var(--border); border-top-color: var(--accent);
+      animation: spin 0.8s linear infinite; margin: 0 auto 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .calib-icon { font-size: 48px; margin-bottom: 16px; }
+    .calib-title { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+    .calib-sub { font-size: 14px; color: var(--muted); }
+    .calib-metrics {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 20px;
+    }
+    .calib-metric {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 10px; padding: 16px; text-align: center;
+    }
+    .calib-metric-val { font-size: 22px; font-weight: 800; color: var(--accent3); }
+    .calib-metric-label { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    /* ── DONE ── */
+    .done-hero { text-align: center; padding: 24px 0; }
+    .done-icon { font-size: 72px; margin-bottom: 20px; display: block; }
+    .done-hero h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 10px; }
+    .done-hero p { font-size: 15px; color: var(--muted); max-width: 420px; margin: 0 auto 28px; }
+    .done-summary {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px 24px; max-width: 480px; margin: 0 auto;
+      text-align: left;
+    }
+    .done-summary-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px;
+    }
+    .done-summary-row:last-child { border-bottom: none; }
+    .done-summary-label { color: var(--muted); }
+    .done-summary-val { font-weight: 600; color: var(--text); }
+    /* ── BUTTONS ── */
+    .btn {
+      border: none; border-radius: 10px; padding: 11px 24px;
+      font-size: 14px; font-weight: 600; cursor: pointer;
+      transition: transform .12s, opacity .15s;
+      -webkit-app-region: no-drag;
+    }
+    .btn:hover { transform: translateY(-1px); opacity: .9; }
+    .btn:active { transform: translateY(0); }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-secondary {
+      background: transparent; color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.04); }
+    .btn-sm { padding: 7px 14px; font-size: 12px; border-radius: 8px; }
+    .btn-download {
+      background: rgba(124,106,247,0.15); color: var(--accent3);
+      border: 1px solid rgba(124,106,247,0.3);
+    }
+    .btn-download:hover { background: rgba(124,106,247,0.25); }
+    .btn-lmstudio {
+      background: rgba(79,195,247,0.1); color: var(--accent2);
+      border: 1px solid rgba(79,195,247,0.25);
+    }
+    .btn-lmstudio:hover { background: rgba(79,195,247,0.2); }
+    .btn-rescan {
+      background: rgba(52,211,153,0.1); color: var(--green);
+      border: 1px solid rgba(52,211,153,0.25);
+    }
+    .btn-rescan:hover { background: rgba(52,211,153,0.2); }
+    /* ── SECTION TITLE ── */
+    .section-title { font-size: 20px; font-weight: 800; letter-spacing: -0.4px; margin-bottom: 6px; }
+    .section-sub { font-size: 14px; color: var(--muted); margin-bottom: 24px; }
+    /* ── TIER SELECTOR ── */
+    .tier-selector { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+    .tier-btn {
+      font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 8px;
+      border: 1px solid var(--border); background: var(--surface2);
+      color: var(--muted); cursor: pointer; transition: all .15s;
+    }
+    .tier-btn.active {
+      background: rgba(124,106,247,0.15); border-color: rgba(124,106,247,0.4);
+      color: var(--accent3);
+    }
+    .tier-btn:hover:not(.active) { border-color: rgba(255,255,255,0.15); color: var(--text); }
+    /* ── LOADING ── */
+    .loading-overlay {
+      position: fixed; inset: 0; background: var(--bg);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      z-index: 999;
+    }
+    .loading-spinner {
+      width: 40px; height: 40px; border-radius: 50%;
+      border: 3px solid var(--border); border-top-color: var(--accent);
+      animation: spin 0.8s linear infinite; margin-bottom: 16px;
+    }
+    .loading-text { font-size: 14px; color: var(--muted); }
+    /* ── PROGRESS BAR ── */
+    .progress-bar-wrap {
+      height: 3px; background: var(--border); border-radius: 2px;
+      margin-bottom: 32px; overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2));
+      border-radius: 2px; transition: width .4s ease;
+    }
+    /* ── SCROLLBAR ── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+    /* ── ALERT ── */
+    .alert {
+      border-radius: 10px; padding: 12px 16px; font-size: 13px;
+      display: flex; align-items: flex-start; gap: 10px; margin-bottom: 16px;
+    }
+    .alert-warn {
+      background: rgba(251,146,60,0.08); border: 1px solid rgba(251,146,60,0.2);
+      color: var(--orange);
+    }
+    .alert-info {
+      background: rgba(79,195,247,0.07); border: 1px solid rgba(79,195,247,0.2);
+      color: var(--accent2);
+    }
+    .alert-success {
+      background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.2);
+      color: var(--green);
+    }
+  </style>
 </head>
 <body>
-  <p>Setup wizard placeholder</p>
+
+<!-- LOADING OVERLAY -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">Detecting your hardware…</div>
+</div>
+
+<!-- WIZARD -->
+<div class="wizard" id="wizard" style="display:none;">
+
+  <!-- Header -->
+  <div class="wizard-header">
+    <div class="wizard-logo">Qwen<span>Coder</span> Mac Studio</div>
+  </div>
+
+  <!-- Body -->
+  <div class="wizard-body">
+
+    <!-- Progress bar -->
+    <div class="progress-bar-wrap" style="margin-top:20px;">
+      <div class="progress-bar" id="progressBar" style="width:0%"></div>
+    </div>
+
+    <!-- Step indicators -->
+    <div class="steps" id="stepsNav">
+      <div class="step-item active" id="step-nav-0">
+        <div class="step-dot">1</div>
+        <span>Welcome</span>
+      </div>
+      <div class="step-line"></div>
+      <div class="step-item" id="step-nav-1">
+        <div class="step-dot">2</div>
+        <span>Models</span>
+      </div>
+      <div class="step-line"></div>
+      <div class="step-item" id="step-nav-2">
+        <div class="step-dot">3</div>
+        <span>Calibrate</span>
+      </div>
+      <div class="step-line"></div>
+      <div class="step-item" id="step-nav-3">
+        <div class="step-dot">✓</div>
+        <span>Ready</span>
+      </div>
+    </div>
+
+    <!-- ── PANEL 0: WELCOME ── -->
+    <div class="panel active" id="panel-0">
+      <div class="welcome-hero">
+        <span class="welcome-icon">🧠</span>
+        <h1>Welcome to <span>QwenCoder</span></h1>
+        <p>Local AI coding on Apple Silicon — no cloud, no API keys, no data leaving your Mac. Let's get you set up in three steps.</p>
+        <div class="welcome-steps">
+          <div class="welcome-step">
+            <div class="welcome-step-icon">🔍</div>
+            <h3>Detect Hardware</h3>
+            <p>We read your RAM to pick the right model tier</p>
+          </div>
+          <div class="welcome-step">
+            <div class="welcome-step-icon">📦</div>
+            <h3>Download Models</h3>
+            <p>One click opens LM Studio to the exact model</p>
+          </div>
+          <div class="welcome-step">
+            <div class="welcome-step-icon">⚡</div>
+            <h3>Auto-Calibrate</h3>
+            <p>We benchmark your Mac and tune token budgets</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── PANEL 1: MODELS ── -->
+    <div class="panel" id="panel-1">
+      <div class="section-title">Recommended Models</div>
+      <div class="section-sub" id="tierSubtitle">Based on your hardware, here are the models we recommend.</div>
+
+      <!-- Hardware card -->
+      <div class="hw-card" id="hwCard">
+        <div class="hw-icon">💻</div>
+        <div class="hw-info">
+          <h2 id="hwChip">Detecting…</h2>
+          <p id="hwTier">Checking RAM…</p>
+        </div>
+        <div class="hw-badge">
+          <div class="hw-badge-num" id="hwRam">—</div>
+          <div class="hw-badge-label">GB Unified Memory</div>
+        </div>
+      </div>
+
+      <!-- LM Studio notice -->
+      <div class="lmstudio-notice" id="lmStudioNotice" style="display:none;">
+        <div class="lmstudio-notice-icon">⚠️</div>
+        <div>
+          <h3>LM Studio not found</h3>
+          <p>Models are stored in <code style="color:var(--accent2);">~/.lmstudio/models/</code>. Download LM Studio first — it's free and handles model management for you. <a id="lmStudioDownloadLink">Download LM Studio →</a></p>
+        </div>
+      </div>
+
+      <!-- Tier selector (other hardware options) -->
+      <div style="margin-bottom:12px;">
+        <span style="font-size:12px;color:var(--muted);font-weight:600;letter-spacing:0.5px;text-transform:uppercase;">Your tier</span>
+        <span style="font-size:12px;color:var(--muted);margin-left:8px;">· <a id="showOtherTiers" style="color:var(--accent2);cursor:pointer;">View all hardware tiers</a></span>
+      </div>
+      <div class="tier-selector" id="tierSelector" style="display:none;"></div>
+
+      <!-- Model cards -->
+      <div class="models-grid" id="modelsGrid">
+        <!-- populated by JS -->
+      </div>
+
+      <!-- Rescan hint -->
+      <div style="margin-top:16px;display:flex;align-items:center;gap:10px;">
+        <button class="btn btn-sm btn-rescan" id="rescanBtn">↻ Re-scan models</button>
+        <span style="font-size:12px;color:var(--muted);">After downloading, click to refresh status</span>
+      </div>
+    </div>
+
+    <!-- ── PANEL 2: CALIBRATE ── -->
+    <div class="panel" id="panel-2">
+      <div class="section-title">Calibrating Your Mac</div>
+      <div class="section-sub">We run a quick benchmark to tune token budgets and timeouts for your exact hardware.</div>
+
+      <div class="calib-status" id="calibStatus">
+        <div class="calib-spinner" id="calibSpinner"></div>
+        <div class="calib-icon" id="calibIcon" style="display:none;">⚡</div>
+        <div class="calib-title" id="calibTitle">Waiting for server…</div>
+        <div class="calib-sub" id="calibSub">Starting the MLX inference server. This takes about 10–20 seconds on first launch.</div>
+      </div>
+
+      <div class="calib-metrics" id="calibMetrics" style="display:none;">
+        <div class="calib-metric">
+          <div class="calib-metric-val" id="metricTps">—</div>
+          <div class="calib-metric-label">tokens / sec</div>
+        </div>
+        <div class="calib-metric">
+          <div class="calib-metric-val" id="metricCtx">—</div>
+          <div class="calib-metric-label">context window</div>
+        </div>
+        <div class="calib-metric">
+          <div class="calib-metric-val" id="metricMem">—</div>
+          <div class="calib-metric-label">GB peak memory</div>
+        </div>
+      </div>
+
+      <div id="calibSkipHint" style="margin-top:16px;text-align:center;display:none;">
+        <span style="font-size:13px;color:var(--muted);">Server not running? </span>
+        <a id="calibSkipBtn" style="font-size:13px;color:var(--accent2);cursor:pointer;">Skip calibration and use defaults →</a>
+      </div>
+    </div>
+
+    <!-- ── PANEL 3: DONE ── -->
+    <div class="panel" id="panel-3">
+      <div class="done-hero">
+        <span class="done-icon">🚀</span>
+        <h1>You're all set!</h1>
+        <p>QwenCoder Mac Studio is configured and ready. Your models are loaded and calibration is complete.</p>
+        <div class="done-summary" id="doneSummary">
+          <!-- populated by JS -->
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /wizard-body -->
+
+  <!-- Footer -->
+  <div class="wizard-footer">
+    <button class="btn btn-secondary" id="backBtn" style="visibility:hidden;">← Back</button>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span style="font-size:12px;color:var(--muted);" id="footerHint"></span>
+      <button class="btn btn-primary" id="nextBtn">Get Started →</button>
+    </div>
+  </div>
+
+</div><!-- /wizard -->
+
+<script>
+'use strict'
+
+// ── State ──────────────────────────────────────────────────────────────────
+let currentStep = 0
+let setupInfo = null          // from setup-get-info
+let selectedTierIdx = 0       // which tier is shown
+let calibDone = false
+let calibSkipped = false
+const TOTAL_STEPS = 4
+
+// ── IPC bridge (Electron preload exposes window.setup) ─────────────────────
+const ipc = window.setup || {
+  getInfo:    () => Promise.resolve({ hardware: { ramGb: 64, chip: 'Apple M2 Ultra' }, tier: null, allTiers: [], primaryInstalled: false, fastInstalled: false, lmStudioInstalled: true }),
+  openUrl:    (u) => { window.open(u, '_blank'); return Promise.resolve({ ok: true }) },
+  scanModels: () => Promise.resolve({ installed: [] }),
+  complete:   (i) => Promise.resolve({ ok: true }),
+  isComplete: () => Promise.resolve({ complete: false }),
+  calibStatus:() => Promise.resolve({ status: 'unavailable', profile: null }),
+  onCalibComplete: (cb) => {},
+}
+
+// ── DOM refs ───────────────────────────────────────────────────────────────
+const loadingOverlay = document.getElementById('loadingOverlay')
+const wizard         = document.getElementById('wizard')
+const progressBar    = document.getElementById('progressBar')
+const nextBtn        = document.getElementById('nextBtn')
+const backBtn        = document.getElementById('backBtn')
+const footerHint     = document.getElementById('footerHint')
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function setProgress(pct) {
+  progressBar.style.width = pct + '%'
+}
+
+function updateStepNav(step) {
+  for (let i = 0; i < TOTAL_STEPS; i++) {
+    const el = document.getElementById('step-nav-' + i)
+    if (!el) continue
+    el.classList.remove('active', 'done')
+    if (i < step) el.classList.add('done')
+    else if (i === step) el.classList.add('active')
+  }
+}
+
+function showPanel(idx) {
+  document.querySelectorAll('.panel').forEach((p, i) => {
+    p.classList.toggle('active', i === idx)
+  })
+  currentStep = idx
+  updateStepNav(idx)
+  setProgress(Math.round((idx / (TOTAL_STEPS - 1)) * 100))
+  backBtn.style.visibility = idx > 0 ? 'visible' : 'hidden'
+
+  // Panel-specific setup
+  if (idx === 0) {
+    nextBtn.textContent = 'Get Started →'
+    footerHint.textContent = ''
+  } else if (idx === 1) {
+    nextBtn.textContent = 'Continue →'
+    updateModelsFooterHint()
+  } else if (idx === 2) {
+    nextBtn.textContent = 'Continue →'
+    nextBtn.disabled = true
+    footerHint.textContent = ''
+    startCalibrationWatch()
+  } else if (idx === 3) {
+    nextBtn.textContent = 'Launch QwenCoder →'
+    footerHint.textContent = ''
+    buildDoneSummary()
+  }
+}
+
+// ── Step 1: Models ─────────────────────────────────────────────────────────
+function renderHardware(info) {
+  const hw = info.hardware
+  document.getElementById('hwChip').textContent = hw.chip || 'Apple Silicon'
+  document.getElementById('hwRam').textContent = hw.ramGb || '?'
+
+  const tier = info.allTiers[selectedTierIdx] || info.tier
+  document.getElementById('hwTier').textContent = tier ? tier.label : 'Unknown tier'
+  document.getElementById('tierSubtitle').textContent =
+    `Your Mac has ${hw.ramGb} GB of unified memory — ${tier ? tier.label : 'see recommendations below'}.`
+
+  if (!info.lmStudioInstalled) {
+    document.getElementById('lmStudioNotice').style.display = 'flex'
+    document.getElementById('lmStudioDownloadLink').onclick = () =>
+      ipc.openUrl('https://lmstudio.ai')
+  }
+}
+
+function renderTierSelector(info) {
+  const sel = document.getElementById('tierSelector')
+  sel.innerHTML = ''
+  info.allTiers.forEach((tier, i) => {
+    const btn = document.createElement('button')
+    btn.className = 'tier-btn' + (i === selectedTierIdx ? ' active' : '')
+    btn.textContent = tier.label
+    btn.onclick = () => {
+      selectedTierIdx = i
+      renderTierSelector(info)
+      renderModels(info)
+    }
+    sel.appendChild(btn)
+  })
+}
+
+function renderModels(info) {
+  const tier = info.allTiers[selectedTierIdx] || info.tier
+  if (!tier) return
+  const grid = document.getElementById('modelsGrid')
+  grid.innerHTML = ''
+
+  const isRecommended = selectedTierIdx === info.allTiers.indexOf(info.tier)
+
+  const models = [
+    { model: tier.primary, role: 'Primary', roleClass: 'role-primary', cardClass: 'primary-model', icon: '🧠', installed: isRecommended ? info.primaryInstalled : null },
+    { model: tier.fast,    role: 'Fast',    roleClass: 'role-fast',    cardClass: 'fast-model',    icon: '⚡', installed: isRecommended ? info.fastInstalled : null },
+  ]
+
+  models.forEach(({ model, role, roleClass, cardClass, icon, installed }) => {
+    // For non-recommended tiers, check installed status from scan
+    let isInstalled = installed
+    if (isInstalled === null && setupInfo) {
+      // We don't have live scan for other tiers — show unknown
+      isInstalled = false
+    }
+
+    const card = document.createElement('div')
+    card.className = 'model-card ' + cardClass
+    card.innerHTML = `
+      <div class="model-role-badge ${roleClass}">${icon}</div>
+      <div class="model-info">
+        <div class="model-name">${model.name}</div>
+        <div class="model-desc">${model.description}</div>
+        <div class="model-meta">
+          <span class="model-tag tag-role">${role} model</span>
+          <span class="model-tag tag-quant">${model.quant}</span>
+          <span class="model-tag tag-size">${model.sizeGb} GB</span>
+        </div>
+      </div>
+      <div class="model-status">
+        <div class="status-pill ${isInstalled ? 'status-installed' : 'status-missing'}">
+          <span class="status-dot"></span>
+          ${isInstalled ? 'Installed' : 'Not found'}
+        </div>
+        <div class="model-actions">
+          <button class="btn btn-sm btn-download" onclick="openModelInLmStudio('${model.lmStudioUrl}', '${model.modelId}')">
+            Open in LM Studio
+          </button>
+        </div>
+      </div>
+    `
+    grid.appendChild(card)
+  })
+
+  updateModelsFooterHint()
+}
+
+function updateModelsFooterHint() {
+  if (!setupInfo) return
+  const tier = setupInfo.allTiers[selectedTierIdx] || setupInfo.tier
+  if (!tier) return
+  const isRecommended = selectedTierIdx === setupInfo.allTiers.indexOf(setupInfo.tier)
+  if (isRecommended && setupInfo.primaryInstalled && setupInfo.fastInstalled) {
+    footerHint.innerHTML = '<span style="color:var(--green);">✓ Both models installed</span>'
+  } else if (isRecommended && (setupInfo.primaryInstalled || setupInfo.fastInstalled)) {
+    footerHint.innerHTML = '<span style="color:var(--orange);">⚠ Some models missing</span>'
+  } else {
+    footerHint.textContent = 'Download models to continue'
+  }
+}
+
+async function openModelInLmStudio(lmStudioUrl, modelId) {
+  await ipc.openUrl(lmStudioUrl)
+}
+
+async function rescanModels() {
+  const rescanBtn = document.getElementById('rescanBtn')
+  rescanBtn.textContent = '↻ Scanning…'
+  rescanBtn.disabled = true
+  try {
+    const result = await ipc.scanModels()
+    const installed = new Set(result.installed || [])
+    if (setupInfo) {
+      const tier = setupInfo.allTiers[selectedTierIdx] || setupInfo.tier
+      setupInfo.primaryInstalled = installed.has(tier.primary.dirName)
+      setupInfo.fastInstalled    = installed.has(tier.fast.dirName)
+    }
+    renderModels(setupInfo)
+  } finally {
+    rescanBtn.textContent = '↻ Re-scan models'
+    rescanBtn.disabled = false
+  }
+}
+
+// ── Step 2: Calibration ────────────────────────────────────────────────────
+let calibWatchInterval = null
+
+async function startCalibrationWatch() {
+  calibDone = false
+  calibSkipped = false
+  document.getElementById('calibSpinner').style.display = 'block'
+  document.getElementById('calibIcon').style.display = 'none'
+  document.getElementById('calibTitle').textContent = 'Waiting for server…'
+  document.getElementById('calibSub').textContent = 'Starting the MLX inference server. This takes about 10–20 seconds on first launch.'
+  document.getElementById('calibMetrics').style.display = 'none'
+  document.getElementById('calibSkipHint').style.display = 'none'
+  nextBtn.disabled = true
+
+  let attempts = 0
+  const maxAttempts = 60  // 60 × 3s = 3 min timeout
+
+  if (calibWatchInterval) clearInterval(calibWatchInterval)
+  calibWatchInterval = setInterval(async () => {
+    attempts++
+    try {
+      const status = await ipc.calibStatus()
+      if (status.status === 'calibrating') {
+        document.getElementById('calibTitle').textContent = 'Calibrating…'
+        document.getElementById('calibSub').textContent = 'Running a short benchmark to measure your GPU throughput. Takes 15–30 seconds.'
+      } else if (status.status === 'ready' && status.profile) {
+        clearInterval(calibWatchInterval)
+        showCalibDone(status.profile)
+      } else if (attempts > 10) {
+        // Show skip option after 30s
+        document.getElementById('calibSkipHint').style.display = 'block'
+      }
+      if (attempts >= maxAttempts) {
+        clearInterval(calibWatchInterval)
+        showCalibSkip()
+      }
+    } catch (e) {
+      if (attempts > 10) document.getElementById('calibSkipHint').style.display = 'block'
+    }
+  }, 3000)
+
+  // Also listen for the calibration-complete event if available
+  if (ipc.onCalibComplete) {
+    ipc.onCalibComplete((profile) => {
+      clearInterval(calibWatchInterval)
+      showCalibDone(profile)
+    })
+  }
+}
+
+function showCalibDone(profile) {
+  calibDone = true
+  document.getElementById('calibSpinner').style.display = 'none'
+  document.getElementById('calibIcon').style.display = 'block'
+  document.getElementById('calibIcon').textContent = '✅'
+  document.getElementById('calibTitle').textContent = 'Calibration complete!'
+  document.getElementById('calibSub').textContent = 'Token budgets and timeouts have been tuned for your hardware.'
+
+  if (profile && profile.metrics) {
+    const m = profile.metrics
+    document.getElementById('metricTps').textContent = m.generation_tps ? m.generation_tps.toFixed(1) : '—'
+    document.getElementById('metricCtx').textContent = m.context_window ? (m.context_window / 1000).toFixed(0) + 'k' : '—'
+    document.getElementById('metricMem').textContent = m.peak_memory_gb ? m.peak_memory_gb.toFixed(1) : '—'
+    document.getElementById('calibMetrics').style.display = 'grid'
+  }
+
+  nextBtn.disabled = false
+  nextBtn.textContent = 'Continue →'
+}
+
+function showCalibSkip() {
+  document.getElementById('calibSpinner').style.display = 'none'
+  document.getElementById('calibIcon').style.display = 'block'
+  document.getElementById('calibIcon').textContent = '⚠️'
+  document.getElementById('calibTitle').textContent = 'Server not responding'
+  document.getElementById('calibSub').textContent = 'Calibration timed out. You can skip and use default settings — calibration will run automatically when the server starts.'
+  document.getElementById('calibSkipHint').style.display = 'block'
+  nextBtn.disabled = false
+  nextBtn.textContent = 'Skip & Continue →'
+  calibSkipped = true
+}
+
+// ── Step 3: Done ───────────────────────────────────────────────────────────
+function buildDoneSummary() {
+  const summary = document.getElementById('doneSummary')
+  if (!setupInfo) return
+  const tier = setupInfo.allTiers[selectedTierIdx] || setupInfo.tier
+  const rows = [
+    { label: 'Hardware', val: setupInfo.hardware.chip || 'Apple Silicon' },
+    { label: 'Memory',   val: setupInfo.hardware.ramGb + ' GB' },
+    { label: 'Tier',     val: tier ? tier.label : '—' },
+    { label: 'Primary model', val: tier ? tier.primary.name : '—' },
+    { label: 'Fast model',    val: tier ? tier.fast.name : '—' },
+    { label: 'Calibration',   val: calibSkipped ? 'Skipped (defaults)' : calibDone ? 'Complete ✓' : 'Pending' },
+  ]
+  summary.innerHTML = rows.map(r => `
+    <div class="done-summary-row">
+      <span class="done-summary-label">${r.label}</span>
+      <span class="done-summary-val">${r.val}</span>
+    </div>
+  `).join('')
+}
+
+// ── Navigation ─────────────────────────────────────────────────────────────
+nextBtn.addEventListener('click', async () => {
+  if (currentStep === TOTAL_STEPS - 1) {
+    // Launch the app
+    await ipc.complete({
+      hardware: setupInfo?.hardware,
+      tier: setupInfo?.allTiers[selectedTierIdx] || setupInfo?.tier,
+      calibrated: calibDone,
+    })
+    if (window.setup && window.setup.launch) {
+      window.setup.launch()
+    }
+    return
+  }
+  showPanel(currentStep + 1)
+})
+
+backBtn.addEventListener('click', () => {
+  if (currentStep > 0) {
+    if (calibWatchInterval) { clearInterval(calibWatchInterval); calibWatchInterval = null }
+    showPanel(currentStep - 1)
+  }
+})
+
+document.getElementById('rescanBtn').addEventListener('click', rescanModels)
+
+document.getElementById('calibSkipBtn').addEventListener('click', () => {
+  if (calibWatchInterval) { clearInterval(calibWatchInterval); calibWatchInterval = null }
+  calibSkipped = true
+  showCalibSkip()
+  nextBtn.disabled = false
+  nextBtn.textContent = 'Skip & Continue →'
+})
+
+document.getElementById('showOtherTiers').addEventListener('click', () => {
+  const sel = document.getElementById('tierSelector')
+  const link = document.getElementById('showOtherTiers')
+  if (sel.style.display === 'none') {
+    sel.style.display = 'flex'
+    link.textContent = 'Hide tiers'
+  } else {
+    sel.style.display = 'none'
+    link.textContent = 'View all hardware tiers'
+  }
+})
+
+// ── Init ───────────────────────────────────────────────────────────────────
+async function init() {
+  try {
+    setupInfo = await ipc.getInfo()
+
+    // Find the recommended tier index
+    if (setupInfo.allTiers && setupInfo.tier) {
+      const idx = setupInfo.allTiers.findIndex(t => t.minRamGb === setupInfo.tier.minRamGb)
+      selectedTierIdx = idx >= 0 ? idx : 0
+    }
+
+    renderHardware(setupInfo)
+    renderTierSelector(setupInfo)
+    renderModels(setupInfo)
+  } catch (e) {
+    console.error('setup-get-info failed:', e)
+  } finally {
+    loadingOverlay.style.display = 'none'
+    wizard.style.display = 'flex'
+    showPanel(0)
+  }
+}
+
+init()
+</script>
 </body>
 </html>

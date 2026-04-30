@@ -1,5 +1,19 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
+// ── Setup wizard bridge ───────────────────────────────────────────────────────
+contextBridge.exposeInMainWorld('setup', {
+  getInfo:     ()    => ipcRenderer.invoke('setup-get-info'),
+  openUrl:     (url) => ipcRenderer.invoke('setup-open-url', url),
+  scanModels:  ()    => ipcRenderer.invoke('setup-scan-models'),
+  complete:    (info)=> ipcRenderer.invoke('setup-complete', info),
+  isComplete:  ()    => ipcRenderer.invoke('setup-is-complete'),
+  reset:       ()    => ipcRenderer.invoke('setup-reset'),
+  launch:      ()    => ipcRenderer.invoke('setup-launch-main'),
+  calibStatus: ()    => ipcRenderer.invoke('calibration-status'),
+  onCalibComplete: (cb) => ipcRenderer.on('calibration-complete', (_, d) => cb(d)),
+  offCalibComplete: () => ipcRenderer.removeAllListeners('calibration-complete'),
+})
+
 contextBridge.exposeInMainWorld('app', {
   // server
   serverStart:    ()        => ipcRenderer.invoke('server-start'),

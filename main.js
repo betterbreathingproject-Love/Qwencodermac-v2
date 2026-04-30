@@ -15,6 +15,7 @@ const ipcTasks = require('./main/ipc-tasks')
 const ipcWatcher = require('./main/ipc-watcher')
 const ipcLsp = require('./main/ipc-lsp')
 const ipcCalibration = require('./main/ipc-calibration')
+const ipcSetup = require('./main/ipc-setup')
 const { LspManager } = require('./lsp-manager')
 const { TelegramBot } = require('./telegram-bot')
 const { RecordingManager } = require('./recording-manager')
@@ -33,6 +34,7 @@ let remoteJobController = null
 let miniAppServer = null
 let miniAppTunnel = null
 let miniAppPublicUrl = null
+let setupWindow = null
 const SERVER_PORT = 8090
 const MINIAPP_PORT = 3847
 const SERVER_URL = `http://127.0.0.1:${SERVER_PORT}`
@@ -290,6 +292,7 @@ const ctx = {
 }
 
 // ── register all IPC handlers ─────────────────────────────────────────────────
+ipcSetup.register(ipcMain)
 ipcServer.register(ipcMain, ctx)
 ipcChat.register(ipcMain, ctx)
 ipcFiles.register(ipcMain, ctx)
@@ -298,6 +301,24 @@ ipcTasks.register(ipcMain, ctx)
 ipcWatcher.register(ipcMain, ctx)
 ipcLsp.register(ipcMain, ctx)
 ipcCalibration.register(ipcMain, { getCalibrationProfile: ipcServer.getCalibrationProfile, isCalibrating: ipcServer.isCalibrating })
+
+// ── Setup: launch main window from setup wizard ───────────────────────────────
+ipcMain.handle('setup-launch-main', async () => {
+  createWindow()
+  // Server is already running from the background start during setup
+  // Just notify the new main window of its status
+  ipcServer.waitForServer(SERVER_URL).then(ok => {
+    mainWindow?.webContents.send('server-status', { running: ok })
+  })
+  if (setupWindow) {
+    // Small delay so the main window can paint before setup closes
+    setTimeout(() => {
+      setupWindow?.close()
+      setupWindow = null
+    }, 400)
+  }
+  return { ok: true }
+})
 
 // ── IPC: Qwen Code agent ─────────────────────────────────────────────────────
 // Memory client for small-model routing (gracefully degrades if unavailable)
@@ -560,6 +581,25 @@ Reply with ONLY the JSON object, no other text.`
 agentPool.on('bg-task-event', (evt) => {
   mainWindow?.webContents.send('bg-task-event', evt)
 })
+// ── Setup wizard window ───────────────────────────────────────────────────────
+function createSetupWindow() {
+  setupWindow = new BrowserWindow({
+    width: 720, height: 620, minWidth: 640, minHeight: 560,
+    resizable: false,
+    titleBarStyle: 'hiddenInset',
+    backgroundColor: '#0a0a0f',
+    vibrancy: 'under-window',
+    visualEffectState: 'active',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+  setupWindow.loadFile(path.join(__dirname, 'setup.html'))
+  setupWindow.on('closed', () => { setupWindow = null })
+}
+
 // ── window ────────────────────────────────────────────────────────────────────
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -1040,11 +1080,24 @@ function createWindow() {
 
 // ── lifecycle ─────────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
-  createWindow()
-  ipcServer.startServer(SERVER_PORT, __dirname, mainWindow)
-  ipcServer.waitForServer(SERVER_URL).then(ok => {
-    mainWindow?.webContents.send('server-status', { running: ok })
-  })
+  // Check if first-time setup is needed
+  const setupComplete = ipcSetup.isSetupComplete()
+  if (!setupComplete) {
+    createSetupWindow()
+    // Start the MLX server in the background so calibration can begin
+    // as soon as the user reaches that step — no waiting
+    ipcServer.startServer(SERVER_PORT, __dirname, null)
+    ipcServer.waitForServer(SERVER_URL).then(ok => {
+      // Notify setup window when server is ready (for calibration step)
+      setupWindow?.webContents.send('server-status', { running: ok })
+    })
+  } else {
+    createWindow()
+    ipcServer.startServer(SERVER_PORT, __dirname, mainWindow)
+    ipcServer.waitForServer(SERVER_URL).then(ok => {
+      mainWindow?.webContents.send('server-status', { running: ok })
+    })
+  }
 })
 app.on('window-all-closed', () => {
   ipcServer.stopServer()
