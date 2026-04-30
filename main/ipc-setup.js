@@ -14,18 +14,21 @@ const MODEL_TIERS = [
     label: 'Mac Studio / Mac Pro (64 GB+)',
     primary: {
       name: 'Qwen3.6 35B A3B — 8-bit',
-      modelId: 'TheCluster/Qwen3.6-35B-A3B-MLX-8bit',
-      dirName: 'TheCluster/Qwen3.6-35B-A3B-MLX-8bit',
+      modelId: 'unsloth/Qwen3.6-35B-A3B-MLX-8bit',
+      dirName: 'unsloth/Qwen3.6-35B-A3B-MLX-8bit',
+      // Also match if downloaded under a different org (e.g. TheCluster)
+      modelFolderName: 'Qwen3.6-35B-A3B-MLX-8bit',
       sizeGb: 38,
       quant: '8-bit',
       description: 'Full quality — best reasoning and code generation',
-      lmStudioUrl: 'lmstudio://open?model=TheCluster/Qwen3.6-35B-A3B-MLX-8bit',
-      huggingFaceUrl: 'https://huggingface.co/TheCluster/Qwen3.6-35B-A3B-MLX-8bit',
+      lmStudioUrl: 'lmstudio://open?model=unsloth/Qwen3.6-35B-A3B-MLX-8bit',
+      huggingFaceUrl: 'https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MLX-8bit',
     },
     fast: {
       name: 'Qwen3.5 0.8B — 8-bit',
       modelId: 'mlx-community/Qwen3.5-0.8B-MLX-8bit',
       dirName: 'mlx-community/Qwen3.5-0.8B-MLX-8bit',
+      modelFolderName: 'Qwen3.5-0.8B-MLX-8bit',
       sizeGb: 1,
       quant: '8-bit',
       description: 'Ultra-fast assistant — instant responses, vision offload',
@@ -40,6 +43,7 @@ const MODEL_TIERS = [
       name: 'Qwen3.6 35B A3B — 4-bit',
       modelId: 'lmstudio-community/Qwen3.6-35B-A3B-MLX-4bit',
       dirName: 'lmstudio-community/Qwen3.6-35B-A3B-MLX-4bit',
+      modelFolderName: 'Qwen3.6-35B-A3B-MLX-4bit',
       sizeGb: 20,
       quant: '4-bit',
       description: 'Compressed for 32 GB — excellent quality, fits comfortably',
@@ -50,6 +54,7 @@ const MODEL_TIERS = [
       name: 'Qwen3.5 0.8B — 8-bit',
       modelId: 'mlx-community/Qwen3.5-0.8B-MLX-8bit',
       dirName: 'mlx-community/Qwen3.5-0.8B-MLX-8bit',
+      modelFolderName: 'Qwen3.5-0.8B-MLX-8bit',
       sizeGb: 1,
       quant: '8-bit',
       description: 'Ultra-fast assistant — instant responses, vision offload',
@@ -64,6 +69,7 @@ const MODEL_TIERS = [
       name: 'Qwen3.5 7B — 8-bit',
       modelId: 'mlx-community/Qwen3.5-7B-MLX-8bit',
       dirName: 'mlx-community/Qwen3.5-7B-MLX-8bit',
+      modelFolderName: 'Qwen3.5-7B-MLX-8bit',
       sizeGb: 8,
       quant: '8-bit',
       description: 'Fits 16 GB — solid coding assistant at full quality',
@@ -74,6 +80,7 @@ const MODEL_TIERS = [
       name: 'Qwen3.5 0.8B — 8-bit',
       modelId: 'mlx-community/Qwen3.5-0.8B-MLX-8bit',
       dirName: 'mlx-community/Qwen3.5-0.8B-MLX-8bit',
+      modelFolderName: 'Qwen3.5-0.8B-MLX-8bit',
       sizeGb: 1,
       quant: '8-bit',
       description: 'Ultra-fast assistant — instant responses, vision offload',
@@ -148,9 +155,10 @@ function getHardwareInfo() {
 // ── Model scanning ────────────────────────────────────────────────────────────
 function scanInstalledModels() {
   const modelsRoot = path.join(os.homedir(), '.lmstudio', 'models')
-  const installed = new Set()
+  const installed = new Set()        // exact: "org/model"
+  const installedFolders = new Set() // fuzzy: "model" (folder name only)
   try {
-    if (!fs.existsSync(modelsRoot)) return installed
+    if (!fs.existsSync(modelsRoot)) return { installed, installedFolders }
     // Walk two levels deep: org/model/config.json
     const orgs = fs.readdirSync(modelsRoot, { withFileTypes: true })
       .filter(e => e.isDirectory())
@@ -163,12 +171,13 @@ function scanInstalledModels() {
           const cfgPath = path.join(orgPath, model.name, 'config.json')
           if (fs.existsSync(cfgPath)) {
             installed.add(`${org.name}/${model.name}`)
+            installedFolders.add(model.name)
           }
         }
       } catch {}
     }
   } catch {}
-  return installed
+  return { installed, installedFolders }
 }
 
 // ── Tier selection ────────────────────────────────────────────────────────────
@@ -185,14 +194,20 @@ function register(ipcMain) {
   ipcMain.handle('setup-get-info', async () => {
     const hw = await getHardwareInfo()
     const tier = selectTier(hw.ramGb)
-    const installed = scanInstalledModels()
+    const { installed, installedFolders } = scanInstalledModels()
+
+    // Check installed: exact org/model match OR folder-name-only match
+    function isInstalled(model) {
+      return installed.has(model.dirName) ||
+             installedFolders.has(model.modelFolderName || model.dirName.split('/')[1])
+    }
 
     return {
       hardware: hw,
       tier,
       allTiers: MODEL_TIERS,
-      primaryInstalled: installed.has(tier.primary.dirName),
-      fastInstalled: installed.has(tier.fast.dirName),
+      primaryInstalled: isInstalled(tier.primary),
+      fastInstalled: isInstalled(tier.fast),
       lmStudioInstalled: fs.existsSync('/Applications/LM Studio.app'),
     }
   })
@@ -210,8 +225,11 @@ function register(ipcMain) {
 
   // Re-scan models (called after user downloads)
   ipcMain.handle('setup-scan-models', async () => {
-    const installed = scanInstalledModels()
-    return { installed: Array.from(installed) }
+    const { installed, installedFolders } = scanInstalledModels()
+    return {
+      installed: Array.from(installed),
+      installedFolders: Array.from(installedFolders),
+    }
   })
 
   // Mark setup as complete

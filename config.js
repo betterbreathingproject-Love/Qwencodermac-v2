@@ -16,7 +16,7 @@ const MAX_OUTPUT_TOKENS = parseInt(process.env.MAX_OUTPUT_TOKENS, 10) || 32768
 // Fast:    Qwen3.5 0.8B 8bit    — extraction model for fast-assist tasks
 const MODELS_DIR = process.env.MODELS_DIR || (require('os').homedir() + '/.lmstudio/models')
 const DEFAULT_PRIMARY_MODEL = process.env.PRIMARY_MODEL ||
-  MODELS_DIR + '/TheCluster/Qwen3.6-35B-A3B-MLX-8bit'
+  MODELS_DIR + '/unsloth/Qwen3.6-35B-A3B-MLX-8bit'
 const DEFAULT_FAST_MODEL = process.env.FAST_MODEL ||
   MODELS_DIR + '/mlx-community/Qwen3.5-0.8B-MLX-8bit'
 
