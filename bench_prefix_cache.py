@@ -94,6 +94,18 @@ def build_prompt(turns_so_far: int, new_user_msg: str) -> str:
     return "".join(parts)
 
 
+def build_delta(turns_so_far: int, new_user_msg: str) -> str:
+    """Build ONLY the delta tokens — everything after the system prompt.
+    This is what gets passed to stream_generate when the cache already holds
+    the system prompt KV state. The model sees: [cached sys prompt] + delta.
+    """
+    parts = []
+    for role, content in TURNS[:turns_so_far]:
+        parts.append(f"<|im_start|>{role}\n{content}<|im_end|>\n")
+    parts.append(f"<|im_start|>user\n{new_user_msg}<|im_end|>\n<|im_start|>assistant\n")
+    return "".join(parts)
+
+
 def clear():
     gc.collect()
     try:
@@ -131,18 +143,16 @@ def run_no_cache(model, tokenizer, prompt):
 
 
 def run_with_prefix_cache(model, tokenizer, system_prompt_tokens: int,
-                          full_prompt: str, cached_state, can_trim: bool):
+                          full_prompt: str, delta_prompt: str,
+                          cached_state, can_trim: bool):
     """
-    With prefix cache: feed only the tokens AFTER the cached prefix.
+    With prefix cache: feed only the DELTA tokens (history + new user msg,
+    NOT the system prompt) while the cache already holds the system prompt KV.
 
-    If can_trim=True (pure-attention models): trim cache back to system prompt
-    boundary before each turn — true multi-turn prefix reuse.
-
-    If can_trim=False (Qwen3.5 hybrid): build a fresh empty cache each turn
-    (no reuse possible — measures overhead vs baseline).
+    If can_trim=True: rewind cache to system prompt boundary, then prefill delta.
+    If can_trim=False: fresh empty cache each turn (no reuse, measures overhead).
     """
     if can_trim:
-        # Find current offset and trim back to system_prompt_tokens
         current_offset = 0
         for c in cached_state:
             if hasattr(c, 'offset'):
@@ -152,16 +162,16 @@ def run_with_prefix_cache(model, tokenizer, system_prompt_tokens: int,
         if tokens_to_trim > 0:
             trim_prompt_cache(cached_state, tokens_to_trim)
         active_cache = cached_state
+        prompt_to_use = delta_prompt   # ← only the delta, cache has sys prompt
     else:
-        # Hybrid model — can't rewind. Use a fresh empty cache each turn.
-        # This is equivalent to baseline but with cache allocation overhead.
         active_cache = make_prompt_cache(model)
+        prompt_to_use = full_prompt    # ← full prompt, no cache benefit
 
     last = None
     t0 = time.perf_counter()
     first_token_time = None
     for chunk in stream_generate(
-        model, tokenizer, full_prompt,
+        model, tokenizer, prompt_to_use,
         max_tokens=MAX_NEW_TOKENS,
         prompt_cache=active_cache,
     ):
@@ -218,9 +228,11 @@ def main():
     prompts = []
     for i, q in enumerate(user_questions):
         p = build_prompt(min(i * 2, len(TURNS)), q)
+        d = build_delta(min(i * 2, len(TURNS)), q)
         tok_count = estimate_tokens(p, tokenizer)
-        prompts.append((p, tok_count))
-        print(f"  Turn {i+1}: ~{tok_count} tokens ({len(p)} chars)")
+        delta_tok_count = estimate_tokens(d, tokenizer)
+        prompts.append((p, d, tok_count, delta_tok_count))
+        print(f"  Turn {i+1}: ~{tok_count} tokens total  (~{delta_tok_count} delta after sys prompt)")
 
     print()
 
@@ -237,7 +249,7 @@ def main():
     print(f"{'Turn':>6}  {'ctx tok':>8}  {'TTFT':>8}  {'gen tok/s':>10}  {'prefill tok/s':>14}  {'elapsed':>8}")
 
     baseline_results = []
-    for i, (prompt, tok_count) in enumerate(prompts):
+    for i, (prompt, delta, tok_count, delta_tok) in enumerate(prompts):
         gen_tps, prompt_tps, prompt_tokens, ttft, elapsed, pgb = run_no_cache(model, tokenizer, prompt)
         baseline_results.append((gen_tps, prompt_tps, prompt_tokens, ttft, elapsed, pgb))
         print(f"  {i+1:>4}  {tok_count:>8}  {ttft:>7.2f}s  {gen_tps:>10.2f}  {prompt_tps:>14.1f}  {elapsed:>7.2f}s")
@@ -302,17 +314,15 @@ def main():
     print(f"{'Turn':>6}  {'ctx tok':>8}  {'TTFT':>8}  {'gen tok/s':>10}  {'prefill tok/s':>14}  {'elapsed':>8}  {'TTFT speedup':>13}")
 
     cached_results = []
-    for i, (prompt, tok_count) in enumerate(prompts):
-        # For prefix cache: the prompt fed to the model is the FULL prompt
-        # but the cache already has the system prompt tokens, so only the
-        # delta (history + new user message) gets prefilled
+    for i, (prompt, delta, tok_count, delta_tok) in enumerate(prompts):
         gen_tps, prompt_tps, prompt_tokens, ttft, elapsed, pgb = run_with_prefix_cache(
-            model, tokenizer, cached_token_count, prompt, cache_state, can_trim
+            model, tokenizer, cached_token_count, prompt, delta, cache_state, can_trim
         )
         cached_results.append((gen_tps, prompt_tps, prompt_tokens, ttft, elapsed, pgb))
         baseline_ttft = baseline_results[i][3]
         ttft_speedup = baseline_ttft / ttft if ttft > 0 else 0
-        print(f"  {i+1:>4}  {tok_count:>8}  {ttft:>7.2f}s  {gen_tps:>10.2f}  {prompt_tps:>14.1f}  {elapsed:>7.2f}s  {ttft_speedup:>12.2f}x")
+        label = f"({delta_tok} delta)" if can_trim else f"({tok_count} full)"
+        print(f"  {i+1:>4}  {tok_count:>8}  {ttft:>7.2f}s  {gen_tps:>10.2f}  {prompt_tps:>14.1f}  {elapsed:>7.2f}s  {ttft_speedup:>12.2f}x  {label}")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     print()
@@ -325,14 +335,14 @@ def main():
         print(f"  (load time: {load_time:.3f}s per turn, cache size: {cache_size_mb:.1f} MB)")
         print(f"{'Turn':>6}  {'ctx tok':>8}  {'TTFT':>8}  {'gen tok/s':>10}  {'prefill tok/s':>14}  {'elapsed':>8}  {'TTFT speedup':>13}")
 
-        for i, (prompt, tok_count) in enumerate(prompts):
-            # Load fresh cache from disk each turn
+        for i, (prompt, delta, tok_count, delta_tok) in enumerate(prompts):
+            # Load fresh cache from disk each turn, then prefill ONLY the delta
             t0 = time.perf_counter()
             disk_cache = load_prompt_cache(cache_file)
             first_token_time = None
             last = None
             for chunk in stream_generate(
-                model, tokenizer, prompt,
+                model, tokenizer, delta,   # ← delta only, not full prompt
                 max_tokens=MAX_NEW_TOKENS,
                 prompt_cache=disk_cache,
             ):
@@ -347,7 +357,7 @@ def main():
             disk_results.append((gen_tps, prompt_tps, 0, first_token_time or elapsed, elapsed, pgb))
             baseline_ttft = baseline_results[i][3]
             ttft_speedup = baseline_ttft / (first_token_time or elapsed) if (first_token_time or elapsed) > 0 else 0
-            print(f"  {i+1:>4}  {tok_count:>8}  {first_token_time or elapsed:>7.2f}s  {gen_tps:>10.2f}  {prompt_tps:>14.1f}  {elapsed:>7.2f}s  {ttft_speedup:>12.2f}x")
+            print(f"  {i+1:>4}  {tok_count:>8}  {first_token_time or elapsed:>7.2f}s  {gen_tps:>10.2f}  {prompt_tps:>14.1f}  {elapsed:>7.2f}s  {ttft_speedup:>12.2f}x  ({delta_tok} delta)")
         print()
 
     os.unlink(cache_file)
