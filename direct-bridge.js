@@ -912,24 +912,42 @@ async function buildProjectContext(cwd, taskGraphPath, lspManager) {
  * Parse diagnostics from an MCP tool response.
  * The agent-lsp binary returns: { content: [{ type: "text", text: "{\"file://...\": [...]}" }] }
  * Returns an array of diagnostic objects with severity, message, line fields.
+ *
+ * Filters out LSP rejection messages that are not real code errors:
+ * - sourcekit-lsp: "Unable to handle compilation, expected exactly one compiler job"
+ *   (returned when sourcekit-lsp is asked about a file type it doesn't support, e.g. HTML)
  */
 function parseMcpDiagnostics(result) {
+  // Patterns that indicate an LSP server rejected the file type, not a real code error
+  const LSP_REJECTION_PATTERNS = [
+    /expected exactly one compiler job/i,
+    /unable to handle compilation/i,
+    /no compiler arguments/i,
+  ]
+
+  function isRejectionMessage(msg) {
+    return LSP_REJECTION_PATTERNS.some(p => p.test(msg || ''))
+  }
+
   try {
     const text = result?.content?.[0]?.text
     if (!text) return []
     const parsed = JSON.parse(text)
     const values = Object.values(parsed)
     if (values.length > 0 && Array.isArray(values[0])) {
-      return values[0].map(d => ({
-        severity: d.severity === 1 ? 'error' : d.severity === 2 ? 'warning' : d.severity === 3 ? 'info' : 'hint',
-        message: d.message || '',
-        line: d.range?.start?.line != null ? d.range.start.line + 1 : undefined,
-        code: d.code,
-        source: d.source,
-      }))
+      return values[0]
+        .map(d => ({
+          severity: d.severity === 1 ? 'error' : d.severity === 2 ? 'warning' : d.severity === 3 ? 'info' : 'hint',
+          message: d.message || '',
+          line: d.range?.start?.line != null ? d.range.start.line + 1 : undefined,
+          code: d.code,
+          source: d.source,
+        }))
+        .filter(d => !isRejectionMessage(d.message))
     }
   } catch { /* not parseable */ }
-  return result?.errors || result?.diagnostics || []
+  const raw = result?.errors || result?.diagnostics || []
+  return raw.filter(d => !isRejectionMessage(d.message || d))
 }
 
 /**
@@ -2865,7 +2883,29 @@ class DirectBridge {
 
         // Speculative edit hook: simulate write_file before executing it
         let speculativeMsg = ''
-        if (fnName === 'write_file' && this._lspManager?.getStatus().status === 'ready') {
+        // Only run LSP hooks for file types the active language servers actually handle.
+        // sourcekit-lsp returns "expected exactly one compiler job" for HTML/CSS/JSON etc.
+        // which is a rejection, not a real diagnostic — it confuses the agent.
+        const _lspSupportedExts = new Set()
+        if (this._lspManager?.getStatus().status === 'ready') {
+          for (const srv of (this._lspManager.getStatus().servers || [])) {
+            for (const lang of (srv.languages || [])) {
+              // Map language names to common extensions
+              const extMap = {
+                swift: ['.swift'], 'objective-c': ['.m', '.mm', '.h'],
+                javascript: ['.js', '.mjs', '.cjs'], typescript: ['.ts', '.tsx', '.d.ts'],
+                python: ['.py'], go: ['.go'], rust: ['.rs'],
+                c: ['.c', '.h'], cpp: ['.cpp', '.cc', '.cxx', '.hpp', '.hxx'],
+                java: ['.java'],
+              }
+              for (const ext of (extMap[lang] || [])) _lspSupportedExts.add(ext)
+            }
+          }
+        }
+        const _fileExt = fnArgs.path ? path.extname(fnArgs.path).toLowerCase() : ''
+        const _lspApplies = _lspSupportedExts.size === 0 || _lspSupportedExts.has(_fileExt)
+
+        if (fnName === 'write_file' && this._lspManager?.getStatus().status === 'ready' && _lspApplies) {
           this.send('qwen-event', { type: 'lsp-activity', action: 'speculative-check', path: fnArgs.path })
           try {
             const simResult = await Promise.race([
@@ -2878,9 +2918,18 @@ class DirectBridge {
               new Promise((_, reject) => setTimeout(() => reject(new Error('speculative edit timed out')), 10000))
             ])
             if (simResult?.newDiagnostics?.length > 0) {
-              const diagLines = simResult.newDiagnostics.map(d => `  ${d.severity || 'error'}: ${d.message} (line ${d.line || '?'})`).join('\n')
-              speculativeMsg = `⚠️ Speculative edit preview found new diagnostics:\n${diagLines}\n\n`
-              this.send('qwen-event', { type: 'lsp-activity', action: 'speculative-warn', path: fnArgs.path, count: simResult.newDiagnostics.length })
+              // Filter out LSP rejection messages (e.g. sourcekit-lsp on unsupported file types)
+              const realDiags = simResult.newDiagnostics.filter(d =>
+                !/expected exactly one compiler job|unable to handle compilation|no compiler arguments/i.test(d.message || '')
+              )
+              if (realDiags.length > 0) {
+                const diagLines = realDiags.map(d => `  ${d.severity || 'error'}: ${d.message} (line ${d.line || '?'})`).join('\n')
+                speculativeMsg = `⚠️ Speculative edit preview found new diagnostics:\n${diagLines}\n\n`
+                this.send('qwen-event', { type: 'lsp-activity', action: 'speculative-warn', path: fnArgs.path, count: realDiags.length })
+              } else {
+                speculativeMsg = '✅ Speculative edit validation passed — no new errors detected.\n\n'
+                this.send('qwen-event', { type: 'lsp-activity', action: 'speculative-ok', path: fnArgs.path })
+              }
             } else {
               speculativeMsg = '✅ Speculative edit validation passed — no new errors detected.\n\n'
               this.send('qwen-event', { type: 'lsp-activity', action: 'speculative-ok', path: fnArgs.path })
@@ -2939,7 +2988,7 @@ class DirectBridge {
         }
 
         // Post-edit diagnostic hook: check for errors after write_file/edit_file
-        if ((fnName === 'write_file' || fnName === 'edit_file') && !isError && this._lspManager?.getStatus().status === 'ready') {
+        if ((fnName === 'write_file' || fnName === 'edit_file') && !isError && this._lspManager?.getStatus().status === 'ready' && _lspApplies) {
           // Reset compile-error loop counter when the file is successfully rewritten
           // A fresh write means the agent is trying a new approach — give it a clean slate
           if (fnArgs.path) {
@@ -3056,6 +3105,9 @@ class DirectBridge {
             }
           }
           for (const fp of touchedFiles) {
+            // Skip files the active LSP servers don't handle (e.g. HTML when only sourcekit-lsp is running)
+            const fpExt = path.extname(fp).toLowerCase()
+            if (_lspSupportedExts.size > 0 && !_lspSupportedExts.has(fpExt)) continue
             try {
               this.send('qwen-event', { type: 'lsp-activity', action: 'diagnostics-check', path: fp })
               const diags = await Promise.race([
