@@ -993,9 +993,9 @@ function trimMessages(messages, maxInputTokens) {
       if (len > maxLen) { maxLen = len; maxIdx = i }
     }
     if (maxIdx === -1 || maxLen <= 4000) break
-    // Truncate to a proportional share of the budget (but at least 4000 chars)
-    // Previous floor of 1500 was too aggressive and destroyed useful context
-    const allowedChars = Math.max(4000, Math.floor(targetChars / messages.length))
+    // Truncate to a proportional share of the budget.
+    // Floor scales with target: aggressive targets get a lower floor (min 500 chars).
+    const allowedChars = Math.max(500, Math.floor(targetChars / Math.max(messages.length, 1)))
     if (maxLen > allowedChars) {
       const oldLen = messages[maxIdx].content.length
       messages[maxIdx].content = messages[maxIdx].content.slice(0, allowedChars) +
@@ -1020,8 +1020,10 @@ function trimMessages(messages, maxInputTokens) {
       const prevMsg = i > 0 ? messages[i - 1] : null
       const isNavResult = prevMsg && prevMsg.role === 'assistant' && prevMsg.tool_calls &&
         prevMsg.tool_calls.some(tc => NAV_TOOL_NAMES.includes(tc.function?.name))
-      // Nav tool results get a higher floor (8K) to preserve directory/search structure
-      const minKeep = isNavResult ? 8000 : 1500
+      // Nav tool results get a higher floor; scale the regular floor with target budget
+      // so aggressive trims (low maxInputTokens) can actually reach their target.
+      const scaledFloor = Math.max(300, Math.floor(maxInputTokens * 4 / Math.max(messages.length, 1)))
+      const minKeep = isNavResult ? Math.max(scaledFloor, 2000) : scaledFloor
       if (msg.content.length > minKeep) {
         const oldLen = msg.content.length
         msg.content = msg.content.slice(0, minKeep) + '\n\n... [trimmed to save context space]'
@@ -1607,6 +1609,23 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
           const missing = extraDirs.filter(d => !currentPath.includes(d))
           if (missing.length > 0) {
             augmentedEnv.PATH = missing.join(':') + (currentPath ? ':' + currentPath : '')
+          }
+          // Fix xcode-select pointing to CommandLineTools instead of Xcode.app.
+          // Electron inherits the system xcode-select path which is often wrong.
+          // Setting DEVELOPER_DIR overrides xcode-select for all child processes
+          // (xcodebuild, xcrun, simctl, etc.) without needing sudo.
+          if (!augmentedEnv.DEVELOPER_DIR) {
+            const xcodeDev = '/Applications/Xcode.app/Contents/Developer'
+            try {
+              if (fs.existsSync(xcodeDev)) {
+                augmentedEnv.DEVELOPER_DIR = xcodeDev
+                // Also prepend Xcode's usr/bin so xcodebuild resolves correctly
+                const xcodeBin = `${xcodeDev}/usr/bin`
+                if (!augmentedEnv.PATH.includes(xcodeBin)) {
+                  augmentedEnv.PATH = xcodeBin + ':' + augmentedEnv.PATH
+                }
+              }
+            } catch { /* existsSync failed — skip */ }
           }
           const proc = spawn('bash', ['-c', args.command], {
             cwd,
@@ -2274,8 +2293,9 @@ class DirectBridge {
             const limitMatch = msg.match(/"limit"\s*:\s*(\d+)/)
             if (limitMatch) serverLimit = Math.min(serverLimit, parseInt(limitMatch[1], 10))
             // Progressive reduction: each retry reduces budget by 20% more
+            // Floor at 0.15 (not 0.3) so we can actually escape very large contexts
             const reductionFactor = 1 - (0.2 * (attempt + 1))
-            const targetTokens = Math.floor(serverLimit * Math.max(reductionFactor, 0.3))
+            const targetTokens = Math.floor(serverLimit * Math.max(reductionFactor, 0.15))
             this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Prompt too large (HTTP 413), trimming context and retrying... (attempt ${attempt + 1}, target: ${targetTokens} tokens)` })
             const trimmed = trimMessages(messages, targetTokens)
             messages.length = 0
@@ -2300,6 +2320,28 @@ class DirectBridge {
               }
             }
             await new Promise(r => setTimeout(r, 1000))
+            continue
+          }
+          // Last-resort 413 handler: all 8 attempts exhausted — nuclear trim.
+          // Keep only system prompt + user message + last 2 tool results, then
+          // surface a friendly message instead of crashing with raw JSON.
+          if (isPromptTooLarge) {
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: 'HTTP 413: all trim attempts exhausted — applying nuclear context reset' })
+            const sysMsg = messages.find(m => m.role === 'system')
+            const userMsg = messages.find(m => m.role === 'user')
+            const lastToolMsgs = messages.filter(m => m.role === 'tool').slice(-2)
+            messages.length = 0
+            if (sysMsg) messages.push(sysMsg)
+            if (userMsg) messages.push(userMsg)
+            messages.push(...lastToolMsgs)
+            messages.push({
+              role: 'system',
+              content: 'CONTEXT RESET: The conversation history was too large and had to be cleared. Summarize what you have done so far based on the tool results above, then continue working on the original task. Be concise — avoid large outputs.',
+            })
+            this.send('qwen-event', {
+              type: 'system', subtype: 'warning',
+              data: '⚠️ Context was too large and had to be reset. The agent will continue from a summary. Some history may be lost.',
+            })
             continue
           }
           // SSE mid-stream errors are transient (server OOM during generation)
