@@ -577,7 +577,7 @@ const ipc = window.setup || {
   getInfo:    () => Promise.resolve({ hardware: { ramGb: 64, chip: 'Apple M2 Ultra' }, tier: null, allTiers: [], primaryInstalled: false, fastInstalled: false, lmStudioInstalled: true }),
   openUrl:    (u) => { window.open(u, '_blank'); return Promise.resolve({ ok: true }) },
   scanModels:    () => Promise.resolve({ installed: [], installedFolders: [] }),
-  checkDeps:     () => Promise.resolve({ missing: [], installed: [], python: 'python3' }),
+  checkDeps:     () => Promise.resolve({ missing: [], installed: [], python: 'python3', binaries: [] }),
   installDeps:   () => Promise.resolve({ ok: true }),
   onInstallLog:  (cb) => {},
   offInstallLog: () => {},
@@ -648,19 +648,29 @@ function showPanel(idx) {
 
 
 // ── Step 1: Dependencies ───────────────────────────────────────────────────
+// Python packages (imp = importlib name, pip = install name)
 const ALL_DEPS = [
-  { imp: 'mlx',                pip: 'mlx',                  label: 'MLX',                desc: 'Apple Silicon inference engine' },
-  { imp: 'mlx_lm',             pip: 'mlx-lm',               label: 'mlx-lm',             desc: 'Text model inference + tool calling' },
-  { imp: 'mlx_vlm',            pip: 'mlx-vlm',              label: 'mlx-vlm',            desc: 'Vision-language model inference' },
-  { imp: 'fastapi',            pip: 'fastapi',              label: 'FastAPI',            desc: 'Local inference server framework' },
-  { imp: 'uvicorn',            pip: 'uvicorn',              label: 'Uvicorn',            desc: 'ASGI server' },
-  { imp: 'pydantic',           pip: 'pydantic',             label: 'Pydantic',           desc: 'Data validation' },
-  { imp: 'jinja2',             pip: 'Jinja2',               label: 'Jinja2',             desc: 'Chat template engine' },
-  { imp: 'PIL',                pip: 'Pillow',               label: 'Pillow',             desc: 'Image processing' },
-  { imp: 'psutil',             pip: 'psutil',               label: 'psutil',             desc: 'Memory monitoring' },
-  { imp: 'sentence_transformers', pip: 'sentence-transformers', label: 'sentence-transformers', desc: 'Vector memory embeddings' },
-  { imp: 'transformers',       pip: 'transformers',         label: 'transformers',       desc: 'Model tokenizers' },
-  { imp: 'numpy',              pip: 'numpy',                label: 'numpy',              desc: 'Numerical computing' },
+  { imp: 'mlx',                   pip: 'mlx',                                       label: 'MLX',                   desc: 'Apple Silicon inference engine' },
+  { imp: 'mlx_lm',                pip: 'mlx-lm',                                    label: 'mlx-lm',                desc: 'Text model inference + tool calling' },
+  { imp: 'mlx_vlm',               pip: 'mlx-vlm',                                   label: 'mlx-vlm',               desc: 'Vision-language model inference' },
+  { imp: 'fastapi',               pip: 'fastapi',                                   label: 'FastAPI',               desc: 'Local inference server framework' },
+  { imp: 'uvicorn',               pip: 'uvicorn',                                   label: 'Uvicorn',               desc: 'ASGI server' },
+  { imp: 'pydantic',              pip: 'pydantic',                                  label: 'Pydantic',              desc: 'Data validation' },
+  { imp: 'jinja2',                pip: 'Jinja2',                                    label: 'Jinja2',                desc: 'Chat template engine' },
+  { imp: 'PIL',                   pip: 'Pillow',                                    label: 'Pillow',                desc: 'Image processing' },
+  { imp: 'psutil',                pip: 'psutil',                                    label: 'psutil',                desc: 'Memory monitoring' },
+  { imp: 'sentence_transformers', pip: 'sentence-transformers',                     label: 'sentence-transformers', desc: 'Vector memory embeddings' },
+  { imp: 'transformers',          pip: 'transformers',                              label: 'transformers',          desc: 'Model tokenizers' },
+  { imp: 'numpy',                 pip: 'numpy',                                     label: 'numpy',                 desc: 'Numerical computing' },
+  { imp: 'claw_compactor',        pip: 'claw-compactor',                            label: 'claw-compactor',        desc: 'Context compression (required)' },
+  { imp: 'taosmd',                pip: 'git+https://github.com/jaylfc/taosmd.git',  label: 'taosmd',                desc: 'Memory system — KG + VectorMemory + Archive', gitInstall: true },
+]
+
+// Bundled binaries (checked separately — no install needed, just verify present)
+const ALL_BINARIES = [
+  { name: 'agent-lsp', label: 'agent-lsp', desc: 'LSP diagnostics & safe-edit' },
+  { name: 'sg',        label: 'sg',        desc: 'AST code search (ast-grep shim)' },
+  { name: 'ast-grep',  label: 'ast-grep',  desc: 'Structural code search' },
 ]
 
 let depsState = {}  // imp → 'ok' | 'missing' | 'installing'
@@ -729,19 +739,29 @@ async function startDepsCheck() {
 
   const installedSet = new Set((checkResult.installed || []).map(p => p.import))
   const missingSet   = new Set((checkResult.missing  || []).map(p => p.import))
+  const binaries     = checkResult.binaries || []
 
   // Initialise state
   ALL_DEPS.forEach(d => { depsState[d.imp] = installedSet.has(d.imp) ? 'ok' : 'missing' })
-  renderDepsList(installedSet, missingSet)
+  renderDepsList(installedSet, missingSet, binaries)
 
-  if (missingSet.size === 0) {
+  const binariesOk = binaries.every(b => b.present && b.executable)
+  if (missingSet.size === 0 && binariesOk) {
     subtitle.textContent = '✅ All dependencies installed — you're good to go.'
     nextBtn.disabled = false
     footerHint.innerHTML = '<span style="color:var(--green);">✓ All packages present</span>'
     return
   }
 
-  // Auto-install missing packages — no user input needed
+  if (!binariesOk) {
+    const missing = binaries.filter(b => !b.present || !b.executable).map(b => b.label).join(', ')
+    subtitle.textContent = `⚠ Missing bundled binaries: ${missing}. Please re-download the app.`
+    footerHint.innerHTML = '<span style="color:var(--orange);">⚠ Binaries missing</span>'
+    nextBtn.disabled = false
+    if (missingSet.size === 0) return
+  }
+
+  // Auto-install missing Python packages — no user input needed
   subtitle.textContent = `Installing ${missingSet.size} missing package${missingSet.size > 1 ? 's' : ''}… this may take a few minutes.`
   footerHint.textContent = 'Installing…'
 
@@ -771,17 +791,21 @@ async function startDepsCheck() {
   const result = await ipc.installDeps()
   ipc.offInstallLog()
 
-  if (result.ok) {
-    // Mark any still-installing as ok
-    ALL_DEPS.forEach(d => { if (depsState[d.imp] === 'installing') updateDepRow(d.imp, 'ok') })
+  // Use postCheck to get accurate final state
+  const finalInstalled = new Set((result.postCheck?.installed || []).map(p => p.import))
+  ALL_DEPS.forEach(d => {
+    updateDepRow(d.imp, finalInstalled.has(d.imp) ? 'ok' : depsState[d.imp] === 'installing' ? 'ok' : depsState[d.imp])
+  })
+
+  const allOk = ALL_DEPS.every(d => depsState[d.imp] === 'ok')
+  if (allOk) {
     subtitle.textContent = '✅ All dependencies installed successfully.'
     footerHint.innerHTML = '<span style="color:var(--green);">✓ Ready</span>'
-    nextBtn.disabled = false
   } else {
-    subtitle.textContent = '⚠ Some packages failed to install — check the log below.'
-    footerHint.innerHTML = '<span style="color:var(--orange);">⚠ Install issues</span>'
-    nextBtn.disabled = false  // let user continue anyway
+    subtitle.textContent = '⚠ Some packages may have failed — check the log. You can still continue.'
+    footerHint.innerHTML = '<span style="color:var(--orange);">⚠ Check log</span>'
   }
+  nextBtn.disabled = false
 }
 
 // ── Step 1: Models ─────────────────────────────────────────────────────────

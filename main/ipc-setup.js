@@ -207,16 +207,23 @@ function scanInstalledModels(modelsRoot) {
 }
 
 // ── Dependency checking & installation ───────────────────────────────────────
+// Packages that must be present for the app to function.
+// Special installs (git sources) use a custom installCmd instead of pip name.
 const REQUIRED_PACKAGES = [
-  { import: 'mlx',                 pip: 'mlx',                    label: 'MLX (Apple Silicon inference)' },
-  { import: 'mlx_lm',             pip: 'mlx-lm',                 label: 'mlx-lm (text model inference)' },
-  { import: 'mlx_vlm',            pip: 'mlx-vlm',                label: 'mlx-vlm (vision model inference)' },
-  { import: 'fastapi',            pip: 'fastapi',                label: 'FastAPI (server framework)' },
-  { import: 'uvicorn',            pip: 'uvicorn',                label: 'Uvicorn (ASGI server)' },
-  { import: 'pydantic',           pip: 'pydantic',               label: 'Pydantic (data validation)' },
-  { import: 'jinja2',             pip: 'Jinja2',                 label: 'Jinja2 (chat templates)' },
-  { import: 'PIL',                pip: 'Pillow',                 label: 'Pillow (image processing)' },
-  { import: 'psutil',             pip: 'psutil',                 label: 'psutil (memory monitoring)' },
+  { import: 'mlx',                    pip: 'mlx',                                        label: 'MLX (Apple Silicon inference)' },
+  { import: 'mlx_lm',                 pip: 'mlx-lm',                                     label: 'mlx-lm (text model inference)' },
+  { import: 'mlx_vlm',                pip: 'mlx-vlm',                                    label: 'mlx-vlm (vision model inference)' },
+  { import: 'fastapi',                pip: 'fastapi',                                    label: 'FastAPI (server framework)' },
+  { import: 'uvicorn',                pip: 'uvicorn',                                    label: 'Uvicorn (ASGI server)' },
+  { import: 'pydantic',               pip: 'pydantic',                                   label: 'Pydantic (data validation)' },
+  { import: 'jinja2',                 pip: 'Jinja2',                                     label: 'Jinja2 (chat templates)' },
+  { import: 'PIL',                    pip: 'Pillow',                                     label: 'Pillow (image processing)' },
+  { import: 'psutil',                 pip: 'psutil',                                     label: 'psutil (memory monitoring)' },
+  { import: 'sentence_transformers',  pip: 'sentence-transformers',                      label: 'sentence-transformers (vector memory)' },
+  { import: 'transformers',           pip: 'transformers',                               label: 'transformers (tokenizers)' },
+  { import: 'numpy',                  pip: 'numpy',                                      label: 'numpy (numerical computing)' },
+  { import: 'claw_compactor',         pip: 'claw-compactor',                             label: 'claw-compactor (context compression)' },
+  { import: 'taosmd',                 pip: 'git+https://github.com/jaylfc/taosmd.git',   label: 'taosmd (memory system)', gitInstall: true },
 ]
 
 function checkPythonDeps(pyPath) {
@@ -260,21 +267,62 @@ function installDeps(pyPath, requirementsPath, onData) {
       resolve({ error: 'Install already in progress' })
       return
     }
-    _installProcess = spawn(pyPath, ['-m', 'pip', 'install', '-r', requirementsPath, '--progress-bar', 'off'], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    _installProcess.stdout.on('data', d => onData && onData(d.toString()))
-    _installProcess.stderr.on('data', d => onData && onData(d.toString()))
-    _installProcess.on('exit', (code) => {
-      _installProcess = null
-      resolve({ ok: code === 0, exitCode: code })
-    })
-    _installProcess.on('error', (err) => {
-      _installProcess = null
-      resolve({ error: err.message })
-    })
+
+    // Step 1: install everything in requirements.txt
+    // Step 2: install taosmd from GitHub (not on PyPI)
+    // Step 3: install claw-compactor (may already be in requirements but ensure it)
+    const runInstall = (args, label, cb) => {
+      onData && onData(`\n▶ ${label}\n`)
+      const proc = spawn(pyPath, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+      proc.stdout.on('data', d => onData && onData(d.toString()))
+      proc.stderr.on('data', d => onData && onData(d.toString()))
+      proc.on('exit', code => cb(code === 0))
+      proc.on('error', err => { onData && onData(`Error: ${err.message}\n`); cb(false) })
+      return proc
+    }
+
+    _installProcess = { kill: () => {} } // placeholder
+
+    runInstall(
+      ['-m', 'pip', 'install', '-r', requirementsPath, '--progress-bar', 'off'],
+      'Installing Python packages from requirements.txt…',
+      (ok1) => {
+        // Always install taosmd from GitHub — it's not on PyPI
+        runInstall(
+          ['-m', 'pip', 'install', 'git+https://github.com/jaylfc/taosmd.git', '--progress-bar', 'off'],
+          'Installing taosmd from GitHub…',
+          (ok2) => {
+            _installProcess = null
+            resolve({ ok: ok1 && ok2, reqOk: ok1, taosmdOk: ok2 })
+          }
+        )
+      }
+    )
   })
 }
+// ── Binary checks (bundled resources/bin/) ───────────────────────────────────
+const REQUIRED_BINARIES = [
+  { name: 'agent-lsp', label: 'agent-lsp',  desc: 'LSP diagnostics & safe-edit' },
+  { name: 'sg',        label: 'sg',         desc: 'AST code search (ast-grep shim)' },
+  { name: 'ast-grep',  label: 'ast-grep',   desc: 'Structural code search' },
+]
+
+function checkBinaries(appDir) {
+  const binDir = path.join(appDir, 'resources', 'bin')
+  return REQUIRED_BINARIES.map(b => {
+    const binPath = path.join(binDir, b.name)
+    let present = false
+    let executable = false
+    try {
+      fs.accessSync(binPath, fs.constants.F_OK)
+      present = true
+      fs.accessSync(binPath, fs.constants.X_OK)
+      executable = true
+    } catch {}
+    return { ...b, present, executable, path: binPath }
+  })
+}
+
 function selectTier(ramGb) {
   for (const tier of MODEL_TIERS) {
     if (ramGb >= tier.minRamGb) return tier
@@ -354,8 +402,11 @@ function register(ipcMain) {
   ipcMain.handle('setup-check-deps', async () => {
     const { findPython } = require('../main/ipc-server')
     const py = findPython()
-    const result = await checkPythonDeps(py)
-    return { ...result, python: py }
+    const [pyResult, binaries] = await Promise.all([
+      checkPythonDeps(py),
+      Promise.resolve(checkBinaries(path.join(__dirname, '..'))),
+    ])
+    return { ...pyResult, python: py, binaries }
   })
 
   // Streams install log lines back via 'setup-install-log' events on the window
@@ -374,9 +425,11 @@ function register(ipcMain) {
     }
 
     const result = await installDeps(py, reqPath, notify)
-    return result
+    // Re-check after install so caller gets updated status
+    const { findPython: fp } = require('../main/ipc-server')
+    const postCheck = await checkPythonDeps(fp())
+    return { ...result, postCheck }
   })
-
   // Open a folder picker and save as the models directory
   ipcMain.handle('setup-pick-models-dir', async () => {
     // Find the frontmost window to attach the sheet to
