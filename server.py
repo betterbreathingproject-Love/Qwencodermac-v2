@@ -35,6 +35,21 @@ _chat_template = None
 _model_is_vision = True  # False when loaded via mlx_lm (text-only fallback)
 _models_root = Path.home() / ".lmstudio" / "models"
 
+# ── speculative decoding state ────────────────────────────────────────────────
+# When a draft model is loaded, stream_generate receives it as `draft_model`
+# and uses speculative_generate_step internally.  The draft must share the
+# same tokenizer as the target model (both are Qwen3.5 family here).
+_draft_model = None          # nn.Module | None
+_draft_model_path = None     # str | None
+_speculative_enabled = False # toggled by /admin/speculative
+_num_draft_tokens = 4        # sweet-spot for Qwen3.5 0.8B → 35B on Apple Silicon
+
+# ── KV cache quantization state ───────────────────────────────────────────────
+# kv_bits=8 halves KV cache memory vs fp16; kv_bits=4 quarters it.
+# Passed directly to stream_generate / generate_step via kwargs.
+# None = disabled (default, full precision).
+_kv_bits: int | None = None  # 4 | 8 | None
+
 # ── autotune: KV cache optimisation state ────────────────────────────────────
 # Tracks the tokenized length of the system prompt so we can right-size
 # max_tokens per request (dynamic KV sizing — autotune's #1 optimization).
@@ -189,6 +204,7 @@ def _unload_model():
     """Release the current model and free Metal memory before loading a new one."""
     global _model, _processor, _config, _model_id, _model_path, _chat_template, _model_is_vision
     global _system_prompt_token_cache, _last_metal_clear_time
+    global _draft_model, _draft_model_path, _speculative_enabled
     if _model is not None:
         print(f"[server] Unloading current model: {_model_id}")
         _model = None
@@ -200,6 +216,11 @@ def _unload_model():
         _model_is_vision = True
         _system_prompt_token_cache = {}
         _last_metal_clear_time = 0.0
+        # Also drop the draft model — it shares the same tokenizer and must be
+        # reloaded alongside the new target model.
+        _draft_model = None
+        _draft_model_path = None
+        _speculative_enabled = False
         import gc
         gc.collect()
         try:
@@ -805,6 +826,12 @@ def admin_status():
         "models": models,
         "autotune_enabled": True,  # always active — built into server
         "autotune_features": ["dynamic_kv_sizing", "smart_cache_clearing", "prefill_batching"],
+        # ── speculative decoding ──────────────────────────────────────────────
+        "speculative_enabled": _speculative_enabled,
+        "draft_model": _draft_model_path,
+        "num_draft_tokens": _num_draft_tokens if _speculative_enabled else None,
+        # ── KV cache quantization ─────────────────────────────────────────────
+        "kv_bits": _kv_bits,
     }
 
 
@@ -836,6 +863,115 @@ def autotune_stats():
         "prefill_batch_size": 1024,
         "features_active": ["dynamic_kv_sizing", "smart_cache_clearing", "prefill_batching"],
     }
+
+
+# ── speculative decoding admin ────────────────────────────────────────────────
+
+class SpeculativeRequest(BaseModel):
+    enabled: bool
+    draft_model_path: Optional[str] = None  # required when enabled=True
+    num_draft_tokens: Optional[int] = None  # default: 4
+
+
+@app.post("/admin/speculative")
+async def admin_speculative(req: SpeculativeRequest):
+    """
+    Enable or disable speculative decoding.
+
+    When enabled, the draft model is loaded into memory alongside the target
+    model.  Both models must share the same tokenizer (Qwen3.5 family).
+    The draft model (0.8B) generates `num_draft_tokens` candidate tokens per
+    step; the target model (35B) verifies them in a single forward pass.
+    Typical speedup: 1.5–2.5× on Apple Silicon for coding tasks.
+
+    POST /admin/speculative
+    {"enabled": true, "draft_model_path": "/path/to/Qwen3.5-0.8B-MLX-8bit", "num_draft_tokens": 4}
+    {"enabled": false}
+    """
+    global _draft_model, _draft_model_path, _speculative_enabled, _num_draft_tokens
+
+    if not req.enabled:
+        _draft_model = None
+        _draft_model_path = None
+        _speculative_enabled = False
+        import gc; gc.collect()
+        try:
+            import mlx.core as mx
+            mx.metal.clear_cache()
+        except Exception:
+            pass
+        print("[server] Speculative decoding disabled, draft model unloaded")
+        return {"status": "ok", "speculative_enabled": False}
+
+    if not req.draft_model_path:
+        raise HTTPException(400, "draft_model_path is required when enabling speculative decoding")
+    if _model is None:
+        raise HTTPException(503, "Target model must be loaded before enabling speculative decoding")
+    if _model_is_vision:
+        raise HTTPException(400, "Speculative decoding is only supported for text-only models (mlx_lm). "
+                                 "Load the target model as text-only first.")
+
+    sem = _get_inference_semaphore()
+    async with sem:
+        try:
+            print(f"[server] Loading draft model for speculative decoding: {req.draft_model_path}")
+            from mlx_lm import load as lm_load
+            loop = asyncio.get_event_loop()
+            draft_m, _ = await loop.run_in_executor(None, lm_load, req.draft_model_path)
+            _draft_model = draft_m
+            _draft_model_path = req.draft_model_path
+            _speculative_enabled = True
+            if req.num_draft_tokens is not None:
+                _num_draft_tokens = max(1, min(req.num_draft_tokens, 16))
+            print(f"[server] Speculative decoding enabled — draft={req.draft_model_path}, "
+                  f"num_draft_tokens={_num_draft_tokens}")
+            return {
+                "status": "ok",
+                "speculative_enabled": True,
+                "draft_model": _draft_model_path,
+                "num_draft_tokens": _num_draft_tokens,
+            }
+        except Exception as e:
+            _draft_model = None
+            _draft_model_path = None
+            _speculative_enabled = False
+            raise HTTPException(500, f"Failed to load draft model: {e}")
+
+
+# ── KV cache quantization admin ───────────────────────────────────────────────
+
+class KVCacheRequest(BaseModel):
+    bits: Optional[int] = None  # 4 | 8 | None (None = disable)
+
+
+@app.post("/admin/kv-cache")
+async def admin_kv_cache(req: KVCacheRequest):
+    """
+    Configure KV cache quantization.
+
+    Quantizing the KV cache reduces memory usage at the cost of a small
+    quality degradation.  Useful for long-context requests on memory-constrained
+    hardware.
+
+    bits=8  → ~50% KV cache memory reduction vs fp16 (recommended)
+    bits=4  → ~75% KV cache memory reduction (more aggressive, slight quality loss)
+    bits=null → disable quantization (full fp16 precision)
+
+    POST /admin/kv-cache
+    {"bits": 8}   # enable 8-bit KV cache
+    {"bits": null} # disable
+    """
+    global _kv_bits
+
+    if req.bits is not None and req.bits not in (4, 8):
+        raise HTTPException(400, "bits must be 4, 8, or null")
+
+    _kv_bits = req.bits
+    if _kv_bits is not None:
+        print(f"[server] KV cache quantization enabled: {_kv_bits}-bit")
+    else:
+        print("[server] KV cache quantization disabled (full fp16)")
+    return {"status": "ok", "kv_bits": _kv_bits}
 
 
 # ── benchmark ─────────────────────────────────────────────────────────────────
@@ -1146,6 +1282,23 @@ async def chat_completions(req: ChatRequest):
         print(f"[server] Streaming: prompt_len={len(prompt)}, max_tokens={kwargs.get('max_tokens')}, "
               f"temp={kwargs.get('temp', 'default')}, top_p={kwargs.get('top_p', 'default')}", file=sys.stderr)
 
+        # ── speculative decoding ──────────────────────────────────────────────
+        # Inject draft_model when speculative decoding is enabled and the target
+        # is a text-only model (mlx_lm).  VLM path doesn't support it.
+        _effective_draft = None
+        if _speculative_enabled and _draft_model is not None and not _model_is_vision:
+            _effective_draft = _draft_model
+            kwargs['num_draft_tokens'] = _num_draft_tokens
+            print(f"[server] Speculative decoding active: draft_tokens={_num_draft_tokens}", file=sys.stderr)
+
+        # ── KV cache quantization ─────────────────────────────────────────────
+        # kv_bits is passed through to generate_step via stream_generate kwargs.
+        # Only applies to text-only models; VLM path uses mlx_vlm which doesn't
+        # expose this parameter.
+        if _kv_bits is not None and not _model_is_vision:
+            kwargs['kv_bits'] = _kv_bits
+            print(f"[server] KV cache quantization: {_kv_bits}-bit", file=sys.stderr)
+
         # Clear cache before large prompts (>50k chars) to maximize available memory
         if len(prompt) > 50000:
             try:
@@ -1171,7 +1324,8 @@ async def chat_completions(req: ChatRequest):
 
             def run_stream():
                 try:
-                    gen = stream_generate(_model, _processor, prompt, **kwargs)
+                    gen = stream_generate(_model, _processor, prompt,
+                                         draft_model=_effective_draft, **kwargs)
                     last_result = None
                     for chunk in gen:
                         if _cancelled.is_set():
@@ -1365,6 +1519,8 @@ async def chat_completions(req: ChatRequest):
                                 "peak_memory_gb": round(getattr(data, "peak_memory", 0), 3),
                                 "prompt_tokens_actual": _estimate_prompt_tokens(prompt),
                                 "context_window": _get_context_window(),
+                                "speculative_enabled": _speculative_enabled,
+                                "kv_bits": _kv_bits,
                             },
                         }
                         yield f"data: {json.dumps(stats_chunk)}\n\n"
@@ -1446,8 +1602,24 @@ async def chat_completions(req: ChatRequest):
         if len(prompt) > 2000:
             kwargs['prefill_step_size'] = 1024
 
+    # ── speculative decoding (non-streaming) ──────────────────────────────────
+    _ns_draft = None
+    if _speculative_enabled and _draft_model is not None and not _model_is_vision:
+        _ns_draft = _draft_model
+        kwargs['num_draft_tokens'] = _num_draft_tokens
+        print(f"[server] Non-streaming speculative decoding: draft_tokens={_num_draft_tokens}", file=sys.stderr)
+
+    # ── KV cache quantization (non-streaming) ─────────────────────────────────
+    if _kv_bits is not None and not _model_is_vision:
+        kwargs['kv_bits'] = _kv_bits
+
     def _run_generate():
-        result = generate(_model, _processor, prompt, **kwargs)
+        # mlx_lm.generate passes **kwargs to stream_generate which accepts draft_model
+        # as a positional-style kwarg — pass it explicitly here.
+        if _ns_draft is not None:
+            result = generate(_model, _processor, prompt, draft_model=_ns_draft, **kwargs)
+        else:
+            result = generate(_model, _processor, prompt, **kwargs)
         if images:
             try:
                 import mlx.core as mx
@@ -1521,6 +1693,8 @@ async def chat_completions(req: ChatRequest):
             "prompt_tps": round(getattr(result, "prompt_tps", 0), 2),
             "generation_tps": round(getattr(result, "generation_tps", 0), 2),
             "peak_memory_gb": round(getattr(result, "peak_memory", 0), 3),
+            "speculative_enabled": _speculative_enabled,
+            "kv_bits": _kv_bits,
         },
     }
 

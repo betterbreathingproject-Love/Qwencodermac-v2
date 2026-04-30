@@ -584,6 +584,49 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
       return result || null
     } catch (_) { return null }
   })
+
+  // ── Speculative decoding ──────────────────────────────────────────────────
+  // Enable: pass { enabled: true, draftModelPath: '/path/to/0.8B', numDraftTokens: 4 }
+  // Disable: pass { enabled: false }
+  ipcMain.handle('speculative-set', async (_, opts) => {
+    const body = JSON.stringify({
+      enabled: !!opts.enabled,
+      draft_model_path: opts.draftModelPath || null,
+      num_draft_tokens: opts.numDraftTokens || null,
+    })
+    return new Promise(resolve => {
+      const req = http.request({
+        hostname: '127.0.0.1', port: serverPort(), path: '/admin/speculative', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      }, res => {
+        let d = ''; res.on('data', c => d += c)
+        res.on('end', () => { try { resolve(JSON.parse(d)) } catch { resolve({ status: 'ok' }) } })
+        res.on('error', () => resolve({ error: 'Response error' }))
+      })
+      req.on('error', err => resolve({ error: err.message }))
+      req.setTimeout(90000, () => { req.destroy(); resolve({ error: 'Draft model load timed out' }) })
+      req.write(body); req.end()
+    })
+  })
+
+  // ── KV cache quantization ─────────────────────────────────────────────────
+  // bits: 4 | 8 | null (null = disable, full fp16)
+  ipcMain.handle('kv-cache-set', async (_, bits) => {
+    const body = JSON.stringify({ bits: bits ?? null })
+    return new Promise(resolve => {
+      const req = http.request({
+        hostname: '127.0.0.1', port: serverPort(), path: '/admin/kv-cache', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      }, res => {
+        let d = ''; res.on('data', c => d += c)
+        res.on('end', () => { try { resolve(JSON.parse(d)) } catch { resolve({ status: 'ok' }) } })
+        res.on('error', () => resolve({ error: 'Response error' }))
+      })
+      req.on('error', err => resolve({ error: err.message }))
+      req.setTimeout(5000, () => { req.destroy(); resolve({ error: 'Request timed out' }) })
+      req.write(body); req.end()
+    })
+  })
 }
 
 module.exports = { register, startServer, stopServer, restartServer, waitForServer, killStaleServer, findPython, runCalibration, getCalibrationProfile, isCalibrating, clearCalibration, setLastLoadedModel }
