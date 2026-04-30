@@ -627,6 +627,44 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
       req.write(body); req.end()
     })
   })
+
+  // ── Prefix cache ──────────────────────────────────────────────────────────
+  // Build: pass { systemPrompt: '...' }
+  // Rebuild: pass { systemPrompt: '...', rebuild: true }
+  // Toggle: pass { enabled: true/false }
+  // Status: call prefixCacheStatus()
+  ipcMain.handle('prefix-cache-set', async (_, opts) => {
+    const body = JSON.stringify({
+      enabled: opts.enabled ?? null,
+      system_prompt: opts.systemPrompt ?? null,
+      rebuild: opts.rebuild ?? false,
+    })
+    return new Promise(resolve => {
+      const req = http.request({
+        hostname: '127.0.0.1', port: serverPort(), path: '/admin/prefix-cache', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      }, res => {
+        let d = ''; res.on('data', c => d += c)
+        res.on('end', () => { try { resolve(JSON.parse(d)) } catch { resolve({ status: 'ok' }) } })
+        res.on('error', () => resolve({ error: 'Response error' }))
+      })
+      req.on('error', err => resolve({ error: err.message }))
+      req.setTimeout(60000, () => { req.destroy(); resolve({ error: 'Prefix cache build timed out' }) })
+      req.write(body); req.end()
+    })
+  })
+
+  ipcMain.handle('prefix-cache-status', async () => {
+    return new Promise(resolve => {
+      const req = http.get(`${serverUrl()}/admin/prefix-cache`, res => {
+        let d = ''; res.on('data', c => d += c)
+        res.on('end', () => { try { resolve(JSON.parse(d)) } catch { resolve(null) } })
+        res.on('error', () => resolve(null))
+      })
+      req.on('error', () => resolve(null))
+      req.setTimeout(5000, () => { req.destroy(); resolve(null) })
+    })
+  })
 }
 
 module.exports = { register, startServer, stopServer, restartServer, waitForServer, killStaleServer, findPython, runCalibration, getCalibrationProfile, isCalibrating, clearCalibration, setLastLoadedModel }

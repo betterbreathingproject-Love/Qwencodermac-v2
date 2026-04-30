@@ -162,9 +162,11 @@ contextBridge.exposeInMainWorld('app', {
   memoryKgQuery:         (entity)    => ipcRenderer.invoke('memory-kg-query', entity),
   memoryStats:           ()          => ipcRenderer.invoke('memory-stats'),
 
-  // Speculative decoding + KV cache quantization
+  // Speculative decoding + KV cache quantization + prefix cache
   speculativeSet:  (opts)  => ipcRenderer.invoke('speculative-set', opts),
   kvCacheSet:      (bits)  => ipcRenderer.invoke('kv-cache-set', bits),
+  prefixCacheSet:  (opts)  => ipcRenderer.invoke('prefix-cache-set', opts),
+  prefixCacheStatus: ()    => ipcRenderer.invoke('prefix-cache-status'),
 
   // Telegram
   telegramPair:      ()      => ipcRenderer.invoke('telegram-pair'),
