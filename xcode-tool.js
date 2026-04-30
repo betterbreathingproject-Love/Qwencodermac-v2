@@ -172,6 +172,143 @@ const XCODE_TOOL_DEFS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'xcode_build_run_simulator',
+      description: 'Build, install, and launch the app on the iOS Simulator in one step. Boots the simulator automatically. Preferred over separate build + launch steps.',
+      parameters: {
+        type: 'object',
+        properties: {
+          extra_args: { type: 'array', items: { type: 'string' }, description: 'Extra xcodebuild arguments' },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'xcode_snapshot_ui',
+      description: 'Capture the full UI view hierarchy of the running simulator app with precise element coordinates (x, y, width, height). Use this to inspect what is on screen, find UI elements to interact with, or verify UI state after a code change.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'xcode_start_log_capture',
+      description: 'Start capturing console logs from the running simulator app. Returns a logSessionId to use with xcode_stop_log_capture.',
+      parameters: {
+        type: 'object',
+        properties: {
+          capture_console: { type: 'boolean', description: 'Capture console output (default: true)' },
+          subsystem_filter: { type: 'string', description: 'Filter logs by subsystem, e.g. "com.example.MyApp"' },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'xcode_stop_log_capture',
+      description: 'Stop log capture and return all captured logs from the simulator app. Call after xcode_start_log_capture.',
+      parameters: {
+        type: 'object',
+        properties: {
+          log_session_id: { type: 'string', description: 'Session ID returned by xcode_start_log_capture' },
+        },
+        required: ['log_session_id'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'xcode_get_coverage_report',
+      description: 'Show per-target code coverage from a test run. Run xcode_test first, then pass the xcresult path. Shows which targets have low coverage.',
+      parameters: {
+        type: 'object',
+        properties: {
+          xcresult_path: { type: 'string', description: 'Path to the .xcresult bundle from a test run' },
+          target: { type: 'string', description: 'Filter to a specific target name' },
+          show_files: { type: 'boolean', description: 'Show per-file breakdown (default: false)' },
+        },
+        required: ['xcresult_path'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'xcode_get_file_coverage',
+      description: 'Show function-level code coverage and uncovered line ranges for a specific Swift file. Use after xcode_test to find exactly which lines need tests.',
+      parameters: {
+        type: 'object',
+        properties: {
+          xcresult_path: { type: 'string', description: 'Path to the .xcresult bundle from a test run' },
+          file: { type: 'string', description: 'Swift file path or name to inspect, e.g. "MyViewModel.swift"' },
+          show_lines: { type: 'boolean', description: 'Show specific uncovered line numbers (default: true)' },
+        },
+        required: ['xcresult_path', 'file'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'xcode_get_bundle_id',
+      description: 'Extract the bundle identifier from a built .app bundle. Useful to get the bundle ID before launching or installing.',
+      parameters: {
+        type: 'object',
+        properties: {
+          app_path: { type: 'string', description: 'Path to the .app bundle' },
+        },
+        required: ['app_path'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'xcode_get_app_path',
+      description: 'Get the path to the built .app bundle in the simulator derived data. Use this to find the app after building.',
+      parameters: {
+        type: 'object',
+        properties: {
+          platform: { type: 'string', description: 'Platform: iOS, macOS, etc.' },
+        },
+        required: ['platform'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'xcode_record_video',
+      description: 'Record a video of the simulator screen. Call with start=true to begin, then start=false/stop=true to stop and save.',
+      parameters: {
+        type: 'object',
+        properties: {
+          start:       { type: 'boolean', description: 'true to start recording' },
+          stop:        { type: 'boolean', description: 'true to stop recording and save' },
+          fps:         { type: 'number',  description: 'Frames per second (default: 30)' },
+          output_file: { type: 'string',  description: 'Output path for the video file' },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
 ]
 
 // Map our tool names to XcodeBuildMCP tool names (v2.3.2 snake_case names)
@@ -181,6 +318,7 @@ const TOOL_NAME_MAP = {
   xcode_discover_projects:     'discover_projs',
   xcode_build_simulator:       'build_sim',
   xcode_build_macos:           'build_sim',
+  xcode_build_run_simulator:   'build_run_sim',
   xcode_test:                  'test_sim',
   xcode_clean:                 'clean',
   xcode_list_schemes:          'list_schemes',
@@ -189,6 +327,14 @@ const TOOL_NAME_MAP = {
   xcode_install_app_simulator: 'install_app_sim',
   xcode_launch_app_simulator:  'launch_app_sim',
   xcode_screenshot_simulator:  'screenshot',
+  xcode_snapshot_ui:           'snapshot_ui',
+  xcode_start_log_capture:     'start_sim_log_cap',
+  xcode_stop_log_capture:      'stop_sim_log_cap',
+  xcode_get_coverage_report:   'get_coverage_report',
+  xcode_get_file_coverage:     'get_file_coverage',
+  xcode_get_bundle_id:         'get_app_bundle_id',
+  xcode_get_app_path:          'get_sim_app_path',
+  xcode_record_video:          'record_sim_video',
   xcode_get_build_settings:    'show_build_settings',
   xcode_resolve_packages:      'clean',
 }
@@ -209,7 +355,20 @@ const ARG_NAME_MAP = {
   extra_args:         'extraArgs',
   max_depth:          'maxDepth',
   output_path:        'outputPath',
+  output_file:        'outputFile',
   enabled:            'enabled',
+  app_path:           'appPath',
+  xcresult_path:      'xcresultPath',
+  show_files:         'showFiles',
+  show_lines:         'showLines',
+  target:             'target',
+  file:               'file',
+  log_session_id:     'logSessionId',
+  capture_console:    'captureConsole',
+  subsystem_filter:   'subsystemFilter',
+  start:              'start',
+  stop:               'stop',
+  fps:                'fps',
 }
 
 // Map our arg names to XcodeBuildMCP arg names

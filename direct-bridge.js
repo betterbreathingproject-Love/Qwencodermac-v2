@@ -691,6 +691,8 @@ const LSP_TOOL_SETS = {
   'code-search': ['lsp_get_document_symbols', 'lsp_get_references', 'lsp_workspace_symbol', 'lsp_get_call_hierarchy'],
   'implementation': ['lsp_simulate_edit_atomic', 'lsp_get_diagnostics', 'lsp_get_definition', 'lsp_get_references', 'lsp_get_change_impact', 'lsp_apply_code_action'],
   'general': ['lsp_simulate_edit_atomic', 'lsp_get_diagnostics', 'lsp_get_definition', 'lsp_get_references', 'lsp_get_change_impact', 'lsp_apply_code_action'],
+  // tester role gets xcode tools for build/run/test/UI inspection
+  'tester': ['lsp_get_diagnostics'],
 }
 
 /**
@@ -2858,6 +2860,34 @@ class DirectBridge {
           }
         }
 
+        // ── Swift build check: after writing a .swift file, trigger a fast build ──
+        // Gives the agent immediate compiler feedback without it having to ask.
+        // Only runs when xcodebuildmcp is available and the file is Swift.
+        if ((fnName === 'write_file' || fnName === 'edit_file') && !isError
+            && xcodeTool && xcodeTool.isXcodeMCPAvailable()
+            && (fnArgs.path || '').endsWith('.swift')) {
+          try {
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: '🔨 Swift file changed — running incremental build...' })
+            const buildResult = await xcodeTool.executeXcodeTool('xcode_build_simulator', {}, cwd)
+            if (buildResult.result) {
+              // Extract errors/warnings from build output
+              const lines = buildResult.result.split('\n')
+              const errors = lines.filter(l => /error:|warning:/.test(l)).slice(0, 20)
+              if (errors.length > 0) {
+                const hasErrors = errors.some(l => /\berror:/.test(l))
+                const prefix = hasErrors ? '🔴 Build errors after edit:' : '⚠️ Build warnings after edit:'
+                content = `${prefix}\n${errors.join('\n')}\n\n${content}`
+                this.send('qwen-event', { type: 'system', subtype: 'debug', data: `${prefix} ${errors.length} issue(s)` })
+              } else {
+                this.send('qwen-event', { type: 'system', subtype: 'debug', data: '✅ Build succeeded after Swift edit' })
+              }
+            } else if (buildResult.error && !buildResult.error.includes('Missing required session defaults')) {
+              // Only surface real errors, not "no project configured" noise
+              content = `⚠️ Build check: ${buildResult.error.slice(0, 200)}\n\n${content}`
+            }
+          } catch { /* non-fatal — don't block the agent loop */ }
+        }
+
         // Post-bash diagnostic hook: detect file-writing bash commands and check diagnostics
         // Catches heredocs (cat > file), redirects (echo > file), sed -i, etc.
         if (fnName === 'bash' && !isError && this._lspManager?.getStatus().status === 'ready') {
@@ -3011,6 +3041,43 @@ class DirectBridge {
               content = `[Vision: ${desc}]`
               this.send('qwen-event', { type: 'fast-assist', task: 'vision', label: '⚡ Fast Assistant — screenshot described', detail: desc.slice(0, 120) })
             }
+          }
+        }
+
+        // ── Auto-snapshot after build_run_sim ─────────────────────────────────
+        // After successfully launching the app on the simulator, automatically
+        // capture the UI hierarchy so the agent can see what's on screen without
+        // needing to call snapshot_ui separately.
+        if (fnName === 'xcode_build_run_simulator' && !isError && xcodeTool && xcodeTool.isXcodeMCPAvailable()) {
+          try {
+            // Small delay to let the app finish launching
+            await new Promise(r => setTimeout(r, 2000))
+            const snap = await xcodeTool.executeXcodeTool('xcode_snapshot_ui', {}, cwd)
+            if (snap.result && snap.result.length > 10) {
+              content = `${content}\n\n📱 UI snapshot after launch:\n${snap.result.slice(0, 3000)}`
+              this.send('qwen-event', { type: 'system', subtype: 'debug', data: '📱 Auto-captured UI snapshot after app launch' })
+            }
+          } catch { /* non-fatal */ }
+        }
+
+        // ── Auto-screenshot after xcode_screenshot_simulator ──────────────────
+        // When the agent takes a simulator screenshot, describe it via the fast
+        // vision model so the agent gets a text description it can reason about.
+        if (fnName === 'xcode_screenshot_simulator' && !isError && assistClient && content) {
+          // xcodebuildmcp returns the screenshot as a file path or base64
+          // Try to read the file if it's a path
+          const screenshotPath = content.match(/saved to[:\s]+(\S+\.png)/i)?.[1]
+          if (screenshotPath) {
+            try {
+              const imgBytes = require('fs').readFileSync(screenshotPath)
+              const b64 = imgBytes.toString('base64')
+              const desc = await assistClient.assistVision(b64, 'image/png',
+                'Describe this iOS simulator screenshot in detail. Note all visible UI elements, text, layout, any errors or loading states.')
+              if (desc) {
+                content = `${content}\n\n[Vision description: ${desc}]`
+                this.send('qwen-event', { type: 'fast-assist', task: 'vision', label: '⚡ Fast Assistant — simulator screenshot described', detail: desc.slice(0, 120) })
+              }
+            } catch { /* non-fatal */ }
           }
         }
 
