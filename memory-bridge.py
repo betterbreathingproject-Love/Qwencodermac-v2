@@ -720,6 +720,16 @@ async def archive_record(req: ArchiveRecordRequest):
 
     filtered_summary = _fail_closed_filter(req.summary)
 
+    # Ensure today's archive subdirectory exists — taosmd writes to
+    # archive/YYYY/MM/DD.jsonl but only creates the top-level dir during init.
+    if _data_path is not None:
+        try:
+            today = datetime.utcnow()
+            day_dir = _data_path / "archive" / str(today.year) / f"{today.month:02d}"
+            day_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass  # non-fatal — archive.record() will fail with a clear error if needed
+
     try:
         record = await _archive.record(
             event_type=req.event_type,
@@ -927,7 +937,7 @@ async def vector_search(req: VectorSearchRequest):
         )
 
     try:
-        results = await _vm.search(req.query, top_k=req.top_k, hybrid=req.hybrid)
+        results = await _vm.search(req.query, limit=req.top_k, hybrid=req.hybrid)
         return {
             "results": [
                 {
@@ -1098,7 +1108,7 @@ async def retrieve(req: RetrieveRequest):
             if _vm is None:
                 return []
             try:
-                results = await _vm.search(query_expanded, top_k=req.top_k, hybrid=True)
+                results = await _vm.search(query_expanded, limit=req.top_k, hybrid=True)
                 return [
                     {
                         "source": "vector",
@@ -1146,7 +1156,7 @@ async def retrieve(req: RetrieveRequest):
         try:
             from taosmd import CrossEncoderReranker
             reranker = CrossEncoderReranker()
-            all_results = reranker.rerank(query, all_results, top_k=req.top_k)
+            all_results = reranker.rerank(query, all_results, limit=req.top_k)
         except (ImportError, Exception) as e:
             logger.debug(f"CrossEncoder reranker not available, skipping: {e}")
             all_results = all_results[:req.top_k]
@@ -1199,7 +1209,7 @@ async def retrieve(req: RetrieveRequest):
         if _vm is not None and len(all_results) < req.top_k:
             # Fill remaining slots with vector search
             try:
-                results = await _vm.search(query_expanded, top_k=req.top_k - len(all_results), hybrid=True)
+                results = await _vm.search(query_expanded, limit=req.top_k - len(all_results), hybrid=True)
                 vector_items = [
                     {
                         "source": "vector",

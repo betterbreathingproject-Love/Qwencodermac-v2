@@ -33,10 +33,13 @@ module.exports = {
   // Client-side input token budget (slightly below prompt limit for safety)
   MAX_INPUT_TOKENS: Math.floor(CONTEXT_WINDOW * 0.85),
 
-  // Compaction triggers at 75% of context window — with autotune's dynamic KV sizing
-  // each turn now uses far less KV cache, so we can afford to compact later.
-  // Previously 65% which was too conservative and caused unnecessary compaction.
-  COMPACTION_THRESHOLD: Math.floor(CONTEXT_WINDOW * 0.75),
+  // Compaction triggers at 45% of context window.
+  // The rendered Jinja prompt includes tool schemas (~10-15k tokens of JSON)
+  // that estimateMessagesTokens() doesn't count — so the effective prompt is
+  // significantly larger than the raw message estimate. 45% of 84k = ~37.8k
+  // tokens of message content, which maps to ~50-55k tokens of rendered prompt,
+  // well within the model's safe operating range.
+  COMPACTION_THRESHOLD: Math.floor(CONTEXT_WINDOW * 0.45),
 
   // Pre-send guard: hard cap before sending to server
   PRE_SEND_LIMIT: Math.floor(CONTEXT_WINDOW * 0.88),
