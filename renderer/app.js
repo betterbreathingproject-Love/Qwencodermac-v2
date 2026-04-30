@@ -5590,6 +5590,7 @@ const AVAILABLE_TOOLS = [
   { name: 'browser_select_option', icon: '☑️', category: 'browser', desc: 'Select an option from a dropdown.' },
   { name: 'browser_close',         icon: '🚪', category: 'browser', desc: 'Close the browser and free resources.' },
   // ── Xcode / iOS / Swift ──────────────────────────────────────────────────────
+  { name: 'xcode_setup_project',       icon: '🚀', category: 'xcode', desc: 'Auto-discover and configure the Xcode project in one step. Validates xcode-select, finds project/scheme/simulator automatically. Call this first.' },
   { name: 'xcode_discover_projects',   icon: '🔎', category: 'xcode', desc: 'Scan a directory to find .xcodeproj and .xcworkspace files.' },
   { name: 'xcode_set_defaults',        icon: '⚙️', category: 'xcode', desc: 'Configure session: project path, scheme, simulator. Call before build/test.' },
   { name: 'xcode_show_defaults',       icon: '📋', category: 'xcode', desc: 'Show current session defaults (project, scheme, simulator).' },
@@ -5868,7 +5869,7 @@ const ALL_TOOLS = [
   'browser_get_text', 'browser_get_html', 'browser_evaluate', 'browser_wait_for',
   'browser_select_option', 'browser_close',
   // Xcode / iOS / Swift
-  'xcode_discover_projects', 'xcode_set_defaults', 'xcode_show_defaults',
+  'xcode_setup_project', 'xcode_discover_projects', 'xcode_set_defaults', 'xcode_show_defaults',
   'xcode_list_schemes', 'xcode_list_simulators', 'xcode_boot_simulator',
   'xcode_build_simulator', 'xcode_build_run_simulator', 'xcode_test', 'xcode_clean',
   'xcode_get_build_settings', 'xcode_snapshot_ui', 'xcode_screenshot_simulator',
@@ -5947,7 +5948,7 @@ function renderToolsGrid(selectedTools) {
     { label: '⚡ Shell & Search', tools: ['bash','search_files','web_search','web_fetch'] },
     { label: '🤖 Agent', tools: ['update_todos','edit_todos','task_complete','ask_user','rewind_context'] },
     { label: '🌐 Browser', tools: ['browser_navigate','browser_screenshot','browser_click','browser_type','browser_get_text','browser_get_html','browser_evaluate','browser_wait_for','browser_select_option','browser_close'] },
-    { label: '🍎 Xcode / Swift', tools: ['xcode_discover_projects','xcode_set_defaults','xcode_show_defaults','xcode_list_schemes','xcode_list_simulators','xcode_boot_simulator','xcode_build_simulator','xcode_build_run_simulator','xcode_test','xcode_clean','xcode_get_build_settings','xcode_snapshot_ui','xcode_screenshot_simulator','xcode_start_log_capture','xcode_stop_log_capture','xcode_get_coverage_report','xcode_get_file_coverage','xcode_get_bundle_id','xcode_get_app_path','xcode_record_video'] },
+    { label: '🍎 Xcode / Swift', tools: ['xcode_setup_project','xcode_discover_projects','xcode_set_defaults','xcode_show_defaults','xcode_list_schemes','xcode_list_simulators','xcode_boot_simulator','xcode_build_simulator','xcode_build_run_simulator','xcode_test','xcode_clean','xcode_get_build_settings','xcode_snapshot_ui','xcode_screenshot_simulator','xcode_start_log_capture','xcode_stop_log_capture','xcode_get_coverage_report','xcode_get_file_coverage','xcode_get_bundle_id','xcode_get_app_path','xcode_record_video'] },
   ]
 
   for (const group of groups) {

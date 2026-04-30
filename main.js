@@ -75,10 +75,22 @@ const ROLE_OVERLAYS = {
     'Do NOT guess and patch — diagnose first.',
 
   'tester':
-    'You are in TESTER mode. Verify behaviour using the browser and screenshots.\n' +
-    'Workflow: navigate → screenshot → interact (one action at a time) → screenshot → verify with browser_get_text/browser_evaluate → browser_close.\n' +
-    'Anti-stuck: if blank page, use browser_wait_for("body","visible"); if element missing, check DOM with browser_evaluate; never click same element twice without a screenshot.\n' +
-    'Always call browser_close at the end to finalise the video. Report the video path in your summary.',
+    'You are in TESTER mode. You can test both web apps (Playwright) and iOS/Swift apps (XcodeBuildMCP).\n' +
+    '\n' +
+    'For iOS/Swift projects:\n' +
+    '1. ALWAYS start with xcode_setup_project() — this auto-discovers the project, scheme, and simulator in one step.\n' +
+    '2. Build and run: xcode_build_run_simulator() — builds, installs, and launches. Auto-captures UI snapshot.\n' +
+    '3. Inspect UI: xcode_snapshot_ui() — full view hierarchy with coordinates.\n' +
+    '4. Screenshot: xcode_screenshot_simulator() — visual screenshot, auto-described by fast model.\n' +
+    '5. Run tests: xcode_test() — XCTest results with pass/fail per test.\n' +
+    '6. Check coverage: xcode_get_coverage_report() then xcode_get_file_coverage() for specific files.\n' +
+    '7. Capture logs: xcode_start_log_capture() → trigger action → xcode_stop_log_capture().\n' +
+    '\n' +
+    'For web apps:\n' +
+    'navigate → screenshot → interact (one action at a time) → screenshot → verify → browser_close.\n' +
+    '\n' +
+    'Anti-stuck: if xcode_setup_project fails with xcode-select error, run: bash({command: "sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"})\n' +
+    'Always call task_complete with a summary of what was tested and the results.',
 
   'requirements':
     'You are in REQUIREMENTS mode. Clarify and document what needs to be built — do NOT write implementation code.\n' +
@@ -228,8 +240,22 @@ agentPool.registerType({ name: 'code-search', systemPrompt: '', allowedTools: ['
 agentPool.registerType({ name: 'requirements', systemPrompt: '', allowedTools: [] })
 agentPool.registerType({ name: 'design', systemPrompt: '', allowedTools: [] })
 agentPool.registerType({ name: 'debug', systemPrompt: '', allowedTools: ['read_file', 'list_dir', 'search_files', 'bash', 'web_search', 'web_fetch'] })
-agentPool.registerType({ name: 'tester', systemPrompt: '', allowedTools: ['browser_navigate', 'browser_screenshot', 'browser_click', 'browser_type', 'browser_get_text', 'browser_get_html', 'browser_evaluate', 'browser_wait_for', 'browser_select_option', 'browser_close', 'bash', 'read_file'] })
-agentPool.registerType({ name: 'tester', systemPrompt: '', allowedTools: ['browser_navigate', 'browser_screenshot', 'browser_click', 'browser_type', 'browser_get_text', 'browser_get_html', 'browser_evaluate', 'browser_wait_for', 'browser_select_option', 'browser_close', 'bash', 'read_file'] })
+agentPool.registerType({ name: 'tester', systemPrompt: '', allowedTools: [
+  // Browser (web testing)
+  'browser_navigate', 'browser_screenshot', 'browser_click', 'browser_type',
+  'browser_get_text', 'browser_get_html', 'browser_evaluate', 'browser_wait_for',
+  'browser_select_option', 'browser_close',
+  // General
+  'bash', 'read_file', 'list_dir', 'search_files',
+  // Xcode / iOS / Swift testing
+  'xcode_setup_project', 'xcode_discover_projects', 'xcode_set_defaults', 'xcode_show_defaults',
+  'xcode_list_schemes', 'xcode_list_simulators', 'xcode_boot_simulator',
+  'xcode_build_simulator', 'xcode_build_run_simulator', 'xcode_test', 'xcode_clean',
+  'xcode_get_build_settings', 'xcode_snapshot_ui', 'xcode_screenshot_simulator',
+  'xcode_start_log_capture', 'xcode_stop_log_capture',
+  'xcode_get_coverage_report', 'xcode_get_file_coverage',
+  'xcode_get_bundle_id', 'xcode_get_app_path', 'xcode_record_video',
+] })
 agentPool.registerType({ name: 'implementation', systemPrompt: '', allowedTools: ['read_file', 'write_file', 'edit_file', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch'], timeout: 1800000 }) // 30 min
 agentPool.registerType({ name: 'general', systemPrompt: '', allowedTools: ['read_file', 'write_file', 'edit_file', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch'], timeout: 1800000 }) // 30 min
 

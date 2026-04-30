@@ -22,6 +22,18 @@ const XCODE_TOOL_DEFS = [
   {
     type: 'function',
     function: {
+      name: 'xcode_setup_project',
+      description: 'Auto-discover and configure the Xcode project in the current directory. Finds .xcodeproj/.xcworkspace, lists schemes, picks the best one, finds a simulator, and configures the session — all in one step. Call this FIRST when starting work on an iOS/Swift project. Also validates that xcode-select points to Xcode.app.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'xcode_set_defaults',
       description: 'Configure the active XcodeBuildMCP session: set project/workspace path, scheme, simulator, and other build defaults. Call this FIRST before any build/test/run operation. Settings persist for the session.',
       parameters: {
@@ -313,6 +325,7 @@ const XCODE_TOOL_DEFS = [
 
 // Map our tool names to XcodeBuildMCP tool names (v2.3.2 snake_case names)
 const TOOL_NAME_MAP = {
+  xcode_setup_project:         null,  // handled locally in executeXcodeTool
   xcode_set_defaults:          'session_set_defaults',
   xcode_show_defaults:         'session_show_defaults',
   xcode_discover_projects:     'discover_projs',
@@ -625,6 +638,14 @@ function getClient() {
  * @returns {Promise<{result?: string, error?: string}>}
  */
 async function executeXcodeTool(toolName, args, cwd) {
+  // xcode_setup_project is handled locally — no MCP call needed
+  if (toolName === 'xcode_setup_project') {
+    const result = await setupXcodeProject(cwd || process.cwd())
+    return result.ok
+      ? { result: result.message }
+      : { error: result.message }
+  }
+
   const mcpName = TOOL_NAME_MAP[toolName]
   if (!mcpName) return { error: `Unknown xcode tool: ${toolName}` }
 
@@ -686,6 +707,158 @@ function isXcodeMCPAvailable() {
 }
 
 /**
+ * Ensure xcode-select points to the full Xcode.app, not CommandLineTools.
+ * CommandLineTools doesn't have xcodebuild's full simulator support.
+ * Returns { ok, fixed, message }.
+ */
+function ensureXcodePath() {
+  const { execSync } = require('child_process')
+  try {
+    const current = execSync('xcode-select -p', { timeout: 5000 }).toString().trim()
+    if (current.includes('CommandLineTools') && !current.includes('Xcode.app')) {
+      // Try to find Xcode.app and switch to it
+      const { execFileSync } = require('child_process')
+      const fs = require('fs')
+      const xcodePath = '/Applications/Xcode.app/Contents/Developer'
+      if (fs.existsSync(xcodePath)) {
+        try {
+          execFileSync('sudo', ['-n', 'xcode-select', '-s', xcodePath], { timeout: 5000 })
+          return { ok: true, fixed: true, message: `Switched xcode-select to ${xcodePath}` }
+        } catch {
+          // sudo -n failed (needs password) — return instructions
+          return {
+            ok: false, fixed: false,
+            message: `xcode-select points to CommandLineTools. Run this to fix:\n  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`,
+          }
+        }
+      }
+      return {
+        ok: false, fixed: false,
+        message: `xcode-select points to CommandLineTools but Xcode.app not found at /Applications/Xcode.app. Install Xcode from the App Store.`,
+      }
+    }
+    return { ok: true, fixed: false, message: `xcode-select: ${current}` }
+  } catch (e) {
+    return { ok: false, fixed: false, message: `xcode-select check failed: ${e.message}` }
+  }
+}
+
+/**
+ * Auto-discover and configure an Xcode project in the given directory.
+ * Finds .xcworkspace/.xcodeproj, lists schemes, picks the first one,
+ * finds a simulator, and calls session_set_defaults.
+ *
+ * Returns { ok, projectPath, workspacePath, scheme, simulator, message }.
+ */
+async function setupXcodeProject(cwd) {
+  const fs = require('fs')
+  const path = require('path')
+  const { execSync } = require('child_process')
+
+  // 1. Check xcode-select
+  const xcodeCheck = ensureXcodePath()
+  if (!xcodeCheck.ok) {
+    return { ok: false, message: xcodeCheck.message }
+  }
+
+  // 2. Find project/workspace — search up to 3 levels deep
+  function findXcodeProject(dir, depth = 0) {
+    if (depth > 3) return null
+    try {
+      const entries = fs.readdirSync(dir)
+      // Prefer .xcworkspace (CocoaPods/SPM) over .xcodeproj
+      const workspace = entries.find(e => e.endsWith('.xcworkspace') && !e.includes('.xcodeproj'))
+      if (workspace) return { type: 'workspace', path: path.join(dir, workspace) }
+      const project = entries.find(e => e.endsWith('.xcodeproj'))
+      if (project) return { type: 'project', path: path.join(dir, project) }
+      // Recurse into subdirectories (skip hidden, node_modules, build dirs)
+      const SKIP = new Set(['.git', 'node_modules', 'build', 'DerivedData', '.build', 'Pods'])
+      for (const entry of entries) {
+        if (SKIP.has(entry) || entry.startsWith('.')) continue
+        const sub = path.join(dir, entry)
+        try {
+          if (fs.statSync(sub).isDirectory()) {
+            const found = findXcodeProject(sub, depth + 1)
+            if (found) return found
+          }
+        } catch { /* skip */ }
+      }
+    } catch { /* skip */ }
+    return null
+  }
+
+  const found = findXcodeProject(cwd)
+  if (!found) {
+    return { ok: false, message: `No .xcodeproj or .xcworkspace found in ${cwd} (searched 3 levels deep)` }
+  }
+
+  const projectPath = found.type === 'project' ? found.path : undefined
+  const workspacePath = found.type === 'workspace' ? found.path : undefined
+  const projectArg = workspacePath ? `-workspace "${workspacePath}"` : `-project "${projectPath}"`
+
+  // 3. List schemes
+  let scheme = null
+  try {
+    const schemesOut = execSync(
+      `xcodebuild ${projectArg} -list 2>/dev/null`,
+      { timeout: 30000, encoding: 'utf-8', cwd }
+    )
+    const schemeMatch = schemesOut.match(/Schemes:\s*\n([\s\S]*?)(?:\n\n|\nBuild Configurations:|\nTargets:|$)/)
+    if (schemeMatch) {
+      const schemes = schemeMatch[1].split('\n').map(s => s.trim()).filter(Boolean)
+      // Prefer scheme matching project name, then first non-test scheme
+      const projName = path.basename(projectPath || workspacePath, path.extname(projectPath || workspacePath))
+      scheme = schemes.find(s => s === projName)
+        || schemes.find(s => !s.toLowerCase().includes('test') && !s.toLowerCase().includes('ui'))
+        || schemes[0]
+    }
+  } catch (e) {
+    return { ok: false, message: `Failed to list schemes: ${e.message}\n\nMake sure Xcode is installed and xcode-select points to Xcode.app:\n  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` }
+  }
+
+  if (!scheme) {
+    return { ok: false, message: `No schemes found in ${found.path}` }
+  }
+
+  // 4. Find a good simulator (prefer iPhone 16/17, fall back to any iPhone)
+  let simulatorName = 'iPhone 16'
+  try {
+    const simsOut = execSync('xcrun simctl list devices available --json 2>/dev/null', { timeout: 10000, encoding: 'utf-8' })
+    const simsData = JSON.parse(simsOut)
+    const allDevices = Object.values(simsData.devices || {}).flat()
+    const iphones = allDevices.filter(d => d.name.startsWith('iPhone') && d.isAvailable !== false)
+    const preferred = iphones.find(d => /iPhone 1[67]/.test(d.name)) || iphones[iphones.length - 1]
+    if (preferred) simulatorName = preferred.name
+  } catch { /* use default */ }
+
+  // 5. Configure the session
+  const client = getClient()
+  const setArgs = {
+    scheme,
+    simulatorName,
+    simulatorPlatform: 'iOS Simulator',
+  }
+  if (workspacePath) setArgs.workspacePath = workspacePath
+  else setArgs.projectPath = projectPath
+
+  try {
+    await client.callTool('session_set_defaults', setArgs, 30000)
+  } catch (e) {
+    return { ok: false, message: `session_set_defaults failed: ${e.message}` }
+  }
+
+  const projDisplay = path.basename(workspacePath || projectPath)
+  return {
+    ok: true,
+    projectPath,
+    workspacePath,
+    scheme,
+    simulator: simulatorName,
+    message: `✅ Xcode project configured:\n  Project: ${projDisplay}\n  Scheme: ${scheme}\n  Simulator: ${simulatorName}\n\nReady to build. Use xcode_build_run_simulator() to build and launch.`,
+  }
+}
+
+/**
  * Gracefully stop the MCP server subprocess on app exit.
  */
 function shutdown() {
@@ -701,4 +874,6 @@ module.exports = {
   isXcodeMCPAvailable,
   getClient,
   shutdown,
+  setupXcodeProject,
+  ensureXcodePath,
 }
