@@ -5561,42 +5561,81 @@ function scrollEditorToLine(line) {
 // ── Tools panel ───────────────────────────────────────────────────────────────
 
 const AVAILABLE_TOOLS = [
-  // File tools
-  { name: 'read_file', icon: '📄', category: 'file', desc: 'Read the contents of a file. Returns the full text content.' },
-  { name: 'write_file', icon: '✏️', category: 'file', desc: 'Create or overwrite a file. Creates parent directories as needed.' },
-  { name: 'edit_file', icon: '🔧', category: 'file', desc: 'Surgical find-and-replace edit. Matches an exact string and replaces it.' },
-  { name: 'list_dir', icon: '📂', category: 'file', desc: 'List files and directories. Shows entries with / suffix for folders.' },
+  // ── File System ──────────────────────────────────────────────────────────────
+  { name: 'read_file',    icon: '📄', category: 'file',   desc: 'Read file contents. Supports start_line/end_line for large files.' },
+  { name: 'write_file',  icon: '✏️', category: 'file',   desc: 'Create or overwrite a file. Auto-snapshots before-state for undo.' },
+  { name: 'edit_file',   icon: '🔧', category: 'file',   desc: 'Surgical find-and-replace. Matches exact string, replaces once.' },
+  { name: 'list_dir',    icon: '📂', category: 'file',   desc: 'List files and directories. Returns full recursive tree from project root.' },
+  // ── Shell ────────────────────────────────────────────────────────────────────
+  { name: 'bash',        icon: '⚡', category: 'shell',  desc: 'Execute a shell command. 30s timeout; 5min for installs/builds.' },
+  // ── Search ───────────────────────────────────────────────────────────────────
   { name: 'search_files', icon: '🔍', category: 'search', desc: 'Grep for a regex pattern across files. Returns matching lines with paths and line numbers.' },
-  // Shell
-  { name: 'bash', icon: '⚡', category: 'shell', desc: 'Execute a shell command and return output. Used for tests, installs, git, and more.' },
-  // Browser tools
-  { name: 'browser_navigate', icon: '🌐', category: 'browser', desc: 'Navigate to a URL. Returns the page title and visible text content.' },
-  { name: 'browser_screenshot', icon: '📸', category: 'browser', desc: 'Capture a screenshot of the page or a specific element as PNG.' },
-  { name: 'browser_click', icon: '👆', category: 'browser', desc: 'Click an element on the page by CSS selector.' },
-  { name: 'browser_type', icon: '⌨️', category: 'browser', desc: 'Type text into an input field. Can clear first or append.' },
-  { name: 'browser_get_text', icon: '📝', category: 'browser', desc: 'Extract visible text from the full page or a specific element.' },
-  { name: 'browser_get_html', icon: '🏷️', category: 'browser', desc: 'Get the HTML source of the page or a specific element.' },
-  { name: 'browser_evaluate', icon: '🧪', category: 'browser', desc: 'Execute JavaScript in the browser page context and return the result.' },
-  { name: 'browser_wait_for', icon: '⏳', category: 'browser', desc: 'Wait for an element to appear or for navigation to complete.' },
-  { name: 'browser_select_option', icon: '☑️', category: 'browser', desc: 'Select an option from a dropdown element.' },
-  { name: 'browser_close', icon: '🚪', category: 'browser', desc: 'Close the browser and free resources.' },
+  { name: 'web_search',  icon: '🌍', category: 'search', desc: 'Search the web via Brave Search API. Returns titles, URLs, and snippets.' },
+  { name: 'web_fetch',   icon: '🔗', category: 'search', desc: 'Fetch and extract text content from a URL. Summarized by fast model if large.' },
+  // ── Agent Control ────────────────────────────────────────────────────────────
+  { name: 'update_todos',  icon: '📋', category: 'agent', desc: 'Set or replace the full todo/progress list. Call at the start of a task.' },
+  { name: 'edit_todos',    icon: '✅', category: 'agent', desc: 'Surgically add, update, or remove individual todo items.' },
+  { name: 'task_complete', icon: '🏁', category: 'agent', desc: 'Signal task completion with a summary. Must be called when done.' },
+  { name: 'ask_user',      icon: '💬', category: 'agent', desc: 'Ask the user a question and wait for their reply.' },
+  { name: 'rewind_context',icon: '↩️', category: 'agent', desc: 'Retrieve original uncompressed content for a previously compressed tool result.' },
+  // ── Browser Automation (Playwright) ─────────────────────────────────────────
+  { name: 'browser_navigate',      icon: '🌐', category: 'browser', desc: 'Navigate to a URL. Returns page title and visible text.' },
+  { name: 'browser_screenshot',    icon: '📸', category: 'browser', desc: 'Screenshot the page or element. Auto-described by fast vision model.' },
+  { name: 'browser_click',         icon: '👆', category: 'browser', desc: 'Click an element by CSS selector.' },
+  { name: 'browser_type',          icon: '⌨️', category: 'browser', desc: 'Type text into an input field.' },
+  { name: 'browser_get_text',      icon: '📝', category: 'browser', desc: 'Extract visible text from the page or a specific element.' },
+  { name: 'browser_get_html',      icon: '🏷️', category: 'browser', desc: 'Get the HTML source of the page or element.' },
+  { name: 'browser_evaluate',      icon: '🧪', category: 'browser', desc: 'Execute JavaScript in the browser context.' },
+  { name: 'browser_wait_for',      icon: '⏳', category: 'browser', desc: 'Wait for an element to appear or navigation to complete.' },
+  { name: 'browser_select_option', icon: '☑️', category: 'browser', desc: 'Select an option from a dropdown.' },
+  { name: 'browser_close',         icon: '🚪', category: 'browser', desc: 'Close the browser and free resources.' },
+  // ── Xcode / iOS / Swift ──────────────────────────────────────────────────────
+  { name: 'xcode_discover_projects',   icon: '🔎', category: 'xcode', desc: 'Scan a directory to find .xcodeproj and .xcworkspace files.' },
+  { name: 'xcode_set_defaults',        icon: '⚙️', category: 'xcode', desc: 'Configure session: project path, scheme, simulator. Call before build/test.' },
+  { name: 'xcode_show_defaults',       icon: '📋', category: 'xcode', desc: 'Show current session defaults (project, scheme, simulator).' },
+  { name: 'xcode_list_schemes',        icon: '📑', category: 'xcode', desc: 'List all available schemes in the Xcode project.' },
+  { name: 'xcode_list_simulators',     icon: '📱', category: 'xcode', desc: 'List available iOS simulators.' },
+  { name: 'xcode_boot_simulator',      icon: '🚀', category: 'xcode', desc: 'Boot a simulator by name or UDID.' },
+  { name: 'xcode_build_simulator',     icon: '🔨', category: 'xcode', desc: 'Compile Swift code for simulator. Returns structured errors with file/line. Auto-runs after .swift edits.' },
+  { name: 'xcode_build_run_simulator', icon: '▶️', category: 'xcode', desc: 'Build, install, and launch on simulator in one step. Auto-captures UI snapshot after launch.' },
+  { name: 'xcode_test',                icon: '🧪', category: 'xcode', desc: 'Run XCTest suite. Returns pass/fail per test with failure details.' },
+  { name: 'xcode_clean',              icon: '🧹', category: 'xcode', desc: 'Clean build products.' },
+  { name: 'xcode_get_build_settings', icon: '🔩', category: 'xcode', desc: 'Get build settings: BUNDLE_ID, SWIFT_VERSION, DEPLOYMENT_TARGET, etc.' },
+  { name: 'xcode_snapshot_ui',        icon: '🗺️', category: 'xcode', desc: 'Capture full UI view hierarchy with element coordinates. Powered by AXe accessibility APIs.' },
+  { name: 'xcode_screenshot_simulator',icon: '📸', category: 'xcode', desc: 'Take a simulator screenshot. Auto-described by fast vision model.' },
+  { name: 'xcode_start_log_capture',  icon: '📡', category: 'xcode', desc: 'Start capturing app console logs from the simulator.' },
+  { name: 'xcode_stop_log_capture',   icon: '📋', category: 'xcode', desc: 'Stop log capture and return all captured logs.' },
+  { name: 'xcode_get_coverage_report',icon: '📊', category: 'xcode', desc: 'Per-target code coverage from a test run xcresult bundle.' },
+  { name: 'xcode_get_file_coverage',  icon: '🎯', category: 'xcode', desc: 'Function-level coverage + uncovered line ranges for a specific Swift file.' },
+  { name: 'xcode_get_bundle_id',      icon: '🏷️', category: 'xcode', desc: 'Extract bundle identifier from a built .app bundle.' },
+  { name: 'xcode_get_app_path',       icon: '📍', category: 'xcode', desc: 'Get the path to the built .app in simulator derived data.' },
+  { name: 'xcode_record_video',       icon: '🎬', category: 'xcode', desc: 'Record a video of the simulator screen.' },
 ]
 
 function renderToolsPanel() {
   const grid = document.getElementById('toolsGrid')
   if (!grid) return
 
-  const groups = { file: [], shell: [], search: [], browser: [] }
+  const categoryOrder = ['file', 'shell', 'search', 'agent', 'browser', 'xcode']
+  const labels = {
+    file:    '📁 File System',
+    shell:   '⚡ Shell',
+    search:  '🔍 Search & Web',
+    agent:   '🤖 Agent Control',
+    browser: '🌐 Browser Automation (Playwright)',
+    xcode:   '🍎 Xcode / iOS / Swift (XcodeBuildMCP)',
+  }
+  const groups = {}
+  for (const cat of categoryOrder) groups[cat] = []
   for (const t of AVAILABLE_TOOLS) {
-    (groups[t.category] || []).push(t)
+    if (groups[t.category]) groups[t.category].push(t)
   }
 
-  const labels = { file: 'File System', shell: 'Shell', search: 'Search', browser: 'Browser Automation (Playwright)' }
   let html = ''
-
-  for (const [cat, tools] of Object.entries(groups)) {
+  for (const cat of categoryOrder) {
+    const tools = groups[cat]
     if (tools.length === 0) continue
-    html += `<div class="tools-section-label" style="grid-column:1/-1">${labels[cat] || cat}</div>`
+    html += `<div class="tools-section-label" style="grid-column:1/-1">${labels[cat]}</div>`
     for (const t of tools) {
       html += `<div class="tool-card">
         <div class="tool-card-header">
@@ -5818,11 +5857,24 @@ function populateExtractionModelList(models) {
 // ── Agent Roles Tab ───────────────────────────────────────────────────────────
 
 const ALL_TOOLS = [
-  'read_file', 'write_file', 'edit_file', 'list_dir', 'bash', 'search_files',
-  'web_search', 'web_fetch',
+  // File
+  'read_file', 'write_file', 'edit_file', 'list_dir',
+  // Shell & Search
+  'bash', 'search_files', 'web_search', 'web_fetch',
+  // Agent control
+  'update_todos', 'edit_todos', 'task_complete', 'ask_user', 'rewind_context',
+  // Browser (Playwright)
   'browser_navigate', 'browser_screenshot', 'browser_click', 'browser_type',
   'browser_get_text', 'browser_get_html', 'browser_evaluate', 'browser_wait_for',
   'browser_select_option', 'browser_close',
+  // Xcode / iOS / Swift
+  'xcode_discover_projects', 'xcode_set_defaults', 'xcode_show_defaults',
+  'xcode_list_schemes', 'xcode_list_simulators', 'xcode_boot_simulator',
+  'xcode_build_simulator', 'xcode_build_run_simulator', 'xcode_test', 'xcode_clean',
+  'xcode_get_build_settings', 'xcode_snapshot_ui', 'xcode_screenshot_simulator',
+  'xcode_start_log_capture', 'xcode_stop_log_capture',
+  'xcode_get_coverage_report', 'xcode_get_file_coverage',
+  'xcode_get_bundle_id', 'xcode_get_app_path', 'xcode_record_video',
 ]
 
 let _agentRoles = []
@@ -5889,12 +5941,31 @@ function renderToolsGrid(selectedTools) {
   const grid = document.getElementById('agentRoleToolsGrid')
   if (!grid) return
   grid.innerHTML = ''
-  for (const tool of ALL_TOOLS) {
-    const chip = document.createElement('span')
-    chip.className = 'agent-tool-chip' + (selectedTools.includes(tool) ? ' selected' : '')
-    chip.textContent = tool
-    chip.onclick = () => chip.classList.toggle('selected')
-    grid.appendChild(chip)
+
+  const groups = [
+    { label: '📁 File', tools: ['read_file','write_file','edit_file','list_dir'] },
+    { label: '⚡ Shell & Search', tools: ['bash','search_files','web_search','web_fetch'] },
+    { label: '🤖 Agent', tools: ['update_todos','edit_todos','task_complete','ask_user','rewind_context'] },
+    { label: '🌐 Browser', tools: ['browser_navigate','browser_screenshot','browser_click','browser_type','browser_get_text','browser_get_html','browser_evaluate','browser_wait_for','browser_select_option','browser_close'] },
+    { label: '🍎 Xcode / Swift', tools: ['xcode_discover_projects','xcode_set_defaults','xcode_show_defaults','xcode_list_schemes','xcode_list_simulators','xcode_boot_simulator','xcode_build_simulator','xcode_build_run_simulator','xcode_test','xcode_clean','xcode_get_build_settings','xcode_snapshot_ui','xcode_screenshot_simulator','xcode_start_log_capture','xcode_stop_log_capture','xcode_get_coverage_report','xcode_get_file_coverage','xcode_get_bundle_id','xcode_get_app_path','xcode_record_video'] },
+  ]
+
+  for (const group of groups) {
+    const label = document.createElement('div')
+    label.style.cssText = 'font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);padding:6px 0 3px;width:100%;'
+    label.textContent = group.label
+    grid.appendChild(label)
+
+    const row = document.createElement('div')
+    row.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px;'
+    for (const tool of group.tools) {
+      const chip = document.createElement('span')
+      chip.className = 'agent-tool-chip' + (selectedTools.includes(tool) ? ' selected' : '')
+      chip.textContent = tool
+      chip.onclick = () => chip.classList.toggle('selected')
+      row.appendChild(chip)
+    }
+    grid.appendChild(row)
   }
 }
 

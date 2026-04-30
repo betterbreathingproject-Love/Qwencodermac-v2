@@ -1017,6 +1017,8 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .tool-card-badge.browser { background: rgba(166, 127, 237, 0.15); color: #a67fed; }
 .tool-card-badge.shell { background: rgba(241, 178, 78, 0.15); color: #f1b24e; }
 .tool-card-badge.search { background: rgba(78, 241, 154, 0.15); color: #4ef19a; }
+.tool-card-badge.agent { background: rgba(250, 204, 21, 0.15); color: #facc15; }
+.tool-card-badge.xcode { background: rgba(248, 113, 113, 0.15); color: #f87171; }
 .tool-card-desc { font-size: 11px; color: var(--muted); line-height: 1.5; }
 .tools-section-label {
   font-size: 11px;
