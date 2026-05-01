@@ -1468,6 +1468,25 @@ async def extractor_load(req: ExtractorLoadRequest):
         except Exception as _e:
             logger.warning(f"Could not detect vision capability: {_e}")
 
+        # If the same model is already loaded but as the wrong type (e.g. loaded as
+        # text-only before vision-detection code existed), unload it first so we
+        # can reload it correctly via mlx_vlm.
+        if _extract_model is not None:
+            already_correct = (_extract_model_path == req.model_path and _extract_model_has_vision == _has_vision)
+            if not already_correct:
+                logger.info(f"Unloading existing extraction model before reload (vision={_extract_model_has_vision} → {_has_vision})")
+                _extract_model = None
+                _extract_processor = None
+                _extract_model_path = None
+                _extract_model_has_vision = False
+                import gc
+                gc.collect()
+                try:
+                    import mlx.core as mx
+                    mx.metal.clear_cache()
+                except Exception:
+                    pass
+
         if _has_vision:
             logger.info(f"Loading extraction model as vision-capable (mlx_vlm): {req.model_path}")
             _extract_model, _extract_processor = mlx_vlm.load(req.model_path)
@@ -1986,20 +2005,52 @@ async def _handle_vision(payload: dict) -> AssistResponse:
 
     # If the extraction model was loaded as text-only (no vision weights),
     # it cannot process images — return None so the caller falls back gracefully.
-    # Self-heal: if the flag is False but the processor is actually a VLM processor
-    # (loaded before the vision-detection code existed), correct the flag at runtime.
+    # Self-heal: if the flag is False but the model path has vision weights,
+    # the model was loaded before vision-detection existed — reload it via mlx_vlm.
     if not _extract_model_has_vision:
-        # Check if the processor has vision capabilities at runtime
-        _processor_type = type(_extract_processor).__name__
-        _has_vision_runtime = (
-            hasattr(_extract_processor, 'image_processor') or
-            'VL' in _processor_type or
-            'Vision' in _processor_type or
-            'vlm' in _processor_type.lower()
-        )
-        if _has_vision_runtime:
-            logger.info(f"[_handle_vision] self-healing: processor type '{_processor_type}' has vision — correcting _extract_model_has_vision flag")
-            _extract_model_has_vision = True
+        # Check if the model path actually has vision weights (config-based check)
+        _can_heal = False
+        if _extract_model_path:
+            try:
+                import json
+                from pathlib import Path as _Path
+                _cfg_path = _Path(_extract_model_path) / "config.json"
+                _idx_path = _Path(_extract_model_path) / "model.safetensors.index.json"
+                if _cfg_path.exists():
+                    _cfg = json.loads(_cfg_path.read_text())
+                    _has_vision_cfg = "vision_config" in _cfg or "image_token_id" in _cfg
+                    if _idx_path.exists():
+                        _idx = json.loads(_idx_path.read_text())
+                        _has_vision_weights = any("vision" in k for k in _idx.get("weight_map", {}).keys())
+                    else:
+                        _has_vision_weights = (
+                            (_Path(_extract_model_path) / "preprocessor_config.json").exists() or
+                            (_Path(_extract_model_path) / "processor_config.json").exists()
+                        )
+                    _can_heal = _has_vision_cfg and _has_vision_weights
+            except Exception:
+                pass
+
+        if _can_heal:
+            logger.info(f"[_handle_vision] self-healing: reloading '{_extract_model_path}' via mlx_vlm (was loaded text-only)")
+            try:
+                import mlx_vlm as _mlx_vlm
+                import gc
+                _extract_model = None
+                _extract_processor = None
+                gc.collect()
+                try:
+                    import mlx.core as mx
+                    mx.metal.clear_cache()
+                except Exception:
+                    pass
+                _extract_model, _extract_processor = _mlx_vlm.load(_extract_model_path)
+                _extract_model_has_vision = True
+                logger.info(f"[_handle_vision] self-heal reload complete — vision now enabled")
+            except Exception as _heal_err:
+                logger.warning(f"[_handle_vision] self-heal reload failed: {_heal_err}")
+                elapsed_ms = int((time.monotonic() - t0) * 1000)
+                return AssistResponse(result=None, elapsed_ms=elapsed_ms, output_tokens=0)
         else:
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             logger.debug("[_handle_vision] extraction model is text-only, cannot process images")
