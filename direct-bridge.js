@@ -2398,7 +2398,13 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       }
     } catch { /* buildFileTree failed — skip */ }
 
-    const finalSystemPrompt = stableSystemPrompt + variableSystemContent
+    // ── Two-message system prompt for prefix cache stability ──────────────
+    // messages[0] = stable core prompt (cached by server, KV state reused)
+    // messages[1] = variable context (file tree, steering — changes often)
+    // The server's get_system_prompt() returns messages[0].content for cache
+    // matching. Variable content in messages[1] is part of the delta that
+    // gets prefilled fresh each turn, so file tree changes don't invalidate
+    // the cached KV state. This gives consistent prefix cache hits.
 
     // Build the final prompt — use lightweight project context when conversation
     // history is large (>8 messages), falling back to full transcript for short chats.
@@ -2436,9 +2442,14 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
     finalPrompt += prompt + imageContext
 
     const messages = [
-      { role: 'system', content: finalSystemPrompt },
-      { role: 'user', content: finalPrompt },
+      { role: 'system', content: stableSystemPrompt },
     ]
+    // Variable content (file tree, steering) goes in a separate system message
+    // so it doesn't invalidate the prefix cache when it changes.
+    if (variableSystemContent) {
+      messages.push({ role: 'system', content: variableSystemContent.trim() })
+    }
+    messages.push({ role: 'user', content: finalPrompt })
 
     this.send('qwen-event', { type: 'session-start', cwd: workDir })
 
@@ -2654,7 +2665,10 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         const keepRecent = 8  // always keep the last N messages intact
         const cutoff = messages.length - keepRecent
         let pruned = 0
-        for (let pi = 1; pi < cutoff; pi++) {  // skip messages[0] (system prompt)
+        // Count leading system messages to skip (stable prompt + variable context)
+        let sysSkip = 0
+        while (sysSkip < messages.length && messages[sysSkip]?.role === 'system') sysSkip++
+        for (let pi = sysSkip; pi < cutoff; pi++) {
           const m = messages[pi]
           if (!m || !m.content) continue
 
@@ -2709,12 +2723,15 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         const originalUserMsg = messages.find(m => m.role === 'user')
         const originalRequest = originalUserMsg?.content?.slice(0, 500) || ''
 
-        // ── Protect system prompt through compaction ──────────────────────
-        // The system prompt (messages[0]) contains the role preamble, tool
-        // rules, steering docs, and file tree. At ~1,700 tokens it's <2% of
-        // context but critical for agent behaviour. Snapshot it here and
-        // guarantee it's restored as messages[0] after any compaction path.
-        const originalSystemPrompt = messages[0]?.role === 'system' ? messages[0] : null
+        // ── Protect system messages through compaction ─────────────────
+        // System messages contain the role preamble, tool rules (messages[0])
+        // and variable context like file tree and steering (messages[1]).
+        // Snapshot all leading system messages and restore them after compaction.
+        const originalSystemMessages = []
+        for (let si = 0; si < messages.length; si++) {
+          if (messages[si]?.role === 'system') originalSystemMessages.push(messages[si])
+          else break
+        }
 
         // ── Memory: archive messages before compaction ────────────────────
         if (memoryClient) {
@@ -2785,23 +2802,21 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Post-compaction trim: ${before} → ${messages.length} messages (~${estimateMessagesTokens(messages)} tokens)` })
         }
 
-        // ── Restore system prompt after all compaction paths ──────────────
+        // ── Restore system messages after all compaction paths ─────────
         // Regardless of which compaction path ran (Python, builtin, or
-        // trimMessages fallback), ensure the original system prompt is at
-        // messages[0]. The builtin compactor already preserves system
-        // messages, but the Python compactor and trimMessages don't — so
-        // this is the safety net that guarantees role preamble, tool rules,
-        // steering docs, and file tree survive every compaction.
-        if (originalSystemPrompt) {
-          const currentFirst = messages[0]
-          const systemPromptMissing = !currentFirst || currentFirst.role !== 'system' ||
-            currentFirst.content !== originalSystemPrompt.content
-          if (systemPromptMissing) {
-            // Remove any truncated/mangled version of the system prompt
-            if (messages[0]?.role === 'system' && messages[0]?.content?.startsWith('You are a coding assistant')) {
-              messages.shift()
-            }
-            messages.unshift(originalSystemPrompt)
+        // trimMessages fallback), ensure the original system messages are at
+        // the front. The builtin compactor already preserves system messages,
+        // but the Python compactor and trimMessages don't — so this is the
+        // safety net that guarantees role preamble, tool rules, steering docs,
+        // and file tree survive every compaction.
+        if (originalSystemMessages.length > 0) {
+          // Strip any mangled system messages from the front
+          while (messages.length > 0 && messages[0]?.role === 'system') {
+            messages.shift()
+          }
+          // Re-insert the originals at the front in order
+          for (let si = originalSystemMessages.length - 1; si >= 0; si--) {
+            messages.unshift(originalSystemMessages[si])
           }
         }
 
