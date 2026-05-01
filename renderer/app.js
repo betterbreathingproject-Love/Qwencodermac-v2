@@ -155,6 +155,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   initCalibrationStatus()
   refreshSteeringDocs()
   loadAutoLoadSetting()
+  loadAgentRoles()
 
   // Listen for telegram-unavailable events from the main process
   window.app.onTelegramUnavailable?.(({ reason, recordingPath }) => {
@@ -206,7 +207,12 @@ const ROLE_DESCRIPTIONS = {
   'explore': 'Read-only exploration — symbols, hover, definitions, references',
   'context-gather': 'Gather context — symbols, definitions, references, type info',
   'code-search': 'Search-focused — symbols, references, workspace search, call hierarchy',
+  'chat': 'Direct conversational response — no tools, no file writes',
 }
+
+// Role icon map — kept in sync with BUILTIN_ROLES icons in main.js.
+// Custom roles fall back to '🤖' via the || operator at use sites.
+const ROLE_ICONS = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡', debug: '🐛', tester: '🧪', requirements: '📋', design: '📐', chat: '💬' }
 
 function changeAgentRole(role) {
   agentRole = role
@@ -1458,7 +1464,7 @@ async function sendAgentMode(prompt, opts = {}) {
         break
       case 'routing-decision':
         if (ev.source === 'small model' || ev.source === 'keyword' || ev.source === 'todo') {
-          const roleIcons = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡', debug: '🐛', tester: '🧪', requirements: '📋', design: '📐' }
+          const roleIcons = ROLE_ICONS
           const label = ev.source === 'keyword' ? '⚡ Fast routed'
             : ev.source === 'todo' ? '⚡ Todo routed'
             : '🤖 Fast model routed'
@@ -2039,7 +2045,7 @@ async function sendAgentMode(prompt, opts = {}) {
                 break
               case 'routing-decision':
                 if (ev.source === 'small model' || ev.source === 'keyword' || ev.source === 'todo') {
-                  const roleIcons = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡', debug: '🐛', tester: '🧪', requirements: '📋', design: '📐' }
+                  const roleIcons = ROLE_ICONS
                   const label = ev.source === 'keyword' ? '⚡ Fast routed'
                     : ev.source === 'todo' ? '⚡ Todo routed'
                     : '🤖 Fast model routed'
@@ -4112,8 +4118,8 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         break
       }
       case 'routing-decision': {
-        const roleIcons = { implementation: '🔨', explore: '🔍', 'context-gather': '📚', 'code-search': '🔎', general: '⚡', debug: '🐛', tester: '🧪', requirements: '📋', design: '📐' }
-        const icon = roleIcons[ev.agentType] || '⚡'
+        const roleIcons = ROLE_ICONS
+        const icon = roleIcons[ev.agentType] || '🤖'
         if (ev.source === 'small model' || ev.source === 'keyword' || ev.source === 'todo') {
           const label = ev.source === 'keyword' ? '⚡ Fast routed'
             : ev.source === 'todo' ? '⚡ Todo routed'
@@ -5890,6 +5896,29 @@ async function loadAgentRoles() {
   const res = await window.app.agentRolesList()
   _agentRoles = res.roles || []
   renderAgentRoleList()
+  populateRoleDropdown()
+}
+
+function populateRoleDropdown() {
+  const sel = document.getElementById('roleSelect')
+  if (!sel) return
+  const current = sel.value
+  sel.innerHTML = ''
+  for (const role of _agentRoles) {
+    const opt = document.createElement('option')
+    opt.value = role.name
+    // Use stored icon for custom roles, fall back to ROLE_ICONS for builtins
+    const icon = role.icon || ROLE_ICONS[role.name] || '🤖'
+    const label = role.name.charAt(0).toUpperCase() + role.name.slice(1).replace(/-/g, ' ')
+    opt.textContent = icon + ' ' + label
+    sel.appendChild(opt)
+  }
+  // Restore previous selection if still valid, else default to general
+  if ([...sel.options].some(o => o.value === current)) {
+    sel.value = current
+  } else {
+    sel.value = 'general'
+  }
 }
 
 function renderAgentRoleList() {

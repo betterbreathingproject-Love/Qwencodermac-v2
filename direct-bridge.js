@@ -1922,7 +1922,7 @@ class DirectBridge {
       if (isChat) {
         this.send('qwen-event', { type: 'session-start', cwd: cwd || process.cwd() })
         this.send('qwen-event', { type: 'system', subtype: 'debug', data: '💬 Chat mode — direct response' })
-        this.send('qwen-event', { type: 'agent-role', role: 'chat' })
+        this.send('qwen-event', { type: 'agent-type', agentType: 'chat' })
 
         try {
           if (hasImages) {

@@ -508,7 +508,7 @@ ipcMain.handle('steering-create', async (_, { name, description, body }) => {
 const AGENT_ROLES_PATH = path.join(os.homedir(), '.qwencoder', 'agent-roles.json')
 
 const BUILTIN_ROLES = Object.entries(ROLE_OVERLAYS).map(([name, prompt]) => {
-  const icons = { explore:'🔍', 'context-gather':'📚', 'code-search':'🔎', debug:'🐛', tester:'🧪', requirements:'📋', design:'📐', implementation:'🔨', general:'⚡' }
+  const icons = { explore:'🔍', 'context-gather':'📚', 'code-search':'🔎', debug:'🐛', tester:'🧪', requirements:'📋', design:'📐', implementation:'🔨', general:'⚡', chat:'💬' }
   const type = agentPool._types.get(name)
   return { name, icon: icons[name] || '🤖', prompt, tools: type?.allowedTools || [], keywords: (CATEGORY_KEYWORDS[name] || []).join(', '), builtin: true }
 })
