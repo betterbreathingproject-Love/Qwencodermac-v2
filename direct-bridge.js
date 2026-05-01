@@ -1890,79 +1890,19 @@ class DirectBridge {
       recordingOptions: { dir: recordingDir, size: { width: 1280, height: 720 } },
     })
 
-    // ── Image routing: decide between direct vision and agent-with-context ────
-    //
-    // If the user's prompt is a conversational/descriptive request ("what do you
-    // see", "describe this", "what is this"), stream a direct vision response and
-    // return early — no project context needed.
-    //
-    // If the prompt is a task/action request ("fix this", "why is X broken",
-    // "update the UI to match this screenshot"), fall through to the full agent
-    // loop with the vision description injected as context so the agent can act.
-    if (images && images.length > 0) {
-      const ACTION_RE = /\b(fix|implement|update|change|make|add|remove|refactor|debug|why|how|build|create|write|edit|modify|improve|convert|migrate|deploy|test|check|find|show me the code|what('s| is) wrong|broken|error|issue|bug|crash)\b/i
-      const isTaskPrompt = prompt && ACTION_RE.test(prompt)
-
-      if (!isTaskPrompt) {
-        // ── Direct vision path: route through /v1/chat/completions ────────
-        // The server routes image requests to the fast model via _route_vision_request
-        // which calls _handle_vision directly (no semaphore contention).
-        this.send('qwen-event', { type: 'session-start', cwd: cwd || process.cwd() })
-        try {
-          const userContent = []
-          userContent.push({ type: 'text', text: (prompt && prompt.trim()) || 'Describe what you see in this image in detail.' })
-          for (const img of images) {
-            userContent.push({ type: 'image_url', image_url: { url: img.b64 } })
-          }
-          const visionMessages = [{ role: 'user', content: userContent }]
-          const body = JSON.stringify({ messages: visionMessages, max_tokens: 1024 })
-          const result = await new Promise((resolve, reject) => {
-            const r = http.request({
-              hostname: '127.0.0.1', port: SERVER_PORT,
-              path: '/v1/chat/completions', method: 'POST',
-              timeout: 120000,
-              headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-            }, (res) => {
-              let data = ''
-              res.on('data', chunk => data += chunk)
-              res.on('end', () => { try { resolve(JSON.parse(data)) } catch { reject(new Error(data || 'Empty')) } })
-            })
-            r.on('error', reject)
-            r.on('timeout', () => { r.destroy(); reject(new Error('Vision request timed out')) })
-            r.write(body)
-            r.end()
-            this._currentReq = r
-          })
-          const fullText = result.choices?.[0]?.message?.content || 'Could not analyze the image.'
-          // Stream the text word by word for a responsive feel
-          for (const word of fullText.split(' ')) {
-            this.send('qwen-event', { type: 'token', content: word + ' ' })
-          }
-          this.send('qwen-event', { type: 'task_complete', summary: fullText })
-        } catch (err) {
-          this.send('qwen-event', { type: 'task_complete', summary: `Vision failed: ${err.message}` })
-        } finally {
-          this._running = false
-          this._currentReq = null
-        }
-        return
-      }
-
-      // ── Task path: describe image via fast model, inject into agent context ─
-      // The agent loop continues below; imageContext is appended to finalPrompt.
-      this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Analyzing ${images.length} image(s) for task context...` })
-    }
+    // If images are attached, describe them via the vision endpoint first,
+    // then inject the description as text context for the agent loop.
+    // Images always go to /v1/chat/completions which the server routes to the
+    // fast model via _route_vision_request (main model is text-only).
     let imageContext = ''
     if (images && images.length > 0) {
+      this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Analyzing ${images.length} image(s)...` })
       try {
         const descriptions = []
         for (let i = 0; i < images.length; i++) {
           const img = images[i]
-          // Route through /v1/chat/completions — server delegates to fast model
-          // via _route_vision_request (no semaphore contention with main model)
-          const visionPrompt = `The user is asking: "${(prompt || '').slice(0, 200)}". Describe this image in detail, focusing on UI elements, errors, layout, and anything relevant to the task.`
           const content = [
-            { type: 'text', text: visionPrompt },
+            { type: 'text', text: prompt || 'Describe what you see in this image in detail.' },
             { type: 'image_url', image_url: { url: img.b64 } },
           ]
           const body = JSON.stringify({ messages: [{ role: 'user', content }], max_tokens: 1024 })
@@ -1985,9 +1925,9 @@ class DirectBridge {
           const desc = result.choices?.[0]?.message?.content || 'Could not analyze image.'
           descriptions.push(`[Image ${i + 1}: ${img.name}]\n${desc}`)
         }
-        imageContext = `\n\n[Attached image(s) — vision analysis for task context]\n${descriptions.join('\n\n')}`
+        imageContext = `\n\nThe user attached image(s). Here is what the vision model sees:\n\n${descriptions.join('\n\n')}`
       } catch (err) {
-        imageContext = `\n\n(User attached images but vision analysis failed: ${err.message})`
+        imageContext = `\n\n(The user attached images but vision analysis failed: ${err.message})`
       }
     }
 
