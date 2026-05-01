@@ -114,15 +114,34 @@ def _estimate_prompt_tokens(prompt: str) -> int:
 
 
 def _get_context_window() -> int:
-    """Return the model's context window size from config."""
+    """Return the model's context window size from config.
+
+    Checks both top-level and nested text_config/llm_config for
+    max_position_embeddings — VLM models (Qwen3.5-VL, Qwen3.6) store
+    the value under text_config, not at the top level.
+    """
+    def _extract(cfg: dict) -> int | None:
+        # Direct top-level value
+        val = cfg.get("max_position_embeddings")
+        if val and isinstance(val, int):
+            return val
+        # Nested under text_config or llm_config (common in VLM models)
+        for nested_key in ("text_config", "llm_config"):
+            nested = cfg.get(nested_key)
+            if isinstance(nested, dict):
+                val = nested.get("max_position_embeddings")
+                if val and isinstance(val, int):
+                    return val
+        return None
+
     if _config and isinstance(_config, dict):
-        return _config.get("max_position_embeddings", 32768)
+        return _extract(_config) or 32768
     if _model_path:
         try:
             cfg_path = Path(_model_path) / "config.json"
             if cfg_path.exists():
                 with open(cfg_path) as f:
-                    return json.load(f).get("max_position_embeddings", 32768)
+                    return _extract(json.load(f)) or 32768
         except Exception:
             pass
     return 32768
@@ -1306,19 +1325,7 @@ async def benchmark():
             avail_mem = max(0, total_mem - active_mem)
 
             # Read context window from model config
-            ctx_window = 32768  # default
-            if _config and isinstance(_config, dict):
-                ctx_window = _config.get("max_position_embeddings", 32768)
-            elif _model_path:
-                # Text-only model: read from config.json on disk
-                try:
-                    cfg_path = Path(_model_path) / "config.json"
-                    if cfg_path.exists():
-                        with open(cfg_path) as f:
-                            disk_cfg = json.load(f)
-                        ctx_window = disk_cfg.get("max_position_embeddings", 32768)
-                except Exception:
-                    pass
+            ctx_window = _get_context_window()
 
             return BenchmarkResponse(
                 generation_tps=round(gen_tps, 2),
@@ -1481,23 +1488,11 @@ async def chat_completions(req: ChatRequest):
 
     # Preventive guard: reject dangerously large prompts
     # Context budget is centrally configured in config.js; server uses CTX_WINDOW env var
-    # or defaults to 84000 tokens to match.
+    # or defaults to 84000 tokens to match. Model's actual context window takes precedence.
     ctx_window = int(os.environ.get("CTX_WINDOW", 0)) or 84000
-    if _config and isinstance(_config, dict):
-        model_ctx = _config.get("max_position_embeddings", 0)
-        if model_ctx > ctx_window:
-            ctx_window = model_ctx
-    elif _model_path:
-        try:
-            cfg_path = Path(_model_path) / "config.json"
-            if cfg_path.exists():
-                with open(cfg_path) as f:
-                    disk_cfg = json.load(f)
-                model_ctx = disk_cfg.get("max_position_embeddings", 0)
-                if model_ctx > ctx_window:
-                    ctx_window = model_ctx
-        except Exception:
-            pass
+    model_ctx = _get_context_window()
+    if model_ctx > ctx_window:
+        ctx_window = model_ctx
     prompt_limit = int(ctx_window * 0.9)  # 90% of context window
 
     total_chars = sum(len(str(msg.content or '')) for msg in req.messages)

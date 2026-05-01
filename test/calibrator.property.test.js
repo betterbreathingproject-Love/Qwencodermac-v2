@@ -58,12 +58,10 @@ describe('Feature: adaptive-agent-calibration — calibrator property tests', ()
         // memoryScale = 1.0 - pressureWeight * (1.0 - rawMemoryScale)
         const memoryScale = 1.0 - 0.5 * (1.0 - rawMemoryScale)
 
-        // effectiveContext = context_window (model's real limit, not Math.max)
-        // effectiveFloor = min(CALIBRATOR_FLOOR, round(effectiveContext * 0.70))
-        // maxInputTokens = clamp(round(effectiveContext * 0.85 * memoryScale), effectiveFloor, 200000)
-        const effectiveContext = metrics.context_window || config.CONTEXT_WINDOW
-        const effectiveFloor = Math.min(config.CALIBRATOR_FLOOR, Math.round(effectiveContext * 0.70))
-        const expectedMaxInput = Math.min(200000, Math.max(effectiveFloor, Math.round(effectiveContext * 0.85 * memoryScale)))
+        // effectiveContext = max(context_window, CONTEXT_WINDOW)
+        // maxInputTokens = clamp(round(effectiveContext * 0.85 * memoryScale), CALIBRATOR_FLOOR, 200000)
+        const effectiveContext = Math.max(metrics.context_window, config.CONTEXT_WINDOW)
+        const expectedMaxInput = Math.min(200000, Math.max(config.CALIBRATOR_FLOOR, Math.round(effectiveContext * 0.85 * memoryScale)))
         assert.equal(profile.maxInputTokens, expectedMaxInput,
           `maxInputTokens mismatch for context_window=${metrics.context_window}`)
 
