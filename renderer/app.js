@@ -1756,6 +1756,8 @@ async function sendAgentMode(prompt, opts = {}) {
         const FILE_TOOLS = ['write_file', 'edit_file', 'create_file', 'bash', 'str_replace_editor']
         if (!ev.is_error && FILE_TOOLS.some(t => lastToolName.includes(t))) {
           if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
+          // Auto-refresh center preview when HTML files are written
+          if (typeof autoUpdateCenterPreview === 'function') autoUpdateCenterPreview()
         }
         // Add inline undo button for write_file / edit_file
         if (!ev.is_error && (lastToolName === 'write_file' || lastToolName === 'edit_file') && lastTool) {
@@ -2188,6 +2190,7 @@ async function sendAgentMode(prompt, opts = {}) {
                 const FILE_TOOLS = ['write_file', 'edit_file', 'create_file', 'bash']
                 if (!ev.is_error && FILE_TOOLS.some(t => orchToolName.includes(t))) {
                   if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
+                  if (typeof autoUpdateCenterPreview === 'function') autoUpdateCenterPreview()
                 }
                 updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, agentType: _currentAgentType, activity: 'Thinking about next step...' })
                 { const actEl = document.getElementById(orchTaskBlockId + '-activity')
@@ -3364,6 +3367,9 @@ async function showPreviewButton(respId) {
   const htmlFile = entries.find(e => !e.isDir && e.name === 'index.html')
     || entries.find(e => !e.isDir && /\.html?$/i.test(e.name))
   if (!htmlFile) return
+  // Auto-update center preview panel
+  _centerPreviewFile = htmlFile.path
+  refreshCenterPreview()
   const container = document.getElementById(respId)
   if (!container) return
   container.insertAdjacentHTML('beforeend',
@@ -4551,6 +4557,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         const FILE_TOOLS = ['write_file', 'edit_file', 'create_file', 'bash']
         if (!ev.is_error && FILE_TOOLS.some(t => orchToolName.includes(t))) {
           if (currentProject) renderFileTree(currentProject, document.getElementById('fileTree'))
+          if (typeof autoUpdateCenterPreview === 'function') autoUpdateCenterPreview()
         }
         updateAgentStatsBar({ state: 'thinking', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, agentType: _currentAgentType, activity: 'Thinking about next step...' })
         { const actEl = document.getElementById(orchTaskBlockId + '-activity')
@@ -6617,3 +6624,136 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   }
 })()
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CENTER PREVIEW PANEL — auto-shows HTML output from agent
+// ══════════════════════════════════════════════════════════════════════════════
+
+let _centerPreviewDevice = 'responsive'
+let _centerPreviewFile = null
+
+function setCenterPreviewDevice(name) {
+  _centerPreviewDevice = name
+  const viewport = document.getElementById('previewCenterViewport')
+  const frame = document.getElementById('previewCenterFrame')
+  const label = document.getElementById('previewCenterSize')
+
+  document.querySelectorAll('.pcd-btn').forEach(b => b.classList.remove('active'))
+  const btn = document.querySelector(`.pcd-btn[data-device="${name}"]`)
+  if (btn) btn.classList.add('active')
+
+  const devices = {
+    responsive: { w: '100%', h: '100%', label: '' },
+    desktop: { w: '1440px', h: '900px', label: '1440×900' },
+    tablet: { w: '768px', h: '1024px', label: '768×1024' },
+    mobile: { w: '375px', h: '667px', label: '375×667' },
+  }
+  const dev = devices[name] || devices.responsive
+
+  if (name === 'responsive') {
+    viewport.className = 'preview-center-viewport'
+    frame.style.width = '100%'
+    frame.style.height = '100%'
+  } else {
+    viewport.className = 'preview-center-viewport device'
+    frame.style.width = dev.w
+    frame.style.height = dev.h
+  }
+  if (label) label.textContent = dev.label
+}
+
+function refreshCenterPreview() {
+  const frame = document.getElementById('previewCenterFrame')
+  const empty = document.getElementById('previewCenterEmpty')
+  if (!frame) return
+
+  if (_centerPreviewFile) {
+    frame.removeAttribute('sandbox')
+    frame.removeAttribute('srcdoc')
+    frame.src = 'file://' + _centerPreviewFile + '?t=' + Date.now()
+    frame.style.display = 'block'
+    if (empty) empty.style.display = 'none'
+  }
+}
+
+async function autoUpdateCenterPreview() {
+  if (!currentProject) return
+  try {
+    const entries = await window.app.readDir(currentProject)
+    const htmlFile = entries.find(e => !e.isDir && e.name === 'index.html')
+      || entries.find(e => !e.isDir && /\.html?$/i.test(e.name))
+    if (htmlFile) {
+      _centerPreviewFile = htmlFile.path
+      refreshCenterPreview()
+    }
+  } catch (_) {}
+}
+
+// ── Split resize handle ──────────────────────────────────────────────────────
+;(function initSplitResize() {
+  document.addEventListener('DOMContentLoaded', () => {
+    const handle = document.getElementById('splitResizeHandle')
+    const chatPanel = document.getElementById('chatPanel')
+    if (!handle || !chatPanel) return
+
+    let dragging = false
+    let startX = 0
+    let startWidth = 0
+
+    handle.addEventListener('mousedown', (e) => {
+      dragging = true
+      startX = e.clientX
+      startWidth = chatPanel.offsetWidth
+      handle.classList.add('dragging')
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+      e.preventDefault()
+    })
+
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return
+      const delta = startX - e.clientX
+      const newWidth = Math.max(320, Math.min(600, startWidth + delta))
+      chatPanel.style.width = newWidth + 'px'
+    })
+
+    document.addEventListener('mouseup', () => {
+      if (!dragging) return
+      dragging = false
+      handle.classList.remove('dragging')
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    })
+  })
+})()
+
+// ── Hook into tool-result events to auto-update center preview ───────────────
+// Patch the existing qwen-event listener to also refresh center preview on file writes
+;(function hookCenterPreview() {
+  const _origShowPreviewButton = typeof showPreviewButton === 'function' ? showPreviewButton : null
+  if (_origShowPreviewButton) {
+    window._origShowPreviewButton = _origShowPreviewButton
+    window.showPreviewButton = async function(respId) {
+      await _origShowPreviewButton(respId)
+      autoUpdateCenterPreview()
+    }
+    // Replace global reference
+    if (typeof showPreviewButton !== 'undefined') {
+      // The function is already global, patch it
+    }
+  }
+
+  // Also auto-update on DOMContentLoaded if a project is already open
+  document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => autoUpdateCenterPreview(), 1000)
+  })
+})()
+
+// ── Auto-refresh center preview when file watcher detects HTML changes ────────
+if (typeof window !== 'undefined' && window.app && window.app.onFileChange) {
+  window.app.onFileChange((filePath) => {
+    if (/\.html?$/i.test(filePath) && _centerPreviewFile) {
+      refreshCenterPreview()
+    }
+  })
+}

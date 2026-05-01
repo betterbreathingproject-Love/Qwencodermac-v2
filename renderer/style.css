@@ -1421,3 +1421,336 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   padding: 10px 0 4px;
   animation: ask-user-in 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   MODERN SPLIT LAYOUT — Preview Center + Chat Right
+   macOS-vibed design with frosted glass, soft shadows, rounded corners
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Agent layout: horizontal split ── */
+.agent-layout.agent-layout-split {
+  flex-direction: row;
+  overflow: hidden;
+}
+
+/* ── Preview Center Panel ── */
+.preview-center {
+  flex: 1;
+  min-width: 300px;
+  display: flex;
+  flex-direction: column;
+  background: #0e0e12;
+  overflow: hidden;
+}
+
+.preview-center-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(24, 24, 30, 0.85);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  flex-shrink: 0;
+}
+
+.preview-center-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+.preview-center-devices {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.pcd-btn {
+  width: 28px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg3);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  padding: 0;
+}
+.pcd-btn:hover { border-color: var(--accent); color: var(--text); }
+.pcd-btn.active { border-color: var(--accent); background: rgba(124,106,247,0.12); color: var(--accent2); }
+
+.preview-center-size {
+  font-size: 10px;
+  color: var(--muted);
+  font-family: 'SF Mono', monospace;
+  white-space: nowrap;
+}
+
+.pcd-refresh {
+  width: 28px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg3);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  padding: 0;
+}
+.pcd-refresh:hover { border-color: var(--accent); color: var(--text); }
+
+.preview-center-viewport {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  background: #0a0a0e;
+  position: relative;
+}
+
+.preview-center-viewport iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: #fff;
+}
+
+/* device modes for center preview */
+.preview-center-viewport.device {
+  padding: 20px;
+  align-items: flex-start;
+  justify-content: center;
+}
+.preview-center-viewport.device iframe {
+  width: auto;
+  height: auto;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
+}
+
+/* empty state */
+.preview-center-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px;
+  text-align: center;
+  user-select: none;
+}
+
+.pce-icon {
+  font-size: 40px;
+  background: linear-gradient(135deg, rgba(124,106,247,0.3), rgba(79,195,247,0.2));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  opacity: 0.6;
+}
+
+.pce-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.15);
+  letter-spacing: -0.02em;
+}
+
+.pce-sub {
+  font-size: 12px;
+  color: rgba(255,255,255,0.08);
+  max-width: 260px;
+  line-height: 1.5;
+}
+
+/* ── Split Resize Handle ── */
+.split-resize-handle {
+  width: 1px;
+  cursor: col-resize;
+  background: var(--border);
+  flex-shrink: 0;
+  transition: background 0.15s, width 0.15s;
+  position: relative;
+  z-index: 5;
+}
+.split-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+}
+.split-resize-handle:hover,
+.split-resize-handle.dragging {
+  background: var(--accent);
+  width: 2px;
+}
+
+/* ── Chat Panel (Right) ── */
+.chat-panel {
+  width: 420px;
+  min-width: 320px;
+  max-width: 600px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+  border-left: 1px solid rgba(255,255,255,0.06);
+}
+
+/* ── Frosted glass session bar ── */
+.chat-panel .session-bar {
+  background: rgba(24, 24, 30, 0.85);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+/* ── Frosted glass model switcher ── */
+.chat-panel .model-switcher-bar {
+  background: rgba(24, 24, 30, 0.6);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+/* ── Chat output area ── */
+.chat-panel .agent-output {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+}
+
+/* ── Chat input area — frosted glass ── */
+.chat-panel .agent-input-area {
+  background: rgba(24, 24, 30, 0.85);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid rgba(255,255,255,0.06);
+  padding: 10px 12px;
+}
+
+/* ── Softer input box ── */
+.chat-panel .input-wrap {
+  background: rgba(17, 17, 21, 0.8);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.chat-panel .input-wrap:focus-within {
+  border-color: rgba(124,106,247,0.5);
+  box-shadow: 0 0 0 3px rgba(124,106,247,0.1);
+}
+
+/* ── Rounded send button ── */
+.chat-panel .btn-send {
+  border-radius: 10px;
+  padding: 8px 20px;
+  font-weight: 600;
+  transition: all 0.15s;
+}
+.chat-panel .btn-send:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(124,106,247,0.3);
+}
+
+/* ── Stats bar in chat panel ── */
+.chat-panel .agent-stats {
+  background: rgba(24, 24, 30, 0.7);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid rgba(255,255,255,0.05);
+  padding: 5px 10px;
+}
+
+/* ── Build picker adjustments for narrower chat panel ── */
+.chat-panel .build-picker {
+  padding: 30px 16px;
+}
+.chat-panel .build-picker-title {
+  font-size: 22px;
+}
+.chat-panel .build-picker-cards {
+  flex-direction: column;
+  max-width: 100%;
+  gap: 10px;
+}
+.chat-panel .build-card {
+  min-height: 80px;
+  padding: 14px;
+}
+.chat-panel .build-picker-project {
+  max-width: 100%;
+}
+
+/* ── Softer message blocks in chat ── */
+.chat-panel .msg-user {
+  border-radius: 12px;
+  background: rgba(124,106,247,0.08);
+  border: 1px solid rgba(124,106,247,0.15);
+}
+
+.chat-panel .tool-block {
+  border-radius: 10px;
+}
+
+.chat-panel .code-block {
+  border-radius: 10px;
+}
+
+/* ── Softer todo panel ── */
+.chat-panel .todo-panel {
+  background: rgba(24, 24, 30, 0.6);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+/* ── Compact notice ── */
+.chat-panel .compact-notice {
+  background: rgba(74,222,128,0.04);
+  border-top: 1px solid rgba(74,222,128,0.08);
+}
+
+/* ── Softer scrollbar in chat ── */
+.chat-panel .agent-output::-webkit-scrollbar { width: 4px; }
+.chat-panel .agent-output::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
+.chat-panel .agent-output::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+
+/* ── Global refinements for modern Mac vibe ── */
+
+/* Softer titlebar */
+.titlebar {
+  background: rgba(17, 17, 19, 0.92);
+  backdrop-filter: blur(24px);
+}
+
+/* Softer activity bar */
+.activity-bar {
+  background: rgba(14, 14, 18, 0.95);
+  backdrop-filter: blur(12px);
+}
+
+/* Softer sidebar */
+.sidebar {
+  background: rgba(20, 20, 26, 0.95);
+  backdrop-filter: blur(12px);
+}
+
+/* Softer editor tabs */
+.editor-tabs {
+  background: rgba(20, 20, 26, 0.9);
+  backdrop-filter: blur(12px);
+}
+
+.ed-tab.active {
+  background: var(--bg);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-bottom: 1px solid var(--bg);
+}
