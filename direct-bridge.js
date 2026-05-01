@@ -1890,83 +1890,128 @@ class DirectBridge {
       recordingOptions: { dir: recordingDir, size: { width: 1280, height: 720 } },
     })
 
-    // If images are attached, stream a direct vision response and return early.
-    // Skip the full agent loop (tools, file tree, project context) — the user
-    // wants to talk about the image, not run a coding task.
+    // ── Image routing: decide between direct vision and agent-with-context ────
+    //
+    // If the user's prompt is a conversational/descriptive request ("what do you
+    // see", "describe this", "what is this"), stream a direct vision response and
+    // return early — no project context needed.
+    //
+    // If the prompt is a task/action request ("fix this", "why is X broken",
+    // "update the UI to match this screenshot"), fall through to the full agent
+    // loop with the vision description injected as context so the agent can act.
     if (images && images.length > 0) {
-      this.send('qwen-event', { type: 'session-start', cwd: cwd || process.cwd() })
-      try {
-        // Build a multimodal message: user text + all attached images
-        const userContent = []
-        if (prompt && prompt.trim()) {
-          userContent.push({ type: 'text', text: prompt.trim() })
-        } else {
-          userContent.push({ type: 'text', text: 'Describe what you see in this image in detail.' })
-        }
-        for (const img of images) {
-          userContent.push({ type: 'image_url', image_url: { url: img.b64 } })
-        }
+      const ACTION_RE = /\b(fix|implement|update|change|make|add|remove|refactor|debug|why|how|build|create|write|edit|modify|improve|convert|migrate|deploy|test|check|find|show me the code|what('s| is) wrong|broken|error|issue|bug|crash)\b/i
+      const isTaskPrompt = prompt && ACTION_RE.test(prompt)
 
-        const visionMessages = [{ role: 'user', content: userContent }]
-        const body = JSON.stringify({ messages: visionMessages, max_tokens: 1024, stream: true })
+      if (!isTaskPrompt) {
+        // ── Direct vision path: stream straight from vision model ─────────
+        this.send('qwen-event', { type: 'session-start', cwd: cwd || process.cwd() })
+        try {
+          const userContent = []
+          userContent.push({ type: 'text', text: (prompt && prompt.trim()) || 'Describe what you see in this image in detail.' })
+          for (const img of images) {
+            userContent.push({ type: 'image_url', image_url: { url: img.b64 } })
+          }
 
-        await new Promise((resolve) => {
-          const req = http.request({
-            hostname: '127.0.0.1', port: SERVER_PORT,
-            path: '/v1/chat/completions', method: 'POST',
-            timeout: 120000,
-            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-          }, (res) => {
-            let buf = ''
-            let fullText = ''
-            res.on('data', chunk => {
-              if (this._aborted) { req.destroy(); return }
-              buf += chunk.toString()
-              const lines = buf.split('\n')
-              buf = lines.pop()
-              for (const line of lines) {
-                if (line.startsWith('data: [DONE]')) continue
-                if (line.startsWith('data: ')) {
-                  try {
-                    const parsed = JSON.parse(line.slice(6))
-                    const delta = parsed.choices?.[0]?.delta?.content
-                    if (delta) {
-                      fullText += delta
-                      this.send('qwen-event', { type: 'token', content: delta })
-                    }
-                  } catch { /* skip malformed SSE line */ }
+          const visionMessages = [{ role: 'user', content: userContent }]
+          const body = JSON.stringify({ messages: visionMessages, max_tokens: 1024, stream: true })
+
+          await new Promise((resolve) => {
+            const req = http.request({
+              hostname: '127.0.0.1', port: SERVER_PORT,
+              path: '/v1/chat/completions', method: 'POST',
+              timeout: 120000,
+              headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+            }, (res) => {
+              let buf = ''
+              let fullText = ''
+              res.on('data', chunk => {
+                if (this._aborted) { req.destroy(); return }
+                buf += chunk.toString()
+                const lines = buf.split('\n')
+                buf = lines.pop()
+                for (const line of lines) {
+                  if (line.startsWith('data: [DONE]')) continue
+                  if (line.startsWith('data: ')) {
+                    try {
+                      const parsed = JSON.parse(line.slice(6))
+                      const delta = parsed.choices?.[0]?.delta?.content
+                      if (delta) {
+                        fullText += delta
+                        this.send('qwen-event', { type: 'token', content: delta })
+                      }
+                    } catch { /* skip malformed SSE line */ }
+                  }
                 }
-              }
+              })
+              res.on('end', () => { this.send('qwen-event', { type: 'task_complete', summary: fullText }); resolve() })
+              res.on('error', (err) => { this.send('qwen-event', { type: 'task_complete', summary: `Vision error: ${err.message}` }); resolve() })
             })
-            res.on('end', () => {
-              this.send('qwen-event', { type: 'task_complete', summary: fullText })
-              resolve()
-            })
-            res.on('error', (err) => {
-              this.send('qwen-event', { type: 'task_complete', summary: `Vision error: ${err.message}` })
-              resolve()
-            })
+            req.on('error', (err) => { this.send('qwen-event', { type: 'task_complete', summary: `Vision request failed: ${err.message}` }); resolve() })
+            req.on('timeout', () => { req.destroy(); this.send('qwen-event', { type: 'task_complete', summary: 'Vision request timed out.' }); resolve() })
+            req.write(body)
+            req.end()
+            this._currentReq = req
           })
-          req.on('error', (err) => {
-            this.send('qwen-event', { type: 'task_complete', summary: `Vision request failed: ${err.message}` })
-            resolve()
-          })
-          req.on('timeout', () => {
-            req.destroy()
-            this.send('qwen-event', { type: 'task_complete', summary: 'Vision request timed out.' })
-            resolve()
-          })
-          req.write(body)
-          req.end()
-          this._currentReq = req
-        })
-      } catch (err) {
-        this.send('qwen-event', { type: 'task_complete', summary: `Vision failed: ${err.message}` })
-      } finally {
-        this._running = false
-        this._currentReq = null
+        } catch (err) {
+          this.send('qwen-event', { type: 'task_complete', summary: `Vision failed: ${err.message}` })
+        } finally {
+          this._running = false
+          this._currentReq = null
+        }
+        return
       }
-      return
+
+      // ── Task path: describe image via fast model, inject into agent context ─
+      // The agent loop continues below; imageContext is appended to finalPrompt.
+      this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Analyzing ${images.length} image(s) for task context...` })
+    }
+    let imageContext = ''
+    if (images && images.length > 0) {
+      try {
+        const descriptions = []
+        for (let i = 0; i < images.length; i++) {
+          const img = images[i]
+          // Try fast model first (assistVision), fall back to main vision endpoint
+          let desc = null
+          if (assistClient) {
+            // Strip the data URI prefix — assistVision expects raw base64
+            const b64 = img.b64.replace(/^data:[^;]+;base64,/, '')
+            const mime = img.b64.match(/^data:([^;]+);/)?.[1] || 'image/png'
+            desc = await assistClient.assistVision(b64, mime,
+              `The user is asking: "${(prompt || '').slice(0, 200)}". Describe this image in detail, focusing on UI elements, errors, layout, and anything relevant to the task.`)
+          }
+          if (!desc) {
+            // Fall back to main vision endpoint (non-streaming)
+            const content = [
+              { type: 'text', text: `The user is asking: "${(prompt || '').slice(0, 200)}". Describe this image in detail, focusing on UI elements, errors, layout, and anything relevant to the task.` },
+              { type: 'image_url', image_url: { url: img.b64 } },
+            ]
+            const body = JSON.stringify({ messages: [{ role: 'user', content }], max_tokens: 1024 })
+            const result = await new Promise((resolve, reject) => {
+              const req = http.request({
+                hostname: '127.0.0.1', port: SERVER_PORT,
+                path: '/v1/chat/completions', method: 'POST',
+                timeout: 120000,
+                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+              }, (res) => {
+                let data = ''
+                res.on('data', chunk => data += chunk)
+                res.on('end', () => { try { resolve(JSON.parse(data)) } catch { reject(new Error(data || 'Empty response')) } })
+              })
+              req.on('timeout', () => { req.destroy(); reject(new Error('Vision request timed out')) })
+              req.on('error', reject)
+              req.write(body)
+              req.end()
+            })
+            desc = result.choices?.[0]?.message?.content || 'Could not analyze image.'
+          }
+          descriptions.push(`[Image ${i + 1}: ${img.name}]\n${desc}`)
+        }
+        imageContext = `\n\n[Attached image(s) — vision analysis for task context]\n${descriptions.join('\n\n')}`
+      } catch (err) {
+        imageContext = `\n\n(User attached images but vision analysis failed: ${err.message})`
+      }
     }
 
     const workDir = cwd || process.cwd()
@@ -2034,7 +2079,7 @@ class DirectBridge {
       }
     }
 
-    finalPrompt += prompt
+    finalPrompt += prompt + imageContext
 
     const messages = [
       { role: 'system', content: finalSystemPrompt },
