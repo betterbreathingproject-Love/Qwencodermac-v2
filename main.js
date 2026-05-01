@@ -452,7 +452,9 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
 
       if (hasImages) {
         // Image requests: non-streaming — _route_vision_request returns plain JSON
-        const body = JSON.stringify({ messages, max_tokens: 1024 })
+        // Don't include conversation history — vision model only needs the current image
+        const body = JSON.stringify({ messages: [{ role: 'user', content: userContent }], max_tokens: 1024 })
+        console.log(`[qwen-run] sending vision request, body size: ${body.length} bytes`)
         const result = await new Promise((resolve, reject) => {
           const req = http.request({
             hostname: '127.0.0.1', port: 8090,
