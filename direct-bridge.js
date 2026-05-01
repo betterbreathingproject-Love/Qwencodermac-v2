@@ -1928,7 +1928,7 @@ class DirectBridge {
             for (const img of images) {
               userContent.push({ type: 'image_url', image_url: { url: img.b64 } })
             }
-            const body = JSON.stringify({ messages: [{ role: 'user', content: userContent }], max_tokens: 1024 })
+            const body = JSON.stringify({ messages: [{ role: 'user', content: userContent }], max_tokens: 512 })
             const result = await new Promise((resolve, reject) => {
               const r = http.request({
                 hostname: '127.0.0.1', port: SERVER_PORT,

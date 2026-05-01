@@ -101,6 +101,7 @@ function getServerScript(appDir) {
 let serverProcess = null
 let _serverStopping = false
 let _lastLoadedModelPath = null  // track last loaded model for post-crash reload
+let _lastServerPort = 8090       // track port for graceful unload on shutdown
 let _crashRestartTimer = null    // debounce crash restarts
 // Ring buffer of last 50 stderr lines — written to crash.log on unexpected exit
 const _lastStderr = []
@@ -117,6 +118,7 @@ function setLastLoadedModel(modelPath) {
 function startServer(port, appDir, mainWindow) {
   if (serverProcess) return
   _serverStopping = false
+  _lastServerPort = port
   killStaleServer(port)
   const py = findPython()
   // Pre-approve Python in the macOS firewall so crash restarts don't trigger
@@ -262,9 +264,23 @@ function stopServer() {
   if (serverProcess) {
     const proc = serverProcess
     serverProcess = null
-    try { proc.kill('SIGTERM') } catch {}
-    // Force kill after 2s if still alive
-    setTimeout(() => { try { proc.kill('SIGKILL') } catch {} }, 2000)
+    // Ask the server to unload the model and free Metal memory before we kill it.
+    // Fire-and-forget with a short timeout — if it fails we still send SIGTERM.
+    const body = ''
+    const req = http.request({
+      hostname: '127.0.0.1', port: _lastServerPort || 8090,
+      path: '/admin/unload', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': 0 },
+    }, (res) => { res.resume() })
+    req.on('error', () => {})
+    req.setTimeout(3000, () => { req.destroy() })
+    req.end()
+    // Give the unload request a moment to complete, then terminate the process
+    setTimeout(() => {
+      try { proc.kill('SIGTERM') } catch {}
+      // Force kill after 2s if still alive
+      setTimeout(() => { try { proc.kill('SIGKILL') } catch {} }, 2000)
+    }, 1500)
   }
 }
 

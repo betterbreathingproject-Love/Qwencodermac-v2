@@ -992,6 +992,19 @@ def autotune_stats():
 
 # ── speculative decoding admin ────────────────────────────────────────────────
 
+@app.post("/admin/unload")
+async def admin_unload():
+    """
+    Unload the current model and free all Metal memory.
+    Called by the Electron main process before app shutdown so GPU memory is
+    released cleanly rather than waiting for the OS to reclaim it after SIGTERM.
+    """
+    sem = _get_inference_semaphore()
+    async with sem:
+        _unload_model()
+    return {"ok": True, "message": "Model unloaded"}
+
+
 class SpeculativeRequest(BaseModel):
     enabled: bool
     draft_model_path: Optional[str] = None  # required when enabled=True
@@ -2040,7 +2053,6 @@ if __name__ == "__main__":
 
     # Graceful shutdown: unload model, shutdown memory, and clear Metal cache on SIGTERM
     def _handle_sigterm(signum, frame):
-        global _model, _processor, _config
         print("[server] Received SIGTERM, cleaning up...", file=sys.stderr)
 
         # Shutdown memory-bridge (flush Archive writes, close SQLite connections)
@@ -2056,14 +2068,13 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"[server] WARNING: Memory-bridge shutdown error: {e}", file=sys.stderr)
 
+        # Use the proper unload function — clears model, draft model, prefix cache,
+        # vision state, token cache, and calls gc.collect() + mx.metal.clear_cache()
         try:
-            _model = None
-            _processor = None
-            _config = None
-            import mlx.core as mx
-            mx.metal.clear_cache()
-        except Exception:
-            pass
+            _unload_model()
+        except Exception as e:
+            print(f"[server] WARNING: Model unload error during shutdown: {e}", file=sys.stderr)
+
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, _handle_sigterm)
