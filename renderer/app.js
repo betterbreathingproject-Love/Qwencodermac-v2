@@ -330,23 +330,6 @@ function _renderModelSwitcher(models) {
     nameEl.style.color = 'var(--muted)'
   }
 
-  // Update the fast model status indicator on the switcher button
-  let fastIndicator = document.getElementById('modelSwitcherFastDot')
-  if (!fastIndicator) {
-    fastIndicator = document.createElement('span')
-    fastIndicator.id = 'modelSwitcherFastDot'
-    fastIndicator.style.cssText = 'font-size:9px;flex-shrink:0;margin-left:4px'
-    const arrow = document.querySelector('.model-switcher-arrow')
-    if (arrow) arrow.parentNode.insertBefore(fastIndicator, arrow)
-  }
-  if (_extractionModelStatus && _extractionModelStatus.loaded) {
-    fastIndicator.textContent = '⚡'
-    fastIndicator.title = 'Fast Vision Assistant: ' + (_extractionModelStatus.modelName || 'active')
-  } else {
-    fastIndicator.textContent = ''
-    fastIndicator.title = ''
-  }
-
   if (!models.length) { list.innerHTML = '<div class="ms-empty">No models found in ~/.lmstudio/models/</div>'; return }
 
   list.innerHTML = models.map((m, i) => {
@@ -6152,43 +6135,136 @@ async function refreshExtractionModelStatus() {
 }
 
 /**
- * Render the Fast Vision Assistant section in the model switcher dropdown.
+ * Render the Fast Vision Assistant bar and dropdown list.
  */
 function _renderExtractionModelSection() {
-  const section = document.getElementById('msFastSection')
-  if (!section) return
+  const nameEl = document.getElementById('fastModelName')
+  const list = document.getElementById('fastModelList')
+  if (!nameEl || !list) return
 
   const status = _extractionModelStatus
   const isLoaded = status && status.loaded
 
-  const modelOptions = _extractionModelList.length > 0
-    ? _extractionModelList.map(m => `<option value="${esc(m.path)}">${esc(_formatModelName(m.id))}</option>`).join('')
-    : '<option value="">No models available</option>'
-
+  // Update the bar display
   if (isLoaded) {
-    section.innerHTML = `
-      <div class="ms-fast-status">
-        <span class="ms-fast-dot active"></span>
-        <span style="color:var(--green);font-size:11px;font-weight:500">${esc(status.modelName)}${status.memoryGb ? ` · ${status.memoryGb.toFixed(1)}GB` : ''}</span>
-      </div>
-      <div class="ms-fast-actions">
-        <button class="btn-sm" style="background:var(--bg3);color:var(--text);border:1px solid var(--border)" onclick="unloadExtractionModel()">Unload</button>
-      </div>
-    `
+    const displayName = _formatModelName(status.modelName || 'Unknown')
+    nameEl.textContent = displayName + (status.memoryGb ? ` · ${status.memoryGb.toFixed(1)}GB` : '')
+    nameEl.classList.add('active')
   } else {
-    section.innerHTML = `
-      <div class="ms-fast-status">
-        <span class="ms-fast-dot inactive"></span>
-        <span style="color:var(--muted);font-size:11px">Not loaded</span>
-      </div>
-      <select id="extractionModelSelect" class="ms-fast-select">
-        <option value="">Select a model...</option>
-        ${modelOptions}
-      </select>
-      <div class="ms-fast-actions">
-        <button class="btn-sm" onclick="loadExtractionModel()">Load</button>
-      </div>
-    `
+    nameEl.textContent = 'Fast Assistant · not loaded'
+    nameEl.classList.remove('active')
+  }
+
+  // Build the dropdown list
+  let html = ''
+  if (_extractionModelList.length > 0) {
+    html = _extractionModelList.map((m, i) => {
+      const name = _formatModelName(m.id)
+      const isActive = isLoaded && status.modelName && (status.modelName === m.id || status.modelName.includes(m.id.split('-').pop()))
+      const cls = isActive ? 'fm-item active' : 'fm-item'
+      return `<div class="${cls}" data-fm-idx="${i}">
+        <div class="fm-item-icon">${m.vision ? '👁️' : '⚡'}</div>
+        <div class="fm-item-info">
+          <div class="fm-item-name">${esc(name)}</div>
+          <div class="fm-item-path">${esc(m.model_type || '')}</div>
+        </div>
+        ${isActive ? '<div class="fm-item-check">✓</div>' : ''}
+      </div>`
+    }).join('')
+  } else {
+    html = '<div style="padding:12px;text-align:center;color:var(--muted);font-size:11px">No small models found</div>'
+  }
+
+  // Add unload option if loaded
+  if (isLoaded) {
+    html += '<div class="fm-unload" onclick="unloadExtractionModel()">⏹ Unload Fast Assistant</div>'
+  }
+
+  list.innerHTML = html
+
+  // Event delegation for model selection
+  list.onclick = (e) => {
+    const item = e.target.closest('[data-fm-idx]')
+    if (!item) return
+    const idx = parseInt(item.dataset.fmIdx, 10)
+    const m = _extractionModelList[idx]
+    if (m) loadExtractionModelFromSwitcher(m.path, m.id)
+  }
+}
+
+/**
+ * Toggle the fast model dropdown.
+ */
+function toggleFastModelSwitcher() {
+  const bar = document.getElementById('fastModelBar')
+  let dd = document.getElementById('fastModelDropdown')
+  if (!bar || !dd) return
+
+  const isOpen = dd.style.display === 'flex'
+  if (isOpen) {
+    dd.style.display = 'none'
+    bar.classList.remove('open')
+    return
+  }
+
+  // Move to body on first open to escape overflow:hidden
+  if (dd.parentNode !== document.body) {
+    dd.parentNode.removeChild(dd)
+    document.body.appendChild(dd)
+  }
+
+  // Position below the fast model button
+  const btn = document.getElementById('fastModelBtn')
+  if (!btn) return
+  const rect = btn.getBoundingClientRect()
+  dd.style.position = 'fixed'
+  dd.style.top = Math.round(rect.bottom + 4) + 'px'
+  dd.style.left = Math.round(rect.left) + 'px'
+  dd.style.width = Math.max(rect.width, 280) + 'px'
+  dd.style.display = 'flex'
+  dd.style.flexDirection = 'column'
+  bar.classList.add('open')
+
+  function closer(e) {
+    if (dd.contains(e.target) || bar.contains(e.target)) return
+    dd.style.display = 'none'
+    bar.classList.remove('open')
+    document.removeEventListener('mousedown', closer, true)
+  }
+  requestAnimationFrame(() => {
+    document.addEventListener('mousedown', closer, true)
+  })
+}
+
+/**
+ * Load a fast model from the switcher dropdown.
+ */
+async function loadExtractionModelFromSwitcher(modelPath, modelId) {
+  const nameEl = document.getElementById('fastModelName')
+  const prevText = nameEl ? nameEl.textContent : ''
+  if (nameEl) {
+    nameEl.textContent = 'Loading ' + _formatModelName(modelId) + '...'
+    nameEl.classList.remove('active')
+  }
+  // Close dropdown
+  const dd = document.getElementById('fastModelDropdown')
+  if (dd) dd.style.display = 'none'
+  const bar = document.getElementById('fastModelBar')
+  if (bar) bar.classList.remove('open')
+
+  try {
+    const result = await window.app.loadExtractionModel(modelPath)
+    if (result && result.error) {
+      showToast('Failed to load: ' + result.error, 'error')
+      if (nameEl) nameEl.textContent = prevText
+    } else {
+      showToast('Fast Assistant loaded', 'success')
+      window.app.saveAppSettings({ lastFastModelPath: modelPath })
+      await refreshExtractionModelStatus()
+    }
+  } catch (err) {
+    showToast('Failed to load: ' + (err.message || 'Unknown error'), 'error')
+    if (nameEl) nameEl.textContent = prevText
   }
 }
 
