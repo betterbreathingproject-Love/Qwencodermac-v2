@@ -344,6 +344,21 @@ class Orchestrator extends EventEmitter {
           : predecessorSummary
       }
 
+      // Inject a project file brief on resume so the agent knows what files
+      // already exist and can skip exploratory reads. This is especially
+      // valuable when resuming a spec with many completed tasks.
+      const completedCount = [...this._graph.nodes.values()].filter(n => n.status === 'completed').length
+      if (completedCount > 0 && this._projectDir) {
+        try {
+          const fileBrief = this._buildProjectFileBrief(this._projectDir)
+          if (fileBrief) {
+            task.specContext = task.specContext
+              ? `${task.specContext}\n\n${fileBrief}`
+              : fileBrief
+          }
+        } catch { /* non-fatal */ }
+      }
+
       // Inject LSP safe-edit instructions for implementation agents when LSP is ready
       const selectedType = this._agentPool?.selectType?.(node);
       if (selectedType?.name === 'implementation' && this._lspManager?.getStatus().status === 'ready') {
@@ -665,6 +680,55 @@ class Orchestrator extends EventEmitter {
 
     if (lines.length === 0) return null
     return `[Prior step results]\n${lines.join('\n\n')}`
+  }
+
+  // --- Project file brief ---
+
+  /**
+   * Build a compact summary of existing project files so the agent knows
+   * what's already been created and can skip exploratory reads on resume.
+   * Lists source files with line counts, grouped by directory.
+   *
+   * @param {string} projectDir - Absolute path to the project directory
+   * @returns {string|null} Formatted file brief, or null if empty
+   */
+  _buildProjectFileBrief(projectDir) {
+    const fs = require('fs')
+    const path = require('path')
+    const SKIP = new Set(['.git', 'node_modules', '__pycache__', '.next', 'dist', 'build', '.cache', '.DS_Store', '.maccoder', 'coverage'])
+    const SOURCE_EXTS = new Set(['.swift', '.js', '.ts', '.py', '.rs', '.go', '.java', '.c', '.cpp', '.h', '.m', '.mm', '.css', '.html', '.json'])
+    const lines = []
+    const MAX_FILES = 40
+
+    function walk(dir, prefix) {
+      if (lines.length >= MAX_FILES) return
+      let entries
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+      entries = entries
+        .filter(e => !SKIP.has(e.name) && !e.name.startsWith('.'))
+        .sort((a, b) => (b.isDirectory() - a.isDirectory()) || a.name.localeCompare(b.name))
+      for (const e of entries) {
+        if (lines.length >= MAX_FILES) return
+        const fullPath = path.join(dir, e.name)
+        if (e.isDirectory()) {
+          walk(fullPath, prefix ? `${prefix}/${e.name}` : e.name)
+        } else if (SOURCE_EXTS.has(path.extname(e.name).toLowerCase())) {
+          try {
+            const stat = fs.statSync(fullPath)
+            const content = fs.readFileSync(fullPath, 'utf-8')
+            const lineCount = content.split('\n').length
+            const relPath = prefix ? `${prefix}/${e.name}` : e.name
+            lines.push(`  ${relPath} (${lineCount} lines)`)
+          } catch { /* skip unreadable files */ }
+        }
+      }
+    }
+
+    walk(projectDir, '')
+    if (lines.length === 0) return null
+    return `[Existing project files — do NOT re-read these unless you need to edit them]\n` +
+      `${lines.length} source files already exist in this project:\n${lines.join('\n')}\n` +
+      `Use read_file or read_files ONLY for files you need to edit. Use search_files to find specific code.`
   }
 
   // --- Routable siblings ---
