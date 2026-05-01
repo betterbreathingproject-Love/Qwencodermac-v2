@@ -1973,10 +1973,12 @@ def _extract_generate(prompt: str, max_tokens: int = 400) -> str:
     if _is_vlm:
         # Model loaded via mlx_vlm — use vlm generate with no image
         from mlx_vlm import generate as vlm_generate
-        return vlm_generate(
+        result = vlm_generate(
             _extract_model, _extract_processor,
             prompt=prompt, max_tokens=max_tokens, verbose=False,
         )
+        # vlm_generate returns GenerationResult — extract the text string
+        return result.text if hasattr(result, 'text') else str(result)
     else:
         import mlx_lm
         return mlx_lm.generate(
