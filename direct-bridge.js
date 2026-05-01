@@ -3447,6 +3447,49 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           }
         }
 
+        // ── Batch re-read interception (read_files) ──────────────────────────
+        // If the agent calls read_files with paths that were ALL already fully
+        // read and still in context, intercept the entire call.
+        // If some are new, filter out the already-read ones and only read new files.
+        if (fnName === 'read_files' && Array.isArray(fnArgs.paths) && fnArgs.paths.length > 0) {
+          const alreadyRead = []
+          const needsRead = []
+          for (const filePath of fnArgs.paths) {
+            const prev = _readFileHistory.get(filePath)
+            if (prev && prev.fullRead) {
+              const contentStillInContext = messages.some(m =>
+                m.role === 'tool' && m.content && m.content.length > 500 &&
+                m.content.includes(filePath.split('/').pop())
+              )
+              if (contentStillInContext) {
+                try {
+                  const resolvedPath = path.resolve(cwd, filePath.trim())
+                  const currentMtime = fs.statSync(resolvedPath).mtimeMs
+                  if (prev.mtime && currentMtime <= prev.mtime) {
+                    alreadyRead.push(filePath)
+                    continue
+                  }
+                } catch { /* stat failed — treat as needs read */ }
+              }
+            }
+            needsRead.push(filePath)
+          }
+          if (alreadyRead.length > 0 && needsRead.length === 0) {
+            // All files already read and in context — skip entirely
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Skipped batch re-read of ${alreadyRead.length} files (all already in context)` })
+            const interceptContent = `All ${alreadyRead.length} files were already read and are still in your context. ` +
+              `Do NOT re-read them. Proceed with your edits using edit_file.`
+            this.send('qwen-event', { type: 'tool-result', tool_use_id: tc.id, content: interceptContent, is_error: false })
+            messages.push({ role: 'tool', tool_call_id: tc.id, content: interceptContent })
+            continue
+          }
+          if (alreadyRead.length > 0 && needsRead.length > 0) {
+            // Some already read — rewrite args to only read new files
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Filtered batch read: ${alreadyRead.length} already in context, reading ${needsRead.length} new files` })
+            fnArgs.paths = needsRead
+          }
+        }
+
         // Execute
         const result = await executeTool(fnName, fnArgs, cwd, this._browserInstance, this._lspManager, this._inputRequester, { send: this.send.bind(this), _sessionId })
         const isError = !!result.error
@@ -3472,6 +3515,26 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
             prev.mtime = fs.statSync(resolvedPath).mtimeMs
           } catch { /* ignore */ }
           _readFileHistory.set(readKey, prev)
+        }
+
+        // Update read_file history for batch reads (read_files)
+        // Track each file in the batch so re-read interception works
+        if (fnName === 'read_files' && !isError && Array.isArray(fnArgs.paths)) {
+          for (const filePath of fnArgs.paths) {
+            const readKey = filePath
+            const prev = _readFileHistory.get(readKey) || { count: 0, lastTurn: turn, fullRead: false, totalLines: 0, mtime: 0 }
+            prev.count++
+            prev.lastTurn = turn
+            prev.fullRead = true
+            // Extract line count from the result header: "── path (N lines) ──"
+            const lineMatch = (content || '').match(new RegExp(`── ${filePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\((\\d+) lines\\)`))
+            prev.totalLines = lineMatch ? parseInt(lineMatch[1], 10) : 0
+            try {
+              const resolvedPath = path.resolve(cwd, filePath.trim())
+              prev.mtime = fs.statSync(resolvedPath).mtimeMs
+            } catch { /* ignore */ }
+            _readFileHistory.set(readKey, prev)
+          }
         }
 
         // ── Memory: archive tool call ─────────────────────────────────────
