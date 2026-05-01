@@ -259,28 +259,39 @@ async function _reloadModel(port, modelPath, mainWindow, appDir) {
   }
 }
 
-function stopServer() {
+/**
+ * Stop the server process.
+ * @param {object} [opts]
+ * @param {boolean} [opts.graceful] - If true, send /admin/unload before SIGTERM
+ *   so the model is cleanly released from Metal memory. Use only on app shutdown,
+ *   not on restart (where the delay would cause a port conflict).
+ */
+function stopServer({ graceful = false } = {}) {
   _serverStopping = true
   if (serverProcess) {
     const proc = serverProcess
     serverProcess = null
-    // Ask the server to unload the model and free Metal memory before we kill it.
-    // Fire-and-forget with a short timeout — if it fails we still send SIGTERM.
-    const body = ''
-    const req = http.request({
-      hostname: '127.0.0.1', port: _lastServerPort || 8090,
-      path: '/admin/unload', method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': 0 },
-    }, (res) => { res.resume() })
-    req.on('error', () => {})
-    req.setTimeout(3000, () => { req.destroy() })
-    req.end()
-    // Give the unload request a moment to complete, then terminate the process
-    setTimeout(() => {
+    if (graceful) {
+      // Ask the server to unload the model and free Metal memory before killing.
+      // Fire-and-forget — if the HTTP call fails we still send SIGTERM after the timeout.
+      const req = http.request({
+        hostname: '127.0.0.1', port: _lastServerPort || 8090,
+        path: '/admin/unload', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': 0 },
+      }, (res) => { res.resume() })
+      req.on('error', () => {})
+      req.setTimeout(3000, () => { req.destroy() })
+      req.end()
+      // Give the unload request a moment to complete, then terminate
+      setTimeout(() => {
+        try { proc.kill('SIGTERM') } catch {}
+        setTimeout(() => { try { proc.kill('SIGKILL') } catch {} }, 2000)
+      }, 1500)
+    } else {
+      // Fast path for restarts — kill immediately to avoid port conflicts
       try { proc.kill('SIGTERM') } catch {}
-      // Force kill after 2s if still alive
       setTimeout(() => { try { proc.kill('SIGKILL') } catch {} }, 2000)
-    }, 1500)
+    }
   }
 }
 

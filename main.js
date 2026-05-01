@@ -633,7 +633,7 @@ function createWindow() {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   })
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'))
-  mainWindow.on('closed', () => { ipcServer.stopServer(); mainWindow = null })
+  mainWindow.on('closed', () => { mainWindow = null })
   qwenBridge = new DirectBridge(new WindowSink(mainWindow), {
     getCalibrationProfile: ipcServer.getCalibrationProfile,
     routeTask: async (title) => {
@@ -1146,7 +1146,7 @@ app.whenReady().then(() => {
   }
 })
 app.on('window-all-closed', () => {
-  ipcServer.stopServer()
+  ipcServer.stopServer({ graceful: true })
   ipcWatcher.unwatchProject()
   if (lspManager) lspManager.stop().catch(() => {})
   if (telegramBot) telegramBot.stop()
