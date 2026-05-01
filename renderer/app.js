@@ -2665,31 +2665,58 @@ window._askUserOptions = {}
  * the user should pick from. If found, inject clickable quick-reply chips
  * below the text so the user can respond with one click.
  *
- * Only triggers when the text contains question-like language near the list,
+ * Only triggers when the text ends with question-like language,
  * to avoid false positives on numbered bug fixes, steps, explanations, etc.
  */
 function _injectQuickReplyChips(textEl, rawText) {
-  // Must contain a question mark or question-like phrasing near the end
-  const lower = rawText.toLowerCase()
-  const hasQuestion = rawText.includes('?') ||
-    /which (one|option|approach|direction|style|type)/i.test(rawText) ||
-    /what (kind|type|style|do you|would you)/i.test(rawText) ||
-    /pick|choose|prefer|decide|select|interested in/i.test(lower)
+  // The question/prompt must be near the END of the text (last ~300 chars)
+  const tail = rawText.slice(-400)
+  const hasQuestion = tail.includes('?') ||
+    /which (one|option|approach|direction|style|type)/i.test(tail) ||
+    /what (kind|type|style|do you|would you)/i.test(tail) ||
+    /pick|choose|prefer|decide|select|interested in/i.test(tail.toLowerCase())
   if (!hasQuestion) return
 
-  // Look for numbered items: "1. Something", "2. Something", etc.
+  // Collect ALL numbered items from the text
   const lines = rawText.split('\n')
-  const numbered = []
+  const allNumbered = []
+  let currentGroup = []
+  let lastNum = 0
   for (const line of lines) {
-    const m = line.match(/^\s*(\d+)[\.\)]\s+\*{0,2}(.+?)\*{0,2}\s*(?:[-–—]\s*.+)?$/)
-    if (m) numbered.push(m[2].replace(/\*{1,2}/g, '').trim())
+    const m = line.match(/^\s*(\d+)[\.\)]\s+\*{0,2}(.+?)\*{0,2}\s*(?:[-–—:]\s*.+)?$/)
+    if (m) {
+      const num = parseInt(m[1], 10)
+      const text = m[2].replace(/\*{1,2}/g, '').trim()
+      // New sequence resets the group
+      if (num <= lastNum && currentGroup.length >= 2) {
+        allNumbered.push([...currentGroup])
+        currentGroup = []
+      }
+      currentGroup.push(text)
+      lastNum = num
+    }
   }
-  // Need at least 2 numbered items to consider it a list of options
-  if (numbered.length < 2 || numbered.length > 10) return
-  // Skip if items are too long (probably explanatory paragraphs, not choices)
-  if (numbered.some(o => o.length > 80)) return
-  // Skip if items look like code steps or instructions (contain file paths, commands)
-  if (numbered.some(o => /[\/\\`$]/.test(o) || /^(run|install|create|open|add|import|update)\b/i.test(o))) return
+  if (currentGroup.length >= 2) allNumbered.push(currentGroup)
+
+  // No numbered groups found
+  if (allNumbered.length === 0) return
+
+  // Use the FIRST group if it has short items (likely the main choices),
+  // otherwise use the last group (likely follow-up questions).
+  // Prefer the group whose items are shortest on average — those are the "pick one" options.
+  let bestGroup = allNumbered[0]
+  let bestAvg = bestGroup.reduce((s, o) => s + o.length, 0) / bestGroup.length
+  for (const group of allNumbered) {
+    const avg = group.reduce((s, o) => s + o.length, 0) / group.length
+    if (avg < bestAvg) { bestGroup = group; bestAvg = avg }
+  }
+
+  const numbered = bestGroup
+  // Sanity checks
+  if (numbered.length < 2 || numbered.length > 12) return
+  if (numbered.some(o => o.length > 100)) return
+  // Skip if items look like code steps or instructions
+  if (numbered.some(o => /[\\`$]/.test(o) || /^(run|install|create|open|add|import|update)\b/i.test(o))) return
 
   const cardId = 'qr-' + Date.now()
   const options = [...numbered, 'Other…']

@@ -422,7 +422,18 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
   let routedByKeyword = false
   // Route via small model when user hasn't explicitly picked a non-general role
   const isAutoMode = !agentRole || agentRole === 'general'
-  if (isAutoMode) {
+
+  // Skip routing entirely for obvious conversational prompts — let direct-bridge.js
+  // handle chat detection. This prevents the small model from misrouting brainstorming
+  // or discussion prompts to explore/implementation.
+  const _lowerPrompt = prompt.toLowerCase()
+  const _chatSignals = ['let\'s discuss', 'let\'s brainstorm', 'let\'s think', 'what do you think',
+    'ideas for', 'thoughts on', 'help me decide', 'pros and cons', 'should i',
+    'what would you', 'can you explain', 'tell me about', 'how does',
+    'what is the difference', 'let\'s plan', 'let\'s talk', 'opinion on']
+  const _isChatPrompt = _chatSignals.some(s => _lowerPrompt.includes(s))
+
+  if (isAutoMode && !_isChatPrompt) {
     // Keyword matching first — fast, no model call needed for unambiguous signals
     const keywordType = agentPool.selectType({ title: prompt, description: '' })
     const keywordName = keywordType?.name || 'general'
