@@ -153,7 +153,9 @@ class Orchestrator extends EventEmitter {
           status: n.status,
         })),
       }
-      memoryClient.archiveRecord('workflow_start', graphSummary, `Workflow started with ${this._graph.nodes.size} tasks`).catch(() => {})
+      memoryClient.archiveRecord('workflow_start', graphSummary, `Workflow started with ${this._graph.nodes.size} tasks`, {
+        projectId: this._projectDir ? require('path').basename(this._projectDir) : null,
+      }).catch(() => {})
     }
 
     // Find start node: ^start marker or first root node
@@ -310,7 +312,11 @@ class Orchestrator extends EventEmitter {
       if (memoryClient) {
         try {
           const taskQuery = `${node.title || node.text || node.id} ${node.description || ''}`.trim()
-          const memResult = await memoryClient.retrieve(taskQuery, { mode: 'fast', topK: 5 })
+          const memResult = await memoryClient.retrieve(taskQuery, {
+            mode: 'fast',
+            topK: 5,
+            projectId: this._projectDir ? require('path').basename(this._projectDir) : null,
+          })
           if (memResult && memResult.results && memResult.results.length > 0) {
             const memLines = memResult.results.map(r => `[${r.source}] ${r.content}`).join('\n')
             specContextWithMemory = trimmedSpecContext
@@ -379,7 +385,9 @@ class Orchestrator extends EventEmitter {
           output: (taskResult.output || '').slice(0, 500),
           duration: taskResult.duration,
           agentType: taskResult.agentType,
-        }, `Task completed: ${node.title || node.id}`).catch(() => {})
+        }, `Task completed: ${node.title || node.id}`, {
+          projectId: this._projectDir ? require('path').basename(this._projectDir) : null,
+        }).catch(() => {})
       }
       // Store output in context for branch evaluation
       this._context[node.id] = taskResult.output;

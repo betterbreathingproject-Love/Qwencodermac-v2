@@ -1,8 +1,8 @@
-# Design Document: oh-my-kiro-integration
+# Design Document: oh-my-maccoder-integration
 
 ## Overview
 
-This design integrates oh-my-kiro capabilities into the QwenCoder Mac Studio Electron app, transforming it from a single-agent chat tool into a structured multi-agent coding environment. The integration adds six core modules: a Task Graph Parser, a Task Graph Executor (Orchestrator), a Multi-Agent Subagent Architecture (Agent Pool), Background Task Execution, AST-Based Code Search, and a Spec-Driven Development Workflow — all exposed via IPC to the Electron renderer.
+This design integrates oh-my-maccoder capabilities into the QwenCoder Mac Studio Electron app, transforming it from a single-agent chat tool into a structured multi-agent coding environment. The integration adds six core modules: a Task Graph Parser, a Task Graph Executor (Orchestrator), a Multi-Agent Subagent Architecture (Agent Pool), Background Task Execution, AST-Based Code Search, and a Spec-Driven Development Workflow — all exposed via IPC to the Electron renderer.
 
 The existing app architecture follows a clean Electron pattern: `main.js` handles IPC and process lifecycle, `qwen-bridge.js` wraps the `@qwen-code/sdk` for agent queries, `preload.js` exposes IPC channels, `renderer/app.js` drives the UI, and `projects.js` manages persistence. The new modules slot into this architecture as additional main-process modules with corresponding IPC handlers and renderer UI panels.
 
@@ -238,7 +238,7 @@ type SpecPhase = 'requirements' | 'design' | 'tasks' | 'implementation'
 
 interface SpecWorkflow {
   featureName: string
-  specDir: string               // .kiro/specs/{feature_name}/
+  specDir: string               // .maccoder/specs/{feature_name}/
   currentPhase: SpecPhase
   config: SpecConfig
 }
@@ -415,7 +415,7 @@ Background task results are stored in the project's session data via the existin
 
 ### Spec Workflow Config
 
-Stored at `.kiro/specs/{feature_name}/.config.kiro`:
+Stored at `.maccoder/specs/{feature_name}/.config.maccoder`:
 
 ```json
 {
@@ -559,16 +559,16 @@ Property-based tests verify universal correctness properties using generated inp
 
 | Property | Test Tag | Generator |
 |----------|----------|-----------|
-| 1: Round-trip | `Feature: oh-my-kiro-integration, Property 1: Task Graph round-trip preservation` | `arbitraryTaskGraph()` |
-| 2: Parallel siblings | `Feature: oh-my-kiro-integration, Property 2: Parallel sibling detection` | `arbitraryTaskGraph()` |
-| 3: Syntax errors | `Feature: oh-my-kiro-integration, Property 3: Syntax error reporting with line identification` | `arbitraryInvalidTasksMd()` |
-| 4: Traversal order | `Feature: oh-my-kiro-integration, Property 4: Dependency-respecting traversal order` | `arbitraryTaskGraph()` |
-| 5: Status lifecycle | `Feature: oh-my-kiro-integration, Property 5: Task status lifecycle` | `arbitraryTaskGraph()` + mock executor |
-| 6: Agent selection | `Feature: oh-my-kiro-integration, Property 6: Agent type selection correctness` | `arbitraryTaskNode()` + `arbitrarySubagentType()` |
-| 7: Concurrency limit | `Feature: oh-my-kiro-integration, Property 7: Concurrency limit enforcement` | `arbitraryTaskSequence()` |
-| 8: Search results | `Feature: oh-my-kiro-integration, Property 8: Search result completeness` | `arbitrarySearchPattern()` + fixture files |
-| 9: Invalid patterns | `Feature: oh-my-kiro-integration, Property 9: Invalid pattern error descriptiveness` | random strings |
-| 10: Phase transitions | `Feature: oh-my-kiro-integration, Property 10: Spec phase transition validity` | random phase sequences |
+| 1: Round-trip | `Feature: oh-my-maccoder-integration, Property 1: Task Graph round-trip preservation` | `arbitraryTaskGraph()` |
+| 2: Parallel siblings | `Feature: oh-my-maccoder-integration, Property 2: Parallel sibling detection` | `arbitraryTaskGraph()` |
+| 3: Syntax errors | `Feature: oh-my-maccoder-integration, Property 3: Syntax error reporting with line identification` | `arbitraryInvalidTasksMd()` |
+| 4: Traversal order | `Feature: oh-my-maccoder-integration, Property 4: Dependency-respecting traversal order` | `arbitraryTaskGraph()` |
+| 5: Status lifecycle | `Feature: oh-my-maccoder-integration, Property 5: Task status lifecycle` | `arbitraryTaskGraph()` + mock executor |
+| 6: Agent selection | `Feature: oh-my-maccoder-integration, Property 6: Agent type selection correctness` | `arbitraryTaskNode()` + `arbitrarySubagentType()` |
+| 7: Concurrency limit | `Feature: oh-my-maccoder-integration, Property 7: Concurrency limit enforcement` | `arbitraryTaskSequence()` |
+| 8: Search results | `Feature: oh-my-maccoder-integration, Property 8: Search result completeness` | `arbitrarySearchPattern()` + fixture files |
+| 9: Invalid patterns | `Feature: oh-my-maccoder-integration, Property 9: Invalid pattern error descriptiveness` | random strings |
+| 10: Phase transitions | `Feature: oh-my-maccoder-integration, Property 10: Spec phase transition validity` | random phase sequences |
 
 ### Integration Tests
 

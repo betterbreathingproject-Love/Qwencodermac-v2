@@ -6,7 +6,7 @@ This feature adds two capabilities to the QwenCoder Mac Studio IDE:
 
 1. **Dynamic Branch Routing** — Upgrades the orchestrator to parse structured `RoutingDecision` JSON objects from agent output at branch points, enabling conditional workflows, retry loops, and parallel fan-out patterns. Currently, branch evaluation uses a simple `_evaluateCondition` method that checks context keys and boolean literals. The new system dispatches branch point tasks to agents, parses their structured output, and routes execution accordingly.
 
-2. **Auto-Generating Steering Docs** — A `SteeringGenerator` module that uses an explore-type agent to analyze the project codebase and produce `.kiro/steering/*.md` files. These steering docs contain project-specific context (tech stack, conventions, framework patterns, tooling) and are automatically injected into agent system prompts via the `AgentFactory`, grounding all future agent runs in project context.
+2. **Auto-Generating Steering Docs** — A `SteeringGenerator` module that uses an explore-type agent to analyze the project codebase and produce `.maccoder/steering/*.md` files. These steering docs contain project-specific context (tech stack, conventions, framework patterns, tooling) and are automatically injected into agent system prompts via the `AgentFactory`, grounding all future agent runs in project context.
 
 Both capabilities integrate into the existing architecture: the orchestrator loop in `orchestrator.js`, the agent dispatch system in `agent-pool.js`, the agent factory in `main.js`, and the IPC layer in `main/ipc-tasks.js`.
 
@@ -31,10 +31,10 @@ graph TD
     subgraph SteeringSystem["steering-generator.js"]
         Analyze["Analyze project"]
         Generate["Generate steering docs"]
-        Write["Write .kiro/steering/*.md"]
+        Write["Write .maccoder/steering/*.md"]
     end
 
-    subgraph SteeringDocs[".kiro/steering/"]
+    subgraph SteeringDocs[".maccoder/steering/"]
         Overview["project-overview.md"]
         Framework["framework.md"]
         Tooling["tooling.md"]
@@ -132,7 +132,7 @@ The agent factory is extended:
 
 **Steering doc injection:**
 ```
-1. Read all .md files from .kiro/steering/ (if directory exists)
+1. Read all .md files from .maccoder/steering/ (if directory exists)
 2. Parse YAML front matter from each file
 3. Append to system prompt under "## Project Context" header
 4. Each doc gets a "### <name>" sub-header
@@ -160,7 +160,7 @@ Orchestrates the full generation flow:
    - `project-overview.md` — always generated
    - `<framework>.md` — if a recognizable framework is detected
    - `tooling.md` — if tool config files are found
-4. Write files to `.kiro/steering/`
+4. Write files to `.maccoder/steering/`
 5. Emit progress events during generation
 
 **`parseSteeringDoc(content: string): { frontMatter: object, body: string }`**
@@ -182,7 +182,7 @@ New IPC handlers:
 
 **`loadSteeringDocs(projectDir: string): SteeringDoc[]`**
 
-Reads all `.md` files from `.kiro/steering/`, parses front matter, and returns an array of `SteeringDoc` objects. Used by the agent factory at prompt assembly time.
+Reads all `.md` files from `.maccoder/steering/`, parses front matter, and returns an array of `SteeringDoc` objects. Used by the agent factory at prompt assembly time.
 
 **`formatSteeringForPrompt(docs: SteeringDoc[]): string`**
 
@@ -314,7 +314,7 @@ auto_generated: true
 
 | Error Condition | Handling |
 |---|---|
-| `.kiro/steering/` directory doesn't exist | `loadSteeringDocs` returns empty array; agent factory skips injection |
+| `.maccoder/steering/` directory doesn't exist | `loadSteeringDocs` returns empty array; agent factory skips injection |
 | Steering doc has malformed YAML front matter | Skip that doc, log warning, continue with remaining docs |
 | Agent pool dispatch fails during generation | `generateSteeringDocs` returns `{ errors: [...] }` with the failure message |
 | File write fails during generation | Error added to `SteeringResult.errors`, generation continues for remaining docs |

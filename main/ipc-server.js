@@ -586,17 +586,19 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
   })
 
   // ── Memory bank — archive viewer, KG query, stats ─────────────────────────
-  ipcMain.handle('memory-archive-search', async (_, query, limit) => {
+  ipcMain.handle('memory-archive-search', async (_, query, limit, projectId) => {
     try {
       const memClient = require('../memory-client.js')
-      return await memClient.archiveSearch(query || '', { limit: limit || 50 })
+      return await memClient.archiveSearch(query || '', { limit: limit || 50, projectId: projectId || null })
     } catch (_) { return [] }
   })
 
-  ipcMain.handle('memory-archive-events', async (_, limit) => {
+  ipcMain.handle('memory-archive-events', async (_, limit, projectId) => {
     try {
       const memClient = require('../memory-client.js')
-      const result = await memClient._httpRequest('GET', `/memory/archive/events?limit=${limit || 50}`, null, 5000)
+      let url = `/memory/archive/events?limit=${limit || 50}`
+      if (projectId) url += `&project_id=${encodeURIComponent(projectId)}`
+      const result = await memClient._httpRequest('GET', url, null, 5000)
       return Array.isArray(result) ? result : (result?.events || [])
     } catch (_) { return [] }
   })
@@ -608,10 +610,12 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
     } catch (_) { return [] }
   })
 
-  ipcMain.handle('memory-stats', async () => {
+  ipcMain.handle('memory-stats', async (_, projectId) => {
     try {
       const memClient = require('../memory-client.js')
-      const result = await memClient._httpRequest('GET', '/memory/stats', null, 5000)
+      let url = '/memory/stats'
+      if (projectId) url += `?project_id=${encodeURIComponent(projectId)}`
+      const result = await memClient._httpRequest('GET', url, null, 5000)
       return result || null
     } catch (_) { return null }
   })

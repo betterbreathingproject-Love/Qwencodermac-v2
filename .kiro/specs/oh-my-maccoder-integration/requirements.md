@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This feature integrates key capabilities from the oh-my-kiro project into the existing QwenCoder Mac Studio Electron app. The integration brings dynamic task graph execution, multi-agent/subagent architecture, background (parallel) task execution, AST-based code search, and a spec-driven development workflow. These capabilities transform the app from a single-agent chat tool into a structured, multi-agent coding environment that can plan, decompose, and execute complex development tasks.
+This feature integrates key capabilities from the oh-my-maccoder project into the existing QwenCoder Mac Studio Electron app. The integration brings dynamic task graph execution, multi-agent/subagent architecture, background (parallel) task execution, AST-based code search, and a spec-driven development workflow. These capabilities transform the app from a single-agent chat tool into a structured, multi-agent coding environment that can plan, decompose, and execute complex development tasks.
 
 ## Glossary
 
@@ -98,7 +98,7 @@ This feature integrates key capabilities from the oh-my-kiro project into the ex
 
 #### Acceptance Criteria
 
-1. WHEN the user initiates a spec workflow, THE Spec_Workflow SHALL create a `.kiro/specs/{feature_name}/` directory with a config file.
+1. WHEN the user initiates a spec workflow, THE Spec_Workflow SHALL create a `.maccoder/specs/{feature_name}/` directory with a config file.
 2. WHEN the requirements phase begins, THE Spec_Workflow SHALL generate a requirements.md file following EARS patterns and INCOSE quality rules.
 3. WHEN the design phase begins, THE Spec_Workflow SHALL generate a design.md file based on the approved requirements.
 4. WHEN the tasks phase begins, THE Spec_Workflow SHALL generate a tasks.md file with a Task_Graph derived from the design.

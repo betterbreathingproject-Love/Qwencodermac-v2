@@ -482,8 +482,12 @@ async def get_memory_status():
 
 
 @router.get("/stats", response_model=MemoryStats)
-async def get_memory_stats():
-    """Return storage sizes, record counts, and last extraction timestamp."""
+async def get_memory_stats(project_id: Optional[str] = None):
+    """Return storage sizes, record counts, and last extraction timestamp.
+
+    When project_id is provided, archive_events count is scoped to that project.
+    KG triples and vector counts remain global (not project-scoped at storage level).
+    """
     if _data_path is None:
         raise HTTPException(status_code=503, detail="Memory system not initialized")
 
@@ -512,7 +516,14 @@ async def get_memory_stats():
     archive_events = 0
     if _archive is not None:
         try:
-            if hasattr(_archive, "count"):
+            if project_id and hasattr(_archive, "search_fts"):
+                # Count events for this project by searching for the project_id tag
+                project_results = await _archive.search_fts(project_id, limit=10000)
+                archive_events = sum(
+                    1 for r in project_results
+                    if _archive_record_matches_project(r, project_id)
+                )
+            elif hasattr(_archive, "count"):
                 archive_events = await _archive.count()
             elif hasattr(_archive, "event_count"):
                 archive_events = await _archive.count()
@@ -834,10 +845,12 @@ async def archive_search(query: str, limit: int = 20, project_id: Optional[str] 
 
 
 @router.get("/archive/events")
-async def archive_events(limit: int = 50):
+async def archive_events(limit: int = 50, project_id: Optional[str] = None):
     """Return the most recent N archived events, ordered by timestamp descending.
 
-    Accepts a configurable limit parameter (default 50).
+    Accepts a configurable limit parameter (default 50) and optional project_id
+    for scoping. When project_id is provided, only returns events tagged with
+    that project (or untagged global events).
     Returns HTTP 503 if Archive is unavailable.
     """
     if _archive is None:
@@ -847,7 +860,20 @@ async def archive_events(limit: int = 50):
         )
 
     try:
-        results = await _archive.query(limit=limit)
+        # Fetch extra results when filtering by project to ensure we get enough after filtering
+        fetch_limit = limit * 3 if project_id else limit
+        results = await _archive.query(limit=fetch_limit)
+
+        # Filter by project_id when provided
+        if project_id:
+            filtered = []
+            for r in results:
+                if _archive_record_matches_project(r, project_id):
+                    filtered.append(r)
+                if len(filtered) >= limit:
+                    break
+            results = filtered
+
         return {
             "events": [
                 {
@@ -859,9 +885,9 @@ async def archive_events(limit: int = 50):
                     "session_id": r.get("app_id"),
                     "timestamp": _fmt_archive_ts(r.get("timestamp")),
                 }
-                for r in results
+                for r in results[:limit]
             ],
-            "count": len(results),
+            "count": len(results[:limit]),
         }
     except Exception as e:
         logger.error(f"Failed to get recent archive events: {e}")
@@ -1047,6 +1073,25 @@ def _parse_archive_payload(record: dict):
         except Exception:
             return raw
     return raw
+
+
+def _archive_record_matches_project(record: dict, project_id: str) -> bool:
+    """Check if an archive record belongs to a project (or is untagged/global).
+
+    Records with _project_id matching the given project_id are included.
+    Records with no _project_id tag are treated as global and also included.
+    """
+    payload = _parse_archive_payload(record)
+    item_project = None
+    if isinstance(payload, dict):
+        item_project = payload.get("_project_id")
+    elif isinstance(payload, str) and "_project_id" in payload:
+        import re as _re
+        m = _re.search(r'"_project_id"\s*:\s*"([^"]+)"', payload)
+        if m:
+            item_project = m.group(1)
+    # Include if: matches project, or is untagged (global)
+    return item_project is None or item_project == project_id
 
 
 def _fmt_archive_ts(ts) -> str | None:

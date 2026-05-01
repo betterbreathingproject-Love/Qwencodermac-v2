@@ -116,7 +116,7 @@
 ## Task 5: Spec-Driven Development Workflow Module
 
 - [x] 5.1 Create `spec-workflow.js` module
-  - [x] 5.1.1 Implement `initSpec(featureName, projectDir)` — create `.kiro/specs/{name}/` directory with `.config.kiro`
+  - [x] 5.1.1 Implement `initSpec(featureName, projectDir)` — create `.maccoder/specs/{name}/` directory with `.config.maccoder`
   - [x] 5.1.2 Implement `getSpecPhase(specDir)` — read config and determine current phase
   - [x] 5.1.3 Implement `advancePhase(specDir)` — move to next phase in sequence (requirements → design → tasks → implementation)
   - [x] 5.1.4 Implement `getSpecArtifacts(specDir)` — read and return all existing spec files

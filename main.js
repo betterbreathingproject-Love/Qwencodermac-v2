@@ -39,7 +39,7 @@ const SERVER_PORT = 8090
 const MINIAPP_PORT = 3847
 const SERVER_URL = `http://127.0.0.1:${SERVER_PORT}`
 
-// ── Subagent system prompts (like oh-my-kiro's multi-agent architecture) ──────
+// ── Subagent system prompts (multi-agent architecture) ───────────────────────
 // Each subagent type gets a specialized prompt. Same model, different instructions.
 
 // ── Role overlays ─────────────────────────────────────────────────────────────

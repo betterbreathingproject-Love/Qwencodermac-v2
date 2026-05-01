@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This feature adds two capabilities to the QwenCoder Mac Studio IDE: (1) Dynamic Branch Routing, which upgrades the orchestrator to evaluate structured routing decisions returned by agents at branch points, enabling conditional workflows, retry loops, and parallel fan-out patterns; and (2) an Auto-Generating Steering Docs system, where the AI analyzes the project codebase and automatically generates `.kiro/steering/*.md` context documents that get injected into agent system prompts. Instead of manually writing skill files, the agent explores the project (tech stack, conventions, key patterns, tool usage) and produces steering docs that keep all future agent runs grounded in project-specific context.
+This feature adds two capabilities to the QwenCoder Mac Studio IDE: (1) Dynamic Branch Routing, which upgrades the orchestrator to evaluate structured routing decisions returned by agents at branch points, enabling conditional workflows, retry loops, and parallel fan-out patterns; and (2) an Auto-Generating Steering Docs system, where the AI analyzes the project codebase and automatically generates `.maccoder/steering/*.md` context documents that get injected into agent system prompts. Instead of manually writing skill files, the agent explores the project (tech stack, conventions, key patterns, tool usage) and produces steering docs that keep all future agent runs grounded in project-specific context.
 
 ## Glossary
 
@@ -12,7 +12,7 @@ This feature adds two capabilities to the QwenCoder Mac Studio IDE: (1) Dynamic 
 - **Routing_Decision**: A structured JSON object returned by an agent upon completing a branch point task, containing a `route` field that specifies which task ID(s) to activate next.
 - **Agent_Pool**: The `AgentPool` class in `agent-pool.js` that selects subagent types and dispatches tasks with concurrency control.
 - **Direct_Bridge**: The `DirectBridge` class in `direct-bridge.js` that runs prompts against the local MLX model server with tool calling support.
-- **Steering_Doc**: A Markdown file stored at `.kiro/steering/<name>.md` that contains auto-generated project-specific context for agents (tech stack, conventions, patterns, tool usage).
+- **Steering_Doc**: A Markdown file stored at `.maccoder/steering/<name>.md` that contains auto-generated project-specific context for agents (tech stack, conventions, patterns, tool usage).
 - **Steering_Generator**: The module responsible for analyzing the project codebase and producing Steering_Doc files automatically via the AI.
 - **System_Prompt**: The instruction text prepended to agent conversations that defines the agent's role, available tools, and behavioral guidelines.
 - **Fan_Out**: A routing pattern where a single branch point activates multiple downstream tasks for parallel execution.
@@ -75,11 +75,11 @@ This feature adds two capabilities to the QwenCoder Mac Studio IDE: (1) Dynamic 
 #### Acceptance Criteria
 
 1. WHEN the Steering_Generator is invoked for a project directory, THE Steering_Generator SHALL use an explore-type agent to read key project files (package.json, config files, entry points, directory structure).
-2. THE Steering_Generator SHALL produce one or more Steering_Doc files in the `.kiro/steering/` directory based on the analysis.
+2. THE Steering_Generator SHALL produce one or more Steering_Doc files in the `.maccoder/steering/` directory based on the analysis.
 3. THE Steering_Generator SHALL generate a `project-overview.md` Steering_Doc containing the tech stack, project structure summary, and key entry points.
 4. WHEN the project contains recognizable framework patterns (React, Express, Electron, etc.), THE Steering_Generator SHALL generate a framework-specific Steering_Doc with conventions and best practices relevant to that project.
 5. WHEN the project contains tool configuration files (ESLint, Prettier, TypeScript config, test config), THE Steering_Generator SHALL generate a `tooling.md` Steering_Doc summarizing the configured tools and how agents should respect those configurations.
-6. IF the `.kiro/steering/` directory already contains Steering_Docs, THEN THE Steering_Generator SHALL overwrite existing docs with updated content (regeneration replaces stale context).
+6. IF the `.maccoder/steering/` directory already contains Steering_Docs, THEN THE Steering_Generator SHALL overwrite existing docs with updated content (regeneration replaces stale context).
 
 ### Requirement 6: Steering Doc Format and Structure
 
@@ -98,7 +98,7 @@ This feature adds two capabilities to the QwenCoder Mac Studio IDE: (1) Dynamic 
 
 #### Acceptance Criteria
 
-1. WHEN the Agent_Factory creates an agent and Steering_Docs exist in `.kiro/steering/`, THE Agent_Factory SHALL load all Steering_Doc files and append their content to the system prompt under a `## Project Context` section.
+1. WHEN the Agent_Factory creates an agent and Steering_Docs exist in `.maccoder/steering/`, THE Agent_Factory SHALL load all Steering_Doc files and append their content to the system prompt under a `## Project Context` section.
 2. THE Agent_Factory SHALL separate each injected Steering_Doc with a header containing the doc name (e.g., `### project-overview`).
 3. WHEN no Steering_Docs exist for the current project, THE Agent_Factory SHALL not modify the system prompt (no empty project context section).
 4. THE Agent_Factory SHALL inject Steering_Docs after the base system prompt and before any task-specific instructions (such as routing instructions for branch points).
@@ -109,7 +109,7 @@ This feature adds two capabilities to the QwenCoder Mac Studio IDE: (1) Dynamic 
 
 #### Acceptance Criteria
 
-1. WHEN the user opens a project for the first time and no `.kiro/steering/` directory exists, THE System SHALL prompt the user to generate steering docs.
+1. WHEN the user opens a project for the first time and no `.maccoder/steering/` directory exists, THE System SHALL prompt the user to generate steering docs.
 2. WHEN the user triggers a "Regenerate Steering Docs" action via IPC, THE Steering_Generator SHALL re-analyze the project and overwrite existing Steering_Docs.
 3. THE System SHALL expose an IPC handler `steering-generate` that accepts a project directory path and returns a success or error result.
 4. WHILE the Steering_Generator is running, THE System SHALL emit progress events so the renderer can display generation status.

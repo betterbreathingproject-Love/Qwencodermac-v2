@@ -4794,7 +4794,7 @@ async function startInlineSpecImplementation() {
     }
   } catch (_) { /* best-effort */ }
 
-  // Use the spec dir directly — works for both .kiro/specs/ and .maccoder/specs/
+  // Use the spec dir directly — works for .maccoder/specs/
   const tasksPath = currentSpecDir + '/tasks.md'
   try {
     await loadTaskGraph(tasksPath)
@@ -5076,7 +5076,7 @@ async function startSpecImplementation() {
   // Switch to agent tab
   switchMainTab('agent', document.querySelector('[data-tab="agent"]'))
 
-  // Use the spec dir directly — works for both .kiro/specs/ and .maccoder/specs/
+  // Use the spec dir directly — works for .maccoder/specs/
   const tasksPath = currentSpecDir + '/tasks.md'
   try {
     await loadTaskGraph(tasksPath)
@@ -6525,6 +6525,15 @@ async function agentRoleGenerate() {
 let _memoryLoaded = false
 
 /**
+ * Get the active project's directory basename for memory scoping.
+ * Returns null when no project is open (shows global memory).
+ */
+function _memProjectId() {
+  if (!currentProject) return null
+  return currentProject.split('/').pop() || null
+}
+
+/**
  * Format a UTC timestamp string into a short human-readable form.
  */
 function _memFmtTime(ts) {
@@ -6604,11 +6613,19 @@ async function memoryRefresh() {
   if (!window.app) return
   const btn = document.getElementById('memoryRefreshBtn')
   if (btn) btn.textContent = '…'
+  const pid = _memProjectId()
 
+  // Update subtitle to show scope
+  const subtitle = document.getElementById('memorySubtitle')
+  if (subtitle) {
+    subtitle.textContent = pid
+      ? `Project: ${pid} — archive, knowledge graph, and retrieval stats`
+      : 'Global — session archive, knowledge graph, and retrieval stats'
+  }
   try {
     // Stats
     if (window.app.memoryStats) {
-      const stats = await window.app.memoryStats()
+      const stats = await window.app.memoryStats(pid)
       if (stats) {
         const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val }
         set('memStatTriplesVal', (stats.kg_triples ?? '—').toLocaleString())
@@ -6620,7 +6637,7 @@ async function memoryRefresh() {
 
     // Recent events
     if (window.app.memoryArchiveEvents) {
-      const events = await window.app.memoryArchiveEvents(100)
+      const events = await window.app.memoryArchiveEvents(100, pid)
       _memRenderFeed(events)
     }
   } catch (err) {
@@ -6640,14 +6657,15 @@ function memorySearch(query) {
   clearTimeout(_memSearchTimer)
   _memSearchTimer = setTimeout(async () => {
     if (!window.app || !window.app.memoryArchiveSearch) return
+    const pid = _memProjectId()
     try {
       if (!query || query.trim().length < 2) {
         // Empty search — reload recent events
-        const events = await window.app.memoryArchiveEvents(100)
+        const events = await window.app.memoryArchiveEvents(100, pid)
         _memRenderFeed(events)
         return
       }
-      const results = await window.app.memoryArchiveSearch(query.trim(), 50)
+      const results = await window.app.memoryArchiveSearch(query.trim(), 50, pid)
       _memRenderFeed(results)
     } catch (_) {}
   }, 300)

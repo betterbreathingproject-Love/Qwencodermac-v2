@@ -96,7 +96,7 @@ This plan implements two capabilities: (1) Dynamic Branch Routing — adding `pa
     - _Requirements: 6.1, 6.2, 6.3, 6.4_
 
   - [x] 5.2 Add `loadSteeringDocs(projectDir)` to `steering-loader.js`
-    - Read all `.md` files from `.kiro/steering/` directory
+    - Read all `.md` files from `.maccoder/steering/` directory
     - Parse front matter from each, return array of SteeringDoc objects
     - Return empty array if directory doesn't exist or files have malformed front matter (skip bad files, log warning)
     - _Requirements: 7.1_
@@ -141,7 +141,7 @@ This plan implements two capabilities: (1) Dynamic Branch Routing — adding `pa
     - Generate `project-overview.md` steering doc (always)
     - Generate framework-specific doc if recognizable framework detected (React, Express, Electron, etc.)
     - Generate `tooling.md` if tool config files found (ESLint, Prettier, TypeScript, test config)
-    - Write files to `.kiro/steering/` with proper YAML front matter (`auto_generated: true`)
+    - Write files to `.maccoder/steering/` with proper YAML front matter (`auto_generated: true`)
     - Overwrite existing docs on regeneration
     - Return `SteeringResult` with `docsGenerated` and `errors` arrays
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 6.1, 6.2, 6.3_
@@ -160,7 +160,7 @@ This plan implements two capabilities: (1) Dynamic Branch Routing — adding `pa
     - _Requirements: 8.2, 8.3, 8.4_
 
   - [x] 9.2 Add first-time project open prompt logic
-    - When user opens a project and no `.kiro/steering/` directory exists, emit an event to prompt the user to generate steering docs
+    - When user opens a project and no `.maccoder/steering/` directory exists, emit an event to prompt the user to generate steering docs
     - _Requirements: 8.1_
 
   - [x] 9.3 Write unit tests for steering IPC handlers

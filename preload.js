@@ -184,10 +184,10 @@ contextBridge.exposeInMainWorld('app', {
   offFastModelStatus:    ()          => ipcRenderer.removeAllListeners('fast-model-status'),
 
   // Memory bank — archive viewer, KG query, stats
-  memoryArchiveSearch:   (q, limit)  => ipcRenderer.invoke('memory-archive-search', q, limit),
-  memoryArchiveEvents:   (limit)     => ipcRenderer.invoke('memory-archive-events', limit),
-  memoryKgQuery:         (entity)    => ipcRenderer.invoke('memory-kg-query', entity),
-  memoryStats:           ()          => ipcRenderer.invoke('memory-stats'),
+  memoryArchiveSearch:   (q, limit, projectId) => ipcRenderer.invoke('memory-archive-search', q, limit, projectId),
+  memoryArchiveEvents:   (limit, projectId)    => ipcRenderer.invoke('memory-archive-events', limit, projectId),
+  memoryKgQuery:         (entity)              => ipcRenderer.invoke('memory-kg-query', entity),
+  memoryStats:           (projectId)           => ipcRenderer.invoke('memory-stats', projectId),
 
   // Speculative decoding + KV cache quantization + prefix cache
   speculativeSet:  (opts)  => ipcRenderer.invoke('speculative-set', opts),

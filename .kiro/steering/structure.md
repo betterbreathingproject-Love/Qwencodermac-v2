@@ -40,7 +40,7 @@ qwencoder-mac-studio/
 ├── vision-tool.js             # Vision/image tool definitions
 ├── ast-search.js              # AST-based code search
 ├── search-worker.js           # Background search worker
-├── steering-loader.js         # Loads .kiro/steering docs into agent prompts
+├── steering-loader.js         # Loads .maccoder/steering docs into agent prompts
 ├── steering-generator.js      # Generates steering docs
 ├── projects.js                # Project/session management, API key storage
 ├── preload.js                 # Electron preload script (contextBridge)
@@ -74,5 +74,5 @@ qwencoder-mac-studio/
 - `AgentPool` dispatches tasks to agents created by the `agentFactory` in `main.js`.
 - `DirectBridge` builds system prompts (with role overlays from `ROLE_OVERLAYS`) and runs the tool loop.
 - `Orchestrator` drives DAG execution by calling `agentPool.dispatch()` for each node.
-- `steering-loader.js` reads `.kiro/steering/*.md` and injects content into agent system prompts.
+- `steering-loader.js` reads `.maccoder/steering/*.md` and injects content into agent system prompts.
 - Optional modules (`memory-client.js`, `assist-client.js`) are loaded with `try/require` — absence is non-fatal.
