@@ -4546,11 +4546,104 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         scrollOutput()
         break
       }
+      case 'tool-delta': {
+        // ── Live streaming preview of tool call arguments during spec execution ──
+        // Shows the actual file content being written in real-time so the user
+        // can see what the agent is coding, not just a silent wait.
+        if (!orchTaskBlockId) newOrchTaskBlock('🔧 Working...')
+        stopPromptProgress()
+        const tdToolName = ev.name || ''
+        const tdArgs = ev.argumentsSoFar || ''
+
+        const TD_WRITE_TOOLS = ['write_file', 'edit_file', 'create_file']
+        const tdIsWrite = TD_WRITE_TOOLS.includes(tdToolName)
+
+        let tdFile = ''
+        const tdPathMatch = tdArgs.match(/"(?:path|file_path)"\s*:\s*"([^"]+)"/)
+        if (tdPathMatch) tdFile = tdPathMatch[1].split('/').pop()
+
+        const tdActivity = tdIsWrite && tdFile
+          ? `Writing ${tdFile}...`
+          : tdIsWrite ? `Writing code via ${tdToolName}...`
+          : tdToolName === 'bash' ? 'Preparing command...'
+          : `Preparing ${tdToolName}...`
+
+        { const sizeInfo = tdIsWrite && tdArgs.length > 100 ? ` · ${(tdArgs.length / 1024).toFixed(1)}KB` : ''
+          const actEl = document.getElementById(orchTaskBlockId + '-activity')
+          if (actEl) { actEl.innerHTML = `⚡ ${esc(tdActivity)}${sizeInfo} <span class="activity-dot">●</span>`; actEl.classList.remove('hidden') }
+          setOrchActivity(`⚡ Task ${orchTaskCount}: ${esc(tdActivity)}${sizeInfo} <span class="activity-dot">●</span>`)
+        }
+        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, agentType: _currentAgentType, activity: tdActivity })
+
+        // Create or update the streaming tool preview block
+        const tdPreviewId = orchTaskBlockId + '-tool-preview'
+        let tdPreviewEl = document.getElementById(tdPreviewId)
+        if (!tdPreviewEl) {
+          document.getElementById(orchTaskBlockId + '-tools').insertAdjacentHTML('beforeend',
+            `<div class="tool-block tool-preview running" id="${tdPreviewId}">
+              <div class="tool-header">
+                <span class="tool-icon">⚡</span>
+                <div class="tool-header-info">
+                  <span class="tool-name">${esc(_toolDisplayName(tdToolName))}</span>
+                  <span class="tool-name-raw">${esc(tdToolName)}</span>
+                </div>
+                <span class="tool-status running"><span class="tool-spinner"></span> Generating…</span>
+              </div>
+              <div class="tool-preview-file"></div>
+              <div class="tool-preview-body"></div>
+            </div>`)
+          tdPreviewEl = document.getElementById(tdPreviewId)
+        }
+
+        // Parse partial args to show live file content preview
+        if (tdIsWrite && tdArgs.length > 10 && tdPreviewEl) {
+          const fileEl = tdPreviewEl.querySelector('.tool-preview-file')
+          const bodyEl = tdPreviewEl.querySelector('.tool-preview-body')
+
+          if (tdPathMatch && fileEl) {
+            fileEl.textContent = '📄 ' + tdPathMatch[1]
+            fileEl.style.display = 'block'
+          }
+
+          const contentStart = tdArgs.indexOf('"content"')
+          if (contentStart !== -1) {
+            const valStart = tdArgs.indexOf(':"', contentStart + 9)
+            if (valStart !== -1 && bodyEl) {
+              let raw = tdArgs.slice(valStart + 2)
+              raw = raw.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+              if (raw.endsWith('\\')) raw = raw.slice(0, -1)
+              if (raw.endsWith('"}')) raw = raw.slice(0, -2)
+              else if (raw.endsWith('"')) raw = raw.slice(0, -1)
+
+              const ext = (tdPathMatch?.[1] || '').split('.').pop() || ''
+              const lineCount = raw.split('\n').length
+              const lines = raw.split('\n').map((l, i) => `<span class="ln">${i + 1}</span>${esc(l)}`).join('\n')
+              bodyEl.innerHTML = `<div class="tool-preview-lang">${esc(ext)} · ${lineCount} lines</div><pre><code>${lines}</code></pre><span class="cursor">▌</span>`
+              bodyEl.style.display = 'block'
+            }
+          }
+        } else if (tdToolName === 'bash' && tdArgs.length > 5 && tdPreviewEl) {
+          const bodyEl = tdPreviewEl.querySelector('.tool-preview-body')
+          const cmdMatch = tdArgs.match(/"command"\s*:\s*"([^"]*(?:\\.[^"]*)*)/)
+          if (cmdMatch && bodyEl) {
+            let cmd = cmdMatch[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+            bodyEl.innerHTML = `<pre><code>$ ${esc(cmd)}</code></pre><span class="cursor">▌</span>`
+            bodyEl.style.display = 'block'
+          }
+        }
+
+        scrollOutput()
+        break
+      }
       case 'tool-use':
         if (!orchTaskBlockId) newOrchTaskBlock('🔧 Working...')
         stopPromptProgress()
         orchToolName = ev.name || ''
         _agentToolCount++
+        // Remove the streaming preview — the real tool block replaces it
+        { const prevPreview = orchTaskBlockId ? document.getElementById(orchTaskBlockId + '-tool-preview') : null
+          if (prevPreview) prevPreview.remove()
+        }
         // Route update_todos: when a task graph is active, suppress agent update_todos
         // so the task graph remains the single source of truth for the todo panel.
         if (ev.name === 'update_todos' && ev.input?.todos) {
