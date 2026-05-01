@@ -8,7 +8,7 @@
  *   CTX_WINDOW=131072 npm start
  */
 
-const CONTEXT_WINDOW = parseInt(process.env.CTX_WINDOW, 10) || 84000
+const CONTEXT_WINDOW = parseInt(process.env.CTX_WINDOW, 10) || 131072
 const MAX_OUTPUT_TOKENS = parseInt(process.env.MAX_OUTPUT_TOKENS, 10) || 32768
 
 // ── Default model paths ───────────────────────────────────────────────────────
@@ -45,8 +45,8 @@ module.exports = {
   PRE_SEND_LIMIT: Math.floor(CONTEXT_WINDOW * 0.88),
 
   // Tool output truncation limits (chars)
-  READ_FILE_TRUNCATE: Math.floor(CONTEXT_WINDOW * 4 * 0.4),  // ~134K chars — 40% of context budget in chars
-  TOOL_OUTPUT_TRUNCATE: 24000,
+  READ_FILE_TRUNCATE: Math.floor(CONTEXT_WINDOW * 4 * 0.35),  // ~183K chars — 35% of context budget in chars
+  TOOL_OUTPUT_TRUNCATE: 32000,
 
   // Calibrator floor — memory pressure can reduce budget but never below this
   CALIBRATOR_FLOOR: Math.floor(CONTEXT_WINDOW * 0.4),
