@@ -2115,6 +2115,17 @@ class DirectBridge {
     this._pendingInjections = []
     // WindowInputRequester for desktop ask_user — set via setInputRequester()
     this._inputRequester = opts.inputRequester || null
+
+    // ── Performance: tool defs cache ──────────────────────────────────────
+    // Avoids rebuilding tool definitions every turn. Invalidated when agent
+    // role or LSP status changes.
+    this._cachedToolDefs = null
+    this._cachedToolDefsKey = null
+
+    // ── Performance: deferred LSP diagnostics ─────────────────────────────
+    // After write_file/edit_file, diagnostics are fetched asynchronously and
+    // injected as a system message on the next turn instead of blocking.
+    this._pendingDiagnostics = null  // Promise<{path, diagnostics}> | null
   }
 
   setLspManager(lspManager) {
@@ -2588,6 +2599,24 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         this.send('qwen-event', { type: 'user-injection', content: injected })
       }
 
+      // ── Performance: inject deferred LSP diagnostics from previous turn ──
+      // Instead of blocking the tool loop waiting for diagnostics, we fire them
+      // async and inject results here at the start of the next turn.
+      if (this._pendingDiagnostics) {
+        try {
+          const diagResult = await this._pendingDiagnostics
+          if (diagResult && diagResult.errors && diagResult.errors.length > 0) {
+            const diagLines = diagResult.errors.map(d => `  ${d.severity || 'error'}: ${d.message} (line ${d.line || '?'})`).join('\n')
+            messages.push({
+              role: 'system',
+              content: `⚠️ LSP diagnostics for ${diagResult.path} (from previous edit):\n${diagLines}\nFix these errors before continuing.`,
+            })
+            this.send('qwen-event', { type: 'lsp-activity', action: 'deferred-diagnostics', path: diagResult.path, count: diagResult.errors.length })
+          }
+        } catch { /* diagnostics failed — skip silently */ }
+        this._pendingDiagnostics = null
+      }
+
       // Warn the model when running low on turns so it can wrap up gracefully
       // instead of being cut off mid-task
       if (turn === effectiveMaxTurns - 5) {
@@ -2640,9 +2669,20 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       }
 
       // Compress context if it's getting too large — trigger compaction early
+      // ── Performance: adaptive compaction threshold ──────────────────────
+      // Early turns: let context grow (75%) — short sessions rarely need compaction.
+      // Mid session: standard threshold (65%).
+      // Long sessions: aggressive (55%) — accumulated cruft needs pruning.
+      const adaptiveCompactionThreshold = turn < 10
+        ? Math.floor(effectiveMaxInputTokens * 0.75)
+        : turn < 30
+          ? Math.floor(effectiveMaxInputTokens * 0.65)
+          : Math.floor(effectiveMaxInputTokens * 0.55)
+      const activeCompactionThreshold = Math.min(adaptiveCompactionThreshold, effectiveCompactionThreshold)
+
       // (at the compaction threshold) to give the compactor room to work before
       // hitting the hard maxInputTokens ceiling.
-      if (estimateMessagesTokens(messages) > effectiveCompactionThreshold) {
+      if (estimateMessagesTokens(messages) > activeCompactionThreshold) {
         const before = messages.length
         // Preserve the user's original request so compaction can't erase the task
         const originalUserMsg = messages.find(m => m.role === 'user')
@@ -3400,16 +3440,15 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           }
         }
 
-        // Speculative edit hook: simulate write_file before executing it
+        // ── Performance: conditional speculative edit ──────────────────────
+        // Only run speculative edit simulation for files that previously had
+        // compile errors. Clean files rarely benefit from pre-checking, and
+        // the 10s timeout adds significant latency to every write.
         let speculativeMsg = ''
-        // Only run LSP hooks for file types the active language servers actually handle.
-        // sourcekit-lsp returns "expected exactly one compiler job" for HTML/CSS/JSON etc.
-        // which is a rejection, not a real diagnostic — it confuses the agent.
         const _lspSupportedExts = new Set()
         if (this._lspManager?.getStatus().status === 'ready') {
           for (const srv of (this._lspManager.getStatus().servers || [])) {
             for (const lang of (srv.languages || [])) {
-              // Map language names to common extensions
               const extMap = {
                 swift: ['.swift'], 'objective-c': ['.m', '.mm', '.h'],
                 javascript: ['.js', '.mjs', '.cjs'], typescript: ['.ts', '.tsx', '.d.ts'],
@@ -3424,7 +3463,12 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         const _fileExt = fnArgs.path ? path.extname(fnArgs.path).toLowerCase() : ''
         const _lspApplies = _lspSupportedExts.size === 0 || _lspSupportedExts.has(_fileExt)
 
-        if (fnName === 'write_file' && this._lspManager?.getStatus().status === 'ready' && _lspApplies) {
+        // Only run speculative check if this file has failed compilation before
+        const _hasCompileHistory = fnArgs.path && (
+          _compileFailCounts.has(fnArgs.path) ||
+          [..._compileFailCounts.keys()].some(k => k.endsWith(path.basename(fnArgs.path || '')))
+        )
+        if (fnName === 'write_file' && this._lspManager?.getStatus().status === 'ready' && _lspApplies && _hasCompileHistory) {
           this.send('qwen-event', { type: 'lsp-activity', action: 'speculative-check', path: fnArgs.path })
           try {
             const simResult = await Promise.race([
@@ -3670,10 +3714,12 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           content = speculativeMsg + content
         }
 
-        // Post-edit diagnostic hook: check for errors after write_file/edit_file
+        // ── Performance: deferred post-edit diagnostics ─────────────────────
+        // Instead of blocking the tool loop for up to 10s waiting for LSP
+        // diagnostics, fire the request async and inject results at the start
+        // of the next turn. This saves 2-10s per file write.
         if ((fnName === 'write_file' || fnName === 'edit_file') && !isError && this._lspManager?.getStatus().status === 'ready' && _lspApplies) {
           // Reset compile-error loop counter when the file is successfully rewritten
-          // A fresh write means the agent is trying a new approach — give it a clean slate
           if (fnArgs.path) {
             const basename = path.basename(fnArgs.path)
             for (const key of _compileFailCounts.keys()) {
@@ -3682,27 +3728,24 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
               }
             }
           }
-          this.send('qwen-event', { type: 'lsp-activity', action: 'diagnostics-check', path: fnArgs.path })
-          try {
-            const diags = await Promise.race([
-              this._lspManager.call('lsp_get_diagnostics', { file_path: fnArgs.path }),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('diagnostic timeout')), 10000))
-            ])
-            if (diags?.content || diags?.errors) {
-              const errorDiags = parseMcpDiagnostics(diags).filter(d => d.severity === 'error')
-              if (errorDiags.length > 0) {
-                const diagLines = errorDiags.map(d => `  ${d.severity || 'error'}: ${d.message} (line ${d.line || '?'})`).join('\n')
-                content = `⚠️ Edit introduced errors:\n${diagLines}\n\n${content}`
-                this.send('qwen-event', { type: 'lsp-activity', action: 'diagnostics-errors', path: fnArgs.path, count: errorDiags.length })
-              } else {
-                this.send('qwen-event', { type: 'lsp-activity', action: 'diagnostics-ok', path: fnArgs.path })
+          this.send('qwen-event', { type: 'lsp-activity', action: 'diagnostics-check-deferred', path: fnArgs.path })
+          const _diagPath = fnArgs.path
+          const _diagLspManager = this._lspManager
+          this._pendingDiagnostics = (async () => {
+            try {
+              const diags = await Promise.race([
+                _diagLspManager.call('lsp_get_diagnostics', { file_path: _diagPath }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('diagnostic timeout')), 10000))
+              ])
+              if (diags?.content || diags?.errors) {
+                const errorDiags = parseMcpDiagnostics(diags).filter(d => d.severity === 'error')
+                if (errorDiags.length > 0) {
+                  return { path: _diagPath, errors: errorDiags }
+                }
               }
-            } else {
-              this.send('qwen-event', { type: 'lsp-activity', action: 'diagnostics-ok', path: fnArgs.path })
-            }
-          } catch {
-            // On failure/timeout, skip diagnostics silently
-          }
+              return null
+            } catch { return null }
+          })()
         }
 
         // ── Swift build check: after writing a .swift file, trigger a fast build ──
@@ -4321,10 +4364,21 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
     return new Promise(async (resolve, reject) => {
       if (this._aborted) return resolve({ text: '', toolCalls: [], usage: null, finishReason: 'stop' })
 
+      // ── Performance: cache tool definitions ──────────────────────────────
+      // Tool defs only change when agent role or LSP status changes. Caching
+      // avoids rebuilding the full tool list (including LSP/browser/xcode
+      // filtering) on every turn.
+      const lspStatus = this._lspManager?.getStatus().status || 'stopped'
+      const toolDefsKey = `${this._agentRole}:${lspStatus}:${(this._allowedTools || []).join(',')}`
+      if (toolDefsKey !== this._cachedToolDefsKey) {
+        this._cachedToolDefs = getToolDefs(this._lspManager, this._agentRole, this._allowedTools)
+        this._cachedToolDefsKey = toolDefsKey
+      }
+
       const body = {
         model: model || 'default',
         messages,
-        tools: getToolDefs(this._lspManager, this._agentRole, this._allowedTools),
+        tools: this._cachedToolDefs,
         stream: true,
         max_tokens: config.MAX_OUTPUT_TOKENS,
       }
