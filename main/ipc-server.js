@@ -173,7 +173,8 @@ function startServer(port, appDir, mainWindow) {
       const reason = signal || (code !== 0 ? `exit code ${code}` : 'unexpected exit')
       // Hard crashes (SIGSEGV/SIGABRT/SIGBUS) need longer cooldown for GPU memory release
       const isHardCrash = signal === 'SIGSEGV' || signal === 'SIGABRT' || signal === 'SIGBUS'
-      const restartDelay = isHardCrash ? 5000 : 2000
+      const isPortConflict = _lastStderr.some(l => l.includes('address already in use'))
+      const restartDelay = isPortConflict ? 8000 : isHardCrash ? 6000 : 2000
       console.log(`[main] Server exited unexpectedly (${reason}), restarting in ${restartDelay}ms...`)
       mainWindow?.webContents.send('server-log', `⚠️ Server exited (${reason}) — restarting in ${restartDelay / 1000}s...`)
       mainWindow?.webContents.send('server-crashed', { reason, willRestart: true })
@@ -321,6 +322,9 @@ function killStaleServer(port) {
         try { process.kill(Number(pid), 'SIGKILL') } catch {}
       }
       console.log(`[main] Killed stale process(es) on port ${port}: ${pids.replace(/\n/g, ', ')}`)
+      // Wait for the OS to release the socket after SIGKILL.
+      // Without this, the new server may fail with EADDRINUSE.
+      try { execSync('sleep 1', { timeout: 3000 }) } catch {}
     }
   } catch {
     // lsof returns non-zero when no process found — that's fine
