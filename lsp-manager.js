@@ -13,7 +13,15 @@ const DEFAULT_BINARY_PATH = null; // auto-discover
 const DEFAULT_HEALTH_CHECK_INTERVAL = 30000; // 30s
 const DEFAULT_MAX_RESTARTS = 3;
 const BINARY_NAME = 'agent-lsp';
-const BUNDLED_BINARY_PATH = path.join(__dirname, 'resources', 'bin', BINARY_NAME);
+// In packaged app, binaries are in extraResources/bin/ (outside asar).
+// In development, they're in resources/bin/ relative to this file.
+const BUNDLED_BINARY_PATH = (() => {
+  if (process.resourcesPath) {
+    const packed = path.join(process.resourcesPath, 'bin', BINARY_NAME);
+    try { fs.accessSync(packed, fs.constants.X_OK); return packed; } catch {}
+  }
+  return path.join(__dirname, 'resources', 'bin', BINARY_NAME);
+})();
 const KNOWN_LANGUAGE_SERVERS = [
   'sourcekit-lsp',              // Swift/Obj-C — ships with Xcode, always at /usr/bin/sourcekit-lsp
   'gopls',

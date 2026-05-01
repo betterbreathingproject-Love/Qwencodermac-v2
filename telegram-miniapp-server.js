@@ -36,7 +36,12 @@ class MiniAppServer extends EventEmitter {
    * @returns {{ port: number, url: string }}
    */
   start() {
-    const htmlPath = path.join(__dirname, 'telegram-miniapp.html')
+    // In packaged app, HTML is in extraResources (outside asar).
+    let htmlPath = path.join(__dirname, 'telegram-miniapp.html')
+    if (process.resourcesPath) {
+      const packed = path.join(process.resourcesPath, 'telegram-miniapp.html')
+      try { if (fs.existsSync(packed)) htmlPath = packed } catch {}
+    }
 
     this._server = http.createServer((req, res) => {
       const url = new URL(req.url, `http://localhost:${this._port}`)

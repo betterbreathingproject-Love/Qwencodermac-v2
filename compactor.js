@@ -16,7 +16,15 @@ const os = require('os')
 const crypto = require('crypto')
 const builtin = require('./compactor-builtin')
 
-const COMPACTOR_SCRIPT = path.join(__dirname, 'compactor-bridge.py')
+const COMPACTOR_SCRIPT = (() => {
+  // In packaged app, Python scripts are in extraResources (outside asar)
+  if (process.resourcesPath) {
+    const packed = path.join(process.resourcesPath, 'compactor-bridge.py')
+    try { if (fs.existsSync(packed)) return packed } catch {}
+  }
+  // Development fallback
+  return path.join(__dirname, 'compactor-bridge.py')
+})()
 
 // ── Node-side Rewind Store ─────────────────────────────────────────────────
 const { REWIND_MAX_ENTRIES, REWIND_TTL_MS } = require('./config')

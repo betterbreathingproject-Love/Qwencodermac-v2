@@ -418,7 +418,11 @@ class XcodeMCPClient extends EventEmitter {
     const fs = require('fs')
 
     // Local node_modules/.bin (preferred — bundled with the app)
-    const localBin = path.join(__dirname, 'node_modules', '.bin', 'xcodebuildmcp')
+    // In packaged app, resolve from the unpacked asar or app path
+    const appRoot = process.resourcesPath
+      ? path.join(process.resourcesPath, 'app.asar.unpacked')
+      : __dirname
+    const localBin = path.join(appRoot, 'node_modules', '.bin', 'xcodebuildmcp')
 
     const candidates = [
       localBin,
