@@ -2588,38 +2588,52 @@ function renderAskUserCard(question, options, respId) {
     }
   }
 
-  // Always add "Other (custom)…" as the last option
-  const hasOther = parsedOptions.some(o => /other|custom/i.test(o))
-  if (!hasOther) parsedOptions.push('Other…')
+  // Strip trailing "Or something totally different?" type lines from question
+  cleanQuestion = cleanQuestion.replace(/\n?Or something (totally )?different\??$/i, '').trim()
 
-  const chipsHtml = parsedOptions.map((opt, i) =>
-    `<button class="ask-user-chip" onclick="window._askUserPick('${cardId}', ${JSON.stringify(opt)})">${esc(opt)}</button>`
-  ).join('')
+  // Always add "Other…" as the last option if there are choices
+  if (parsedOptions.length > 0) {
+    const hasOther = parsedOptions.some(o => /^other/i.test(o.trim()))
+    if (!hasOther) parsedOptions.push('Other…')
+  }
+
+  const chipsHtml = parsedOptions.map((opt) => {
+    const isOther = /^other/i.test(opt.trim())
+    return `<button class="ask-user-chip${isOther ? ' ask-user-chip-other' : ''}" onclick="window._askUserPick('${cardId}', ${JSON.stringify(opt)})">${esc(opt)}</button>`
+  }).join('')
 
   const html = `<div class="ask-user-card" id="${cardId}">
-    <div class="ask-user-header">
-      <span class="ask-user-icon">💬</span>
-      <span class="ask-user-label">Agent is asking</span>
+    <div class="ask-user-eyebrow">
+      <span class="ask-user-eyebrow-dot"></span>
+      <span>Agent is asking</span>
     </div>
     <div class="ask-user-question">${esc(cleanQuestion)}</div>
-    ${parsedOptions.length > 1 ? `<div class="ask-user-chips">${chipsHtml}</div>` : ''}
+    ${parsedOptions.length > 0 ? `<div class="ask-user-chips" id="${cardId}-chips">${chipsHtml}</div>` : ''}
     <div class="ask-user-custom" id="${cardId}-custom" style="display:none">
-      <textarea class="ask-user-textarea" id="${cardId}-input" placeholder="Type your answer…" rows="2"></textarea>
-      <button class="ask-user-send" onclick="window._askUserSend('${cardId}')">Send ↵</button>
+      <div class="ask-user-input-row">
+        <textarea class="ask-user-textarea" id="${cardId}-input" placeholder="Type your answer… (Enter to send)" rows="2" autofocus></textarea>
+        <button class="ask-user-send" onclick="window._askUserSend('${cardId}')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </div>
+      <div class="ask-user-hint">Shift+Enter for new line</div>
     </div>
-    ${parsedOptions.length <= 1 ? `<div class="ask-user-chips"><button class="ask-user-chip ask-user-chip-reply" onclick="window._askUserShowCustom('${cardId}')">Reply…</button></div>` : ''}
+    ${parsedOptions.length === 0 ? `<div class="ask-user-chips"><button class="ask-user-chip ask-user-chip-other" onclick="window._askUserShowCustom('${cardId}')">Reply…</button></div>` : ''}
   </div>`
 
   out.insertAdjacentHTML('beforeend', html)
   scrollOutput()
 
-  // Set up keyboard shortcut for the textarea
+  // Auto-focus textarea if no chips (open-ended question)
   setTimeout(() => {
     const ta = document.getElementById(cardId + '-input')
     if (ta) {
       ta.addEventListener('keydown', e => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); window._askUserSend(cardId) }
       })
+      if (parsedOptions.length === 0) {
+        window._askUserShowCustom(cardId)
+      }
     }
   }, 50)
 }
@@ -2627,24 +2641,43 @@ function renderAskUserCard(question, options, respId) {
 window._askUserShowCustom = function(cardId) {
   const customEl = document.getElementById(cardId + '-custom')
   if (customEl) {
-    customEl.style.display = 'flex'
+    customEl.style.display = 'block'
+    customEl.classList.add('ask-user-custom-visible')
     const ta = document.getElementById(cardId + '-input')
-    if (ta) ta.focus()
+    if (ta) { ta.focus(); ta.select() }
+    scrollOutput()
   }
 }
 
 window._askUserPick = function(cardId, option) {
-  if (option === 'Other…') {
+  if (/^other/i.test(option.trim())) {
+    // Highlight the Other chip and show the textarea
+    const chipsEl = document.getElementById(cardId + '-chips')
+    if (chipsEl) {
+      chipsEl.querySelectorAll('.ask-user-chip').forEach(b => b.classList.remove('ask-user-chip-selected'))
+      const btn = [...chipsEl.querySelectorAll('.ask-user-chip')].find(b => /^other/i.test(b.textContent.trim()))
+      if (btn) btn.classList.add('ask-user-chip-selected')
+    }
     window._askUserShowCustom(cardId)
     return
   }
-  _submitAskUserReply(cardId, option)
+  // Highlight selected chip briefly then submit
+  const chipsEl = document.getElementById(cardId + '-chips')
+  if (chipsEl) {
+    chipsEl.querySelectorAll('.ask-user-chip').forEach(b => {
+      b.classList.remove('ask-user-chip-selected')
+      b.disabled = true
+    })
+    const btn = [...chipsEl.querySelectorAll('.ask-user-chip')].find(b => b.textContent.trim() === option)
+    if (btn) btn.classList.add('ask-user-chip-selected')
+  }
+  setTimeout(() => _submitAskUserReply(cardId, option), 180)
 }
 
 window._askUserSend = function(cardId) {
   const ta = document.getElementById(cardId + '-input')
   const reply = ta ? ta.value.trim() : ''
-  if (!reply) return
+  if (!reply) { if (ta) ta.focus(); return }
   _submitAskUserReply(cardId, reply)
 }
 
