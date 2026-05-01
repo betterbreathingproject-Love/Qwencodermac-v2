@@ -1899,8 +1899,10 @@ class DirectBridge {
         const descriptions = []
         for (let i = 0; i < images.length; i++) {
           const img = images[i]
+          // Use a dedicated vision prompt that focuses on detailed description
+          // regardless of what the user's text prompt says
           const content = [
-            { type: 'text', text: prompt || 'Describe what you see in this image in detail.' },
+            { type: 'text', text: 'Describe what you see in this image in detail. Include all visible elements, text, UI components, colors, layout, and any notable features.' },
             { type: 'image_url', image_url: { url: img.b64 } },
           ]
           const body = JSON.stringify({ messages: [{ role: 'user', content }], max_tokens: 1024 })
@@ -1923,7 +1925,8 @@ class DirectBridge {
           const desc = result.choices?.[0]?.message?.content || 'Could not analyze image.'
           descriptions.push(`[Image ${i + 1}: ${img.name}]\n${desc}`)
         }
-        imageContext = `\n\nThe user attached image(s). Here is what the vision model sees:\n\n${descriptions.join('\n\n')}`
+        // Make the image context more prominent with clear instructions to acknowledge it
+        imageContext = `\n\n---\n\n**IMPORTANT: The user has attached ${images.length} image(s). You MUST acknowledge and discuss the image content in your response.**\n\nHere is what the vision model sees:\n\n${descriptions.join('\n\n')}\n\n---\n`
       } catch (err) {
         imageContext = `\n\n(The user attached images but vision analysis failed: ${err.message})`
       }
