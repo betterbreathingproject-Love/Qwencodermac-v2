@@ -4521,14 +4521,16 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       let _lastToolDeltaTime = 0
 
       // Client-side prompt size guard: estimate tokens and trim if over budget
+      // Use calibrated maxInputTokens + small headroom as the hard cap
+      const preSendLimit = Math.floor(effectiveMaxInputTokens * 1.04)
       const estimatedTokens = estimateMessagesTokens(messages)
-      if (estimatedTokens > config.PRE_SEND_LIMIT) {
-        this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Prompt too large (~${estimatedTokens} tokens), trimming to ${config.PRE_SEND_LIMIT} before sending` })
-        const trimmed = trimMessages(messages, config.PRE_SEND_LIMIT)
+      if (estimatedTokens > preSendLimit) {
+        this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Prompt too large (~${estimatedTokens} tokens), trimming to ${preSendLimit} before sending` })
+        const trimmed = trimMessages(messages, preSendLimit)
         // If trimMessages didn't reduce enough (large content in recent messages),
         // aggressively truncate the largest messages first
-        if (estimateMessagesTokens(trimmed) > config.PRE_SEND_LIMIT) {
-          const maxTotalChars = Math.floor(config.PRE_SEND_LIMIT * 4)
+        if (estimateMessagesTokens(trimmed) > preSendLimit) {
+          const maxTotalChars = Math.floor(preSendLimit * 4)
           // Sort by content length descending, truncate biggest first
           const indexed = trimmed.map((m, idx) => ({ idx, len: (m.content || '').length, role: m.role }))
             .filter(e => e.role !== 'system' && e.len > 1500)
