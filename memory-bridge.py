@@ -18,6 +18,15 @@ from pathlib import Path
 from typing import Optional, Any
 from datetime import datetime
 
+# ── Vendored taosmd ───────────────────────────────────────────────────────────
+# Add vendor/ directory to sys.path so the bundled taosmd package is importable
+# even when it's not installed via pip. Works for both dev (cwd) and packaged
+# (process.resourcesPath) layouts.
+_this_dir = Path(__file__).resolve().parent
+_vendor_dir = _this_dir / "vendor"
+if _vendor_dir.is_dir() and str(_vendor_dir) not in sys.path:
+    sys.path.insert(0, str(_vendor_dir))
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 

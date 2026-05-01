@@ -28,6 +28,8 @@
       "main.js",
       "main/**/*",
       "preload.js",
+      "setup.html",
+      "requirements.txt",
       "config.js",
       "direct-bridge.js",
       "agent-pool.js",
@@ -38,12 +40,11 @@
       "calibrator.js",
       "compactor.js",
       "compactor-builtin.js",
-      "compactor-bridge.py",
       "memory-client.js",
-      "memory-bridge.py",
       "assist-client.js",
       "playwright-tool.js",
       "web-tools.js",
+      "vision-tool.js",
       "ast-search.js",
       "search-worker.js",
       "steering-loader.js",
@@ -52,22 +53,36 @@
       "xcode-tool.js",
       "telegram-bot.js",
       "telegram-miniapp-server.js",
-      "telegram-miniapp.html",
       "recording-manager.js",
       "remote-job-controller.js",
-      "server.py",
+      "vendor/**/*",
       "renderer/**/*",
       "assets/**/*",
-      "node_modules/@qwen-code/sdk/**/*",
-      "node_modules/openai/**/*",
-      "node_modules/playwright/**/*",
-      "node_modules/playwright-core/**/*",
-      "node_modules/xcodebuildmcp/**/*"
+      "node_modules/**/*",
+      "!node_modules/electron/**",
+      "!node_modules/electron-builder/**",
+      "!node_modules/fast-check/**"
+    ],
+    "asarUnpack": [
+      "node_modules/sharp/**",
+      "node_modules/node-pty/**"
     ],
     "extraResources": [
       {
         "from": "server.py",
         "to": "server.py"
+      },
+      {
+        "from": "compactor-bridge.py",
+        "to": "compactor-bridge.py"
+      },
+      {
+        "from": "memory-bridge.py",
+        "to": "memory-bridge.py"
+      },
+      {
+        "from": "telegram-miniapp.html",
+        "to": "telegram-miniapp.html"
       },
       {
         "from": "resources/bin/",
@@ -83,7 +98,6 @@
   "dependencies": {
     "@qwen-code/sdk": "^0.1.6",
     "chokidar": "^5.0.0",
-    "localtunnel": "^2.0.2",
     "node-pty": "^1.1.0",
     "openai": "^4.0.0",
     "playwright": "^1.59.1",
