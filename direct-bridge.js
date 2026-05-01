@@ -3481,7 +3481,6 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           const readKey = fnArgs.path
           const prev = _readFileHistory.get(readKey)
           if (prev && prev.count >= 1 && prev.fullRead) {
-            // Check if the original file content is still in the conversation messages
             const contentStillInContext = messages.some(m =>
               m.role === 'tool' && m.content && m.content.length > 500 &&
               m.content.includes(readKey.split('/').pop())
@@ -3491,12 +3490,22 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
                 const resolvedPath = path.resolve(cwd, fnArgs.path.trim())
                 const currentMtime = fs.statSync(resolvedPath).mtimeMs
                 if (prev.mtime && currentMtime <= prev.mtime) {
-                  this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Skipped re-read of ${readKey} (unchanged, content still in context)` })
+                  // Track how many times this file has been blocked
+                  prev.blockedCount = (prev.blockedCount || 0) + 1
+                  _readFileHistory.set(readKey, prev)
+                  this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Skipped re-read of ${readKey} (unchanged, content still in context, blocked ${prev.blockedCount}x)` })
                   const interceptContent = `File unchanged since your last read (${prev.totalLines} lines, turn ${prev.lastTurn}). ` +
                     `The content is still in your context above. ` +
                     `Proceed with edit_file or search_files — do NOT re-read the full file.`
                   this.send('qwen-event', { type: 'tool-result', tool_use_id: tc.id, content: interceptContent, is_error: false })
                   messages.push({ role: 'tool', tool_call_id: tc.id, content: interceptContent })
+                  // After 2 blocked attempts, inject a system message to force the model to stop
+                  if (prev.blockedCount >= 2) {
+                    messages.push({
+                      role: 'system',
+                      content: `STOP re-reading files. You have tried to read ${readKey} ${prev.blockedCount + 1} times. The file content is already in your context. Use edit_file to make changes NOW, or use search_files to find specific code. Do NOT call read_file or read_files again.`,
+                    })
+                  }
                   continue
                 }
               } catch { /* stat failed — fall through */ }
