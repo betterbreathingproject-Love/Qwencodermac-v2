@@ -82,7 +82,7 @@ class LspManager extends EventEmitter {
     this._initHandler = null;
     this._lastError = null;
     this._diagnosticsCache = new Map(); // path → { diagnostics, timestamp }
-    this._diagnosticsCacheTTL = 10000;  // 10s TTL for cached diagnostics
+    this._diagnosticsCacheTTL = 30000;  // 30s TTL — extended from 10s for performance
   }
 
   /**

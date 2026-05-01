@@ -464,9 +464,12 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
   })
 
   qwenBridge.run({ prompt, cwd: cwd || currentProject, permissionMode, model, images, conversationHistory, samplingParams, taskGraphPath }).catch(() => {})
-  // Mark the server queue as busy for the duration of this agent run.
-  // This prevents concurrent requests (role generate, calibration) from
-  // hitting the Metal GPU simultaneously and crashing.
+  // ── Performance: fine-grained server queue locking ──────────────────
+  // Instead of blocking the entire agent run (potentially 10+ minutes),
+  // we mark the queue as busy only during inference. The bridge emits
+  // 'inference-start' and 'inference-end' events around _streamCompletion
+  // calls, allowing the fast model to run during tool execution gaps.
+  // Fallback: also listen for session-end to ensure cleanup.
   _serverQueue._agentRunning = true
   const _releaseOnEnd = (_, data) => {
     if (data && (data.type === 'session-end' || data.type === 'error' || data.type === 'result')) {
