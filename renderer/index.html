@@ -672,6 +672,10 @@
 
         <!-- primary model switcher -->
         <div class="model-switcher-bar" id="modelSwitcherBar">
+          <div class="model-bar-label">
+            <span class="model-bar-role">Primary Model</span>
+            <span class="model-bar-desc">Reasoning, code generation, and tool use</span>
+          </div>
           <div class="model-switcher-current" id="modelSwitcherBtn" onclick="toggleModelSwitcher()">
             <span class="model-switcher-icon">🤖</span>
             <span class="model-switcher-name" id="modelSwitcherName">No model loaded</span>
@@ -684,9 +688,13 @@
 
         <!-- fast vision assistant switcher -->
         <div class="fast-model-bar" id="fastModelBar">
+          <div class="model-bar-label">
+            <span class="model-bar-role">Fast Vision Assistant</span>
+            <span class="model-bar-desc">Image descriptions, todo lists, quick routing</span>
+          </div>
           <div class="fast-model-current" id="fastModelBtn" onclick="toggleFastModelSwitcher()">
             <span class="fast-model-icon">⚡</span>
-            <span class="fast-model-name" id="fastModelName">Fast Assistant · not loaded</span>
+            <span class="fast-model-name" id="fastModelName">Not loaded</span>
             <span class="fast-model-arrow">▾</span>
           </div>
           <div class="fast-model-dropdown" id="fastModelDropdown" style="display:none">

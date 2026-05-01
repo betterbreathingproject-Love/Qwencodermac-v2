@@ -6151,7 +6151,7 @@ function _renderExtractionModelSection() {
     nameEl.textContent = displayName + (status.memoryGb ? ` · ${status.memoryGb.toFixed(1)}GB` : '')
     nameEl.classList.add('active')
   } else {
-    nameEl.textContent = 'Fast Assistant · not loaded'
+    nameEl.textContent = 'Not loaded'
     nameEl.classList.remove('active')
   }
 
