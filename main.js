@@ -1170,7 +1170,10 @@ app.on('window-all-closed', () => {
   if (miniAppServer) { miniAppServer.stop(); miniAppServer = null }
   // Shut down XcodeBuildMCP subprocess if running
   try { require('./xcode-tool').shutdown() } catch { /* not installed */ }
-  app.quit()
+  // Delay quit to let stopServer's SIGTERM/SIGKILL timers fire.
+  // Without this, app.quit() kills the Electron process immediately and
+  // the Python server is orphaned (still holding port 8090 and GPU memory).
+  setTimeout(() => app.quit(), 4000)
 })
 app.on('activate', () => { if (!mainWindow) createWindow() })
 
