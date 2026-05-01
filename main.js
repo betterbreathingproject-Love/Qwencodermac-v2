@@ -417,8 +417,9 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
   let resolvedRole = agentRole || 'general'
   let routedByKeyword = false
   // Route via small model when user hasn't explicitly picked a non-general role
+  // Skip routing when images are attached — the direct vision path handles it
   const isAutoMode = !agentRole || agentRole === 'general'
-  if (isAutoMode) {
+  if (isAutoMode && !images) {
     // Keyword matching first — fast, no model call needed for unambiguous signals
     const keywordType = agentPool.selectType({ title: prompt, description: '' })
     const keywordName = keywordType?.name || 'general'
