@@ -1860,7 +1860,8 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         if (rewindResult.found) {
           return { result: rewindResult.content }
         }
-        return { error: rewindResult.error || 'Content no longer available' }
+        return { error: `Content no longer available for key "${args.key}". The rewind store has expired or evicted this entry. ` +
+          `Do NOT retry with the same key. Instead, use read_file to re-read the file, or use search_files to find the specific content you need.` }
       }
       case 'ask_user': {
         if (!inputRequester) return { result: '(No input channel available — proceeding without user input)' }
@@ -3646,8 +3647,10 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
 
           // Re-check after extraction — may now be within limits
           if (content.length > effectiveLimit) {
-            // Nav tools: skip Python compressor, just truncate cleanly at line boundaries
-            if (isNavTool) {
+            // Nav tools and read_file: skip Python compressor, truncate cleanly.
+            // read_file content is source code the agent needs verbatim for editing —
+            // lossy compression destroys it and forces a rewind round-trip that often fails.
+            if (isNavTool || fnName === 'read_file') {
               const lines = content.split('\n')
               let charCount = 0
               let cutLine = lines.length
@@ -3655,8 +3658,20 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
                 charCount += lines[i].length + 1
                 if (charCount > effectiveLimit) { cutLine = i; break }
               }
-              content = lines.slice(0, cutLine).join('\n') +
-                `\n\n... [${lines.length - cutLine} more entries — use a more specific path or pattern to narrow results]`
+              if (fnName === 'read_file') {
+                if (_wasFullRead) {
+                  content = lines.slice(0, cutLine).join('\n') +
+                    `\n\n[TRUNCATED — showing lines 1-${cutLine} of ${lines.length} total. The ENTIRE file was read but trimmed to fit context. ` +
+                    `Do NOT call read_file again. Use search_files to find specific patterns, or edit_file directly with what is shown above.]`
+                } else {
+                  content = lines.slice(0, cutLine).join('\n') +
+                    `\n\n... [file truncated — showing lines 1-${cutLine} of ~${lines.length} total. ` +
+                    `Call read_file with start_line=${cutLine + 1} to read the next section.]`
+                }
+              } else {
+                content = lines.slice(0, cutLine).join('\n') +
+                  `\n\n... [${lines.length - cutLine} more entries — use a more specific path or pattern to narrow results]`
+              }
             } else {
             const contentType = detectContentType(fnName, content)
             let compressed = false
