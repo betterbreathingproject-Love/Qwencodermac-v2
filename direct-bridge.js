@@ -1978,13 +1978,20 @@ class DirectBridge {
         // Text-only: use fast model to classify intent (~200ms)
         try {
           const classifyResult = await assistClient._assistRequest('route_task', {
-            task: `Classify this user message as either "chat" or "task". Reply with ONLY the word "chat" or "task".\n- "chat" = the user wants to discuss, ask questions, brainstorm, get explanations\n- "task" = the user wants you to write code, fix bugs, create files, run commands, or make changes\n\nUser message: "${prompt.slice(0, 300)}"`
+            task: `Classify this user message as either "chat" or "task". Reply with ONLY the word "chat" or "task".\n- "chat" = the user wants to discuss, ask questions, brainstorm ideas, plan, get explanations, or have a conversation\n- "task" = the user wants you to write code, fix bugs, create files, run commands, build something, or make concrete changes to files\n\nUser message: "${prompt.slice(0, 300)}"`
           }, 5000)
           const routeResult = classifyResult?.result_data?.agent_type || classifyResult?.result || ''
           // Only treat as chat if the classifier explicitly says "chat".
           // Do NOT treat "general" as chat — "general" is the fallback task agent role.
           isChat = routeResult.toLowerCase().trim() === 'chat'
         } catch { /* classification failed — default to task */ }
+      }
+
+      // Keyword fallback: catch obvious conversational signals the small model might miss
+      if (!isChat) {
+        const lower = prompt.toLowerCase()
+        const chatSignals = ['let\'s discuss', 'let\'s brainstorm', 'let\'s think', 'what do you think', 'ideas for', 'thoughts on', 'help me decide', 'pros and cons', 'should i', 'what would you', 'can you explain', 'tell me about', 'how does', 'what is the difference']
+        if (chatSignals.some(s => lower.includes(s))) isChat = true
       }
 
       if (isChat) {

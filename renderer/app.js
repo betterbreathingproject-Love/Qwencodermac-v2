@@ -2664,8 +2664,19 @@ window._askUserOptions = {}
  * Scan the agent's final text for a numbered list that looks like options
  * the user should pick from. If found, inject clickable quick-reply chips
  * below the text so the user can respond with one click.
+ *
+ * Only triggers when the text contains question-like language near the list,
+ * to avoid false positives on numbered bug fixes, steps, explanations, etc.
  */
 function _injectQuickReplyChips(textEl, rawText) {
+  // Must contain a question mark or question-like phrasing near the end
+  const lower = rawText.toLowerCase()
+  const hasQuestion = rawText.includes('?') ||
+    /which (one|option|approach|direction|style|type)/i.test(rawText) ||
+    /what (kind|type|style|do you|would you)/i.test(rawText) ||
+    /pick|choose|prefer|decide|select|interested in/i.test(lower)
+  if (!hasQuestion) return
+
   // Look for numbered items: "1. Something", "2. Something", etc.
   const lines = rawText.split('\n')
   const numbered = []
@@ -2674,9 +2685,11 @@ function _injectQuickReplyChips(textEl, rawText) {
     if (m) numbered.push(m[2].replace(/\*{1,2}/g, '').trim())
   }
   // Need at least 2 numbered items to consider it a list of options
-  if (numbered.length < 2) return
+  if (numbered.length < 2 || numbered.length > 10) return
   // Skip if items are too long (probably explanatory paragraphs, not choices)
   if (numbered.some(o => o.length > 80)) return
+  // Skip if items look like code steps or instructions (contain file paths, commands)
+  if (numbered.some(o => /[\/\\`$]/.test(o) || /^(run|install|create|open|add|import|update)\b/i.test(o))) return
 
   const cardId = 'qr-' + Date.now()
   const options = [...numbered, 'Other…']
