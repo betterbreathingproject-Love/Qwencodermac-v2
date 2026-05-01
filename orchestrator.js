@@ -282,6 +282,12 @@ class Orchestrator extends EventEmitter {
   }
 
   async _dispatchNode(node) {
+    // Guard: skip if already in_progress (prevents duplicate dispatch race)
+    const currentNode = this._graph.nodes.get(node.id)
+    if (currentNode && currentNode.status === 'in_progress') {
+      console.log(`[orchestrator] Skipping duplicate dispatch for ${node.id} (already in_progress)`)
+      return
+    }
     // Emit in_progress with 'general' as placeholder — updated when agent-type-selected fires
     this._updateNodeStatus(node.id, 'in_progress', { agentType: 'general' });
 
@@ -452,7 +458,7 @@ class Orchestrator extends EventEmitter {
 
   _handleFailure(nodeId, error) {
     const errMsg = error.message || String(error);
-    const isTransient = /ECONNRESET|ECONNREFUSED|EPIPE|Server not available|server crash|HTTP (500|502|503)|Server returned HTTP|SSE error|server_error/i.test(errMsg);
+    const isTransient = /ECONNRESET|ECONNREFUSED|EPIPE|Server not available|server crash|HTTP (500|502|503)|Server returned HTTP|SSE error|server_error|No model loaded|model not loaded/i.test(errMsg);
 
     // Lazy-init retry tracking maps
     if (!this._retryCount) this._retryCount = new Map();
