@@ -393,7 +393,7 @@ async function runCalibration(serverUrl, serverPort, mainWindow, modelId) {
       req.end()
     })
 
-    _calibrationProfile = calibrator.computeProfile(metrics)
+    _calibrationProfile = calibrator.computeProfile(metrics, 'balanced')
     // Persist to disk so future loads of this model skip the benchmark
     _saveCachedProfile(modelId, _calibrationProfile)
     mainWindow?.webContents.send('calibration-complete', {
