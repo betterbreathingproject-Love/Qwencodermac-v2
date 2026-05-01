@@ -413,6 +413,131 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
   // Trim cwd to guard against trailing spaces from file pickers or stored project paths
   if (typeof cwd === 'string') cwd = cwd.trim()
 
+  // ── Conversational shortcut: skip agent loop for chat/discussion prompts ────
+  // If the prompt is conversational (no action keywords like fix/implement/debug),
+  // stream a direct response without the full tool loop. Much faster for casual
+  // questions, brainstorming, explanations, and image discussions.
+  // Task prompts (fix, implement, debug, etc.) always go through the agent loop.
+  const ACTION_RE = /\b(fix|implement|update|change|make|add|remove|refactor|debug|why is|how to|how do|build|create|write|edit|modify|improve|convert|migrate|deploy|test|check|find|show me the code|what('s| is) wrong|broken|error|issue|bug|crash|run|install|setup|configure|delete|move|rename|replace|merge|revert|undo|search|grep|read|open|close|save|commit|push|pull|fetch|clone|diff|log|status|branch)\b/i
+  const hasImages = images && images.length > 0
+  const isConversational = !ACTION_RE.test(prompt)
+
+  if (isConversational) {
+    const http = require('http')
+    console.log(`[qwen-run] conversational${hasImages ? ' + images' : ''} — direct response, no agent loop`)
+    mainWindow?.webContents.send('qwen-event', { type: 'session-start', cwd: cwd || currentProject })
+
+    try {
+      // Build the message — include images if attached
+      let userContent
+      if (hasImages) {
+        userContent = [{ type: 'text', text: prompt }]
+        for (const img of images) {
+          userContent.push({ type: 'image_url', image_url: { url: img.b64 } })
+        }
+      } else {
+        userContent = prompt
+      }
+
+      // Include conversation history for multi-turn chat context
+      const messages = []
+      if (conversationHistory && conversationHistory.length > 0) {
+        const maxHist = 20
+        const recent = conversationHistory.slice(-maxHist)
+        for (const m of recent) {
+          messages.push({ role: m.role, content: m.content })
+        }
+      }
+      messages.push({ role: 'user', content: userContent })
+
+      const body = JSON.stringify({ messages, max_tokens: 2048, stream: true })
+      const result = await new Promise((resolve, reject) => {
+        let fullText = ''
+        const req = http.request({
+          hostname: '127.0.0.1', port: 8090,
+          path: '/v1/chat/completions', method: 'POST',
+          timeout: 120000,
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        }, (res) => {
+          let buf = ''
+          res.on('data', chunk => {
+            buf += chunk.toString()
+            const lines = buf.split('\n')
+            buf = lines.pop()
+            for (const line of lines) {
+              if (line.startsWith('data: [DONE]')) continue
+              if (line.startsWith('data: ')) {
+                try {
+                  const parsed = JSON.parse(line.slice(6))
+                  const delta = parsed.choices?.[0]?.delta?.content
+                  if (delta) {
+                    fullText += delta
+                    mainWindow?.webContents.send('qwen-event', { type: 'token', content: delta })
+                  }
+                } catch { /* skip */ }
+              }
+            }
+          })
+          res.on('end', () => resolve(fullText))
+          res.on('error', reject)
+        })
+        req.on('error', reject)
+        req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')) })
+        req.write(body)
+        req.end()
+      })
+      mainWindow?.webContents.send('qwen-event', { type: 'task_complete', summary: result })
+    } catch (err) {
+      mainWindow?.webContents.send('qwen-event', { type: 'task_complete', summary: `Error: ${err.message}` })
+    }
+    return { ok: true }
+  }
+
+  // ── Conversational image check: skip agent loop for "describe this" requests ─
+  // If images are attached and the prompt is conversational (not a coding task),
+  // describe the image via the fast model and return directly — no agent loop,
+  // no routing, no tools. Keeps the response fast and focused on the image.
+  if (images && images.length > 0) {
+    const ACTION_RE = /\b(fix|implement|update|change|make|add|remove|refactor|debug|why|how|build|create|write|edit|modify|improve|convert|migrate|deploy|test|check|find|show me the code|what('s| is) wrong|broken|error|issue|bug|crash)\b/i
+    if (!ACTION_RE.test(prompt)) {
+      console.log('[qwen-run] conversational image — skipping agent loop, using fast vision')
+      mainWindow?.webContents.send('qwen-event', { type: 'session-start', cwd: cwd || currentProject })
+      try {
+        const http = require('http')
+        const userContent = [{ type: 'text', text: prompt }]
+        for (const img of images) {
+          userContent.push({ type: 'image_url', image_url: { url: img.b64 } })
+        }
+        const body = JSON.stringify({ messages: [{ role: 'user', content: userContent }], max_tokens: 1024 })
+        const result = await new Promise((resolve, reject) => {
+          const req = http.request({
+            hostname: '127.0.0.1', port: 8090,
+            path: '/v1/chat/completions', method: 'POST',
+            timeout: 120000,
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+          }, (res) => {
+            let data = ''
+            res.on('data', chunk => data += chunk)
+            res.on('end', () => { try { resolve(JSON.parse(data)) } catch { reject(new Error(data || 'Empty')) } })
+          })
+          req.on('error', reject)
+          req.on('timeout', () => { req.destroy(); reject(new Error('Vision request timed out')) })
+          req.write(body)
+          req.end()
+        })
+        const text = result.choices?.[0]?.message?.content || 'Could not analyze the image.'
+        // Stream word by word for responsive feel
+        for (const word of text.split(' ')) {
+          mainWindow?.webContents.send('qwen-event', { type: 'token', content: word + ' ' })
+        }
+        mainWindow?.webContents.send('qwen-event', { type: 'task_complete', summary: text })
+      } catch (err) {
+        mainWindow?.webContents.send('qwen-event', { type: 'task_complete', summary: `Vision failed: ${err.message}` })
+      }
+      return { ok: true }
+    }
+  }
+
   // Use small model to pick the best agent role for this prompt (if no explicit role given)
   let resolvedRole = agentRole || 'general'
   let routedByKeyword = false
