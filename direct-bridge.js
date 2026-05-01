@@ -1945,11 +1945,13 @@ class DirectBridge {
               this.send('qwen-event', { type: 'token', content: word + ' ' })
             }
           } else {
-            // Text chat: stream from main model with conversation history
-            const messages = []
+            // Text chat: stream from main model with conversation history + project context
+            const workDir = cwd || process.cwd()
+            const chatSystemPrompt = `You are a helpful coding assistant working on a project at ${workDir}. You can discuss code, answer questions, brainstorm ideas, and explain concepts. When the user wants you to take action (write code, fix bugs, etc.), tell them to phrase it as a task and you'll switch to agent mode.\n\nProject file tree:\n${buildFileTree(workDir, 2)}`
+            const messages = [{ role: 'system', content: chatSystemPrompt }]
             if (conversationHistory && conversationHistory.length > 0) {
               for (const m of conversationHistory.slice(-20)) {
-                messages.push({ role: m.role, content: m.content })
+                messages.push({ role: m.role, content: typeof m.content === 'string' ? m.content.slice(0, 2000) : m.content })
               }
             }
             messages.push({ role: 'user', content: prompt })
