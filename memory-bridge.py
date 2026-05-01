@@ -2066,6 +2066,8 @@ async def _handle_vision(payload: dict) -> AssistResponse:
             tmp.write(image_data)
             tmp_path = tmp.name
 
+        import sys as _sys
+        print(f"[_handle_vision] calling vlm_generate with image={tmp_path}, prompt={prompt[:50]}...", file=_sys.stderr)
         try:
             response = vlm_generate(
                 _extract_model,
@@ -2088,7 +2090,10 @@ async def _handle_vision(payload: dict) -> AssistResponse:
         return AssistResponse(result=description, elapsed_ms=elapsed_ms, output_tokens=output_tokens)
 
     except Exception as e:
-        logger.warning(f"[_handle_vision] failed: {e}")
+        import traceback, sys
+        print(f"[_handle_vision] EXCEPTION: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        logger.warning(f"[_handle_vision] failed: {e}", exc_info=True)
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         return AssistResponse(result=None, elapsed_ms=elapsed_ms, output_tokens=0)
 

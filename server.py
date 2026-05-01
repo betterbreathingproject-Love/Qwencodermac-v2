@@ -1355,7 +1355,9 @@ async def _route_vision_request(req: ChatRequest):
 
             if _memory_bridge is not None and hasattr(_memory_bridge, '_handle_vision'):
                 payload = {"image_b64": img_b64, "mime_type": mime, "prompt": user_prompt}
+                print(f"[server] Calling _handle_vision: model={getattr(_memory_bridge, '_extract_model_path', 'N/A')}, has_vision={getattr(_memory_bridge, '_extract_model_has_vision', 'N/A')}, model_loaded={getattr(_memory_bridge, '_extract_model', None) is not None}", file=sys.stderr)
                 result = await _memory_bridge._handle_vision(payload)
+                print(f"[server] _handle_vision returned: result={result.result is not None if result else 'None'}, elapsed={result.elapsed_ms if result else 'N/A'}ms", file=sys.stderr)
                 if result and result.result:
                     descriptions.append(result.result)
                 else:
