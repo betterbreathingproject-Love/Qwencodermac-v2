@@ -3387,61 +3387,63 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         // If the agent is re-reading a file it already fully read in this session,
         // and it's NOT using line ranges (which would indicate intentional paging),
         // check whether the file has actually changed since the last read.
-        // - If unchanged: return a compact notice instead of the full file,
-        //   breaking the truncation loop on small projects.
-        // - If changed (agent edited it): allow the full re-read so the agent
-        //   sees its own edits.
+        // Only intercept if the original content is still in the conversation —
+        // if it was trimmed/compacted away, the agent genuinely needs to re-read.
         if (fnName === 'read_file' && fnArgs.path && fnArgs.start_line == null && fnArgs.end_line == null) {
           const readKey = fnArgs.path
           const prev = _readFileHistory.get(readKey)
           if (prev && prev.count >= 1 && prev.fullRead) {
-            // Check if the file was modified since the last read
-            try {
-              const resolvedPath = path.resolve(cwd, fnArgs.path.trim())
-              const currentMtime = fs.statSync(resolvedPath).mtimeMs
-              if (prev.mtime && currentMtime <= prev.mtime) {
-                // File unchanged — return compact notice instead of full re-read
-                this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Skipped re-read of ${readKey} (unchanged since turn ${prev.lastTurn})` })
-                const interceptContent = `File unchanged since your last read (${prev.totalLines} lines, turn ${prev.lastTurn}). ` +
-                  `The earlier content was trimmed from context to save space — it is archived in memory. ` +
-                  `Do NOT re-read the full file. Instead:\n` +
-                  `- Use search_files({"pattern": "...", "path": "${fnArgs.path}"}) to find specific code\n` +
-                  `- Use edit_file with the exact strings you need to change\n` +
-                  `- Use read_file with start_line/end_line to read a specific section`
-                this.send('qwen-event', { type: 'tool-result', tool_use_id: tc.id, content: interceptContent, is_error: false })
-                messages.push({ role: 'tool', tool_call_id: tc.id, content: interceptContent })
-                continue
-              }
-              // File changed — fall through to normal read
-              this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Re-reading ${readKey} (modified since turn ${prev.lastTurn})` })
-            } catch {
-              // stat failed — fall through to normal read
+            // Check if the original file content is still in the conversation messages
+            const contentStillInContext = messages.some(m =>
+              m.role === 'tool' && m.content && m.content.length > 500 &&
+              m.content.includes(readKey.split('/').pop())
+            )
+            if (contentStillInContext) {
+              try {
+                const resolvedPath = path.resolve(cwd, fnArgs.path.trim())
+                const currentMtime = fs.statSync(resolvedPath).mtimeMs
+                if (prev.mtime && currentMtime <= prev.mtime) {
+                  this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Skipped re-read of ${readKey} (unchanged, content still in context)` })
+                  const interceptContent = `File unchanged since your last read (${prev.totalLines} lines, turn ${prev.lastTurn}). ` +
+                    `The content is still in your context above. ` +
+                    `Proceed with edit_file or search_files — do NOT re-read the full file.`
+                  this.send('qwen-event', { type: 'tool-result', tool_use_id: tc.id, content: interceptContent, is_error: false })
+                  messages.push({ role: 'tool', tool_call_id: tc.id, content: interceptContent })
+                  continue
+                }
+              } catch { /* stat failed — fall through */ }
             }
+            // Content was trimmed from context — allow the re-read
           }
         }
 
         // ── Paged re-read interception ───────────────────────────────────────
         // If the agent already fully read a file and is now paging through it
-        // with start_line/end_line (200-line chunks), intercept and tell it
-        // the content is already in context. This prevents the slow 200-line
-        // paging pattern on files that were already returned in full.
+        // with start_line/end_line (200-line chunks), intercept ONLY if the
+        // content is still in context. If it was trimmed, allow the paged read.
         if (fnName === 'read_file' && fnArgs.path && (fnArgs.start_line != null || fnArgs.end_line != null)) {
           const readKey = fnArgs.path
           const prev = _readFileHistory.get(readKey)
           if (prev && prev.fullRead) {
-            try {
-              const resolvedPath = path.resolve(cwd, fnArgs.path.trim())
-              const currentMtime = fs.statSync(resolvedPath).mtimeMs
-              if (prev.mtime && currentMtime <= prev.mtime) {
-                this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Skipped paged re-read of ${readKey} lines ${fnArgs.start_line}-${fnArgs.end_line} (already fully read on turn ${prev.lastTurn})` })
-                const interceptContent = `You already read this entire file (${prev.totalLines} lines) on turn ${prev.lastTurn}. ` +
-                  `The content is in your context — do NOT page through it again. ` +
-                  `Proceed with your edit or use search_files to find specific patterns.`
-                this.send('qwen-event', { type: 'tool-result', tool_use_id: tc.id, content: interceptContent, is_error: false })
-                messages.push({ role: 'tool', tool_call_id: tc.id, content: interceptContent })
-                continue
-              }
-            } catch { /* stat failed — fall through to normal read */ }
+            const contentStillInContext = messages.some(m =>
+              m.role === 'tool' && m.content && m.content.length > 500 &&
+              m.content.includes(readKey.split('/').pop())
+            )
+            if (contentStillInContext) {
+              try {
+                const resolvedPath = path.resolve(cwd, fnArgs.path.trim())
+                const currentMtime = fs.statSync(resolvedPath).mtimeMs
+                if (prev.mtime && currentMtime <= prev.mtime) {
+                  this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Skipped paged re-read of ${readKey} lines ${fnArgs.start_line}-${fnArgs.end_line} (content still in context)` })
+                  const interceptContent = `You already read this entire file (${prev.totalLines} lines) on turn ${prev.lastTurn} and the content is still in your context. ` +
+                    `Proceed with your edit or use search_files to find specific patterns.`
+                  this.send('qwen-event', { type: 'tool-result', tool_use_id: tc.id, content: interceptContent, is_error: false })
+                  messages.push({ role: 'tool', tool_call_id: tc.id, content: interceptContent })
+                  continue
+                }
+              } catch { /* stat failed — fall through */ }
+            }
+            // Content was trimmed — allow the paged read
           }
         }
 
