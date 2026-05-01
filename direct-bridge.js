@@ -2369,11 +2369,12 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
     let _lastCompileFile = null
 
     // ── Read-file loop detection ─────────────────────────────────────────────
-    // Tracks consecutive read_file calls on the same path. When the agent reads
-    // the same file 2+ times (typically because context trimming removed the
-    // earlier result and the model thinks it was truncated), intercept the call
-    // and return a short notice instead of the full file content again.
-    const _readFileHistory = new Map()  // path → { count, lastTurn }
+    // Tracks read_file calls per path with file modification times. When the
+    // agent re-reads a file it already fully read and the file hasn't changed
+    // (mtime unchanged), return a compact notice instead of the full content.
+    // If the file WAS modified (agent edited it), allow the re-read.
+    // This breaks the truncation loop while still letting the agent see its edits.
+    const _readFileHistory = new Map()  // path → { count, lastTurn, fullRead, totalLines, mtime }
 
     // ── Memory: session start ─────────────────────────────────────────────────
     const _sessionId = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -3238,21 +3239,37 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         // ── Read-file loop interception ──────────────────────────────────────
         // If the agent is re-reading a file it already fully read in this session,
         // and it's NOT using line ranges (which would indicate intentional paging),
-        // intercept the call and return a short notice instead of re-reading the
-        // entire file. This breaks the truncation loop on small projects.
+        // check whether the file has actually changed since the last read.
+        // - If unchanged: return a compact notice instead of the full file,
+        //   breaking the truncation loop on small projects.
+        // - If changed (agent edited it): allow the full re-read so the agent
+        //   sees its own edits.
         if (fnName === 'read_file' && fnArgs.path && fnArgs.start_line == null && fnArgs.end_line == null) {
           const readKey = fnArgs.path
           const prev = _readFileHistory.get(readKey)
           if (prev && prev.count >= 1 && prev.fullRead) {
-            // Agent is re-reading a file it already fully read — intercept
-            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Blocked re-read of ${readKey} (already fully read on turn ${prev.lastTurn})` })
-            const interceptContent = `You already read this entire file (${prev.totalLines} lines) on turn ${prev.lastTurn}. ` +
-              `The earlier content was trimmed from context to save space, but the file has NOT changed. ` +
-              `Do NOT re-read it. Work with what you remember, or use search_files to find specific patterns. ` +
-              `If you need to edit this file, use edit_file with the exact strings you need to change.`
-            this.send('qwen-event', { type: 'tool-result', tool_use_id: tc.id, content: interceptContent, is_error: false })
-            messages.push({ role: 'tool', tool_call_id: tc.id, content: interceptContent })
-            continue
+            // Check if the file was modified since the last read
+            try {
+              const resolvedPath = path.resolve(cwd, fnArgs.path.trim())
+              const currentMtime = fs.statSync(resolvedPath).mtimeMs
+              if (prev.mtime && currentMtime <= prev.mtime) {
+                // File unchanged — return compact notice instead of full re-read
+                this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Skipped re-read of ${readKey} (unchanged since turn ${prev.lastTurn})` })
+                const interceptContent = `File unchanged since your last read (${prev.totalLines} lines, turn ${prev.lastTurn}). ` +
+                  `The earlier content was trimmed from context to save space — it is archived in memory. ` +
+                  `Do NOT re-read the full file. Instead:\n` +
+                  `- Use search_files({"pattern": "...", "path": "${fnArgs.path}"}) to find specific code\n` +
+                  `- Use edit_file with the exact strings you need to change\n` +
+                  `- Use read_file with start_line/end_line to read a specific section`
+                this.send('qwen-event', { type: 'tool-result', tool_use_id: tc.id, content: interceptContent, is_error: false })
+                messages.push({ role: 'tool', tool_call_id: tc.id, content: interceptContent })
+                continue
+              }
+              // File changed — fall through to normal read
+              this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Re-reading ${readKey} (modified since turn ${prev.lastTurn})` })
+            } catch {
+              // stat failed — fall through to normal read
+            }
           }
         }
 
@@ -3268,13 +3285,18 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         // Update read_file history after successful reads
         if (fnName === 'read_file' && !isError && fnArgs.path) {
           const readKey = fnArgs.path
-          const prev = _readFileHistory.get(readKey) || { count: 0, lastTurn: turn, fullRead: false, totalLines: 0 }
+          const prev = _readFileHistory.get(readKey) || { count: 0, lastTurn: turn, fullRead: false, totalLines: 0, mtime: 0 }
           prev.count++
           prev.lastTurn = turn
           if (_wasFullRead) {
             prev.fullRead = true
             prev.totalLines = result._totalLines || 0
           }
+          // Store file mtime so we can detect changes on re-read
+          try {
+            const resolvedPath = path.resolve(cwd, fnArgs.path.trim())
+            prev.mtime = fs.statSync(resolvedPath).mtimeMs
+          } catch { /* ignore */ }
           _readFileHistory.set(readKey, prev)
         }
 
@@ -3288,11 +3310,17 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
             result_status: isError ? 'error' : 'success',
             result_size_bytes: resultSize,
           }
-          // Truncate result to 10000 chars for archiving
-          const archiveContent = (content || '').length > 10000
-            ? (content || '').slice(0, 10000)
+          // Archive the full tool result to TAOSMD — it writes to SSD (JSONL)
+          // so there's no memory pressure from large payloads. The retrieval
+          // pipeline enforces its own token budget, so storing full content
+          // here gives FTS5 the best search coverage and lets the agent
+          // recover file content from memory when context trimming removes it.
+          // Only cap truly massive outputs (>500K) to avoid pathological cases.
+          const archiveLimit = 500000
+          const archiveContent = (content || '').length > archiveLimit
+            ? (content || '').slice(0, archiveLimit)
             : (content || '')
-          const truncated = (content || '').length > 10000
+          const truncated = (content || '').length > archiveLimit
           if (truncated) archivePayload.truncated = true
 
           memoryClient.archiveRecord('tool_call', { ...archivePayload, result: archiveContent }, `${fnName}: ${argsSummary.slice(0, 100)}`, {
@@ -4266,7 +4294,7 @@ After every write_file or edit_file the LSP reports new errors in the tool resul
 
 ## Compressed context
 Large tool results are compressed automatically. If you see [compressed: ... rewind key: rw_xxx], call rewind_context with that key only if you need the full content.
-If you see [TRIMMED for context space], the content was already fully read but shortened to fit. Do NOT call read_file again on that file — use search_files or work with what you have.
+If you see [TRIMMED for context space], the content was already fully read but shortened to fit. The full content is archived in memory. Do NOT call read_file again on that file — use search_files to find specific patterns, or use edit_file directly.
 
 ## Memory system
 Your context may include injected blocks — read them before starting work:
