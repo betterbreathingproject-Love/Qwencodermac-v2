@@ -1978,23 +1978,21 @@ class DirectBridge {
         // Text-only: use fast model to classify intent (~200ms)
         try {
           const classifyResult = await assistClient._assistRequest('route_task', {
-            task: `Classify this user message as either "chat" or "task". Reply with ONLY the word "chat" or "task".\n- "chat" = the user wants a quick factual answer, a definition, or a short explanation — no back-and-forth needed\n- "task" = the user wants you to do something: write code, fix bugs, brainstorm ideas, plan a project, discuss options, or anything that may require follow-up questions\n\nUser message: "${prompt.slice(0, 300)}"`
+            task: `Classify this user message as either "chat" or "task". Reply with ONLY the word "chat" or "task".\n- "chat" = the user wants to discuss, ask questions, brainstorm ideas, plan, get explanations, or have a conversation\n- "task" = the user wants you to write code, fix bugs, create files, run commands, build something, or make concrete changes to files\n\nUser message: "${prompt.slice(0, 300)}"`
           }, 5000)
           const routeResult = classifyResult?.result_data?.agent_type || classifyResult?.result || ''
-          // Only treat as chat if the classifier explicitly says "chat".
-          // Do NOT treat "general" as chat — "general" is the fallback task agent role.
           isChat = routeResult.toLowerCase().trim() === 'chat'
         } catch { /* classification failed — default to task */ }
       }
 
-      // Keyword override: brainstorming/discussion prompts should go through the
-      // agent loop (not chat mode) so ask_user is available for follow-up questions.
-      if (isChat) {
+      // Keyword fallback: catch obvious conversational signals the small model might miss
+      if (!isChat) {
         const lower = prompt.toLowerCase()
-        const needsTools = ['let\'s discuss', 'let\'s brainstorm', 'let\'s think', 'let\'s plan',
-          'let\'s talk', 'ideas for', 'help me decide', 'what should',
-          'which one', 'pick between', 'compare']
-        if (needsTools.some(s => lower.includes(s))) isChat = false
+        const chatSignals = ['let\'s discuss', 'let\'s brainstorm', 'let\'s think', 'what do you think',
+          'ideas for', 'thoughts on', 'help me decide', 'pros and cons', 'should i',
+          'what would you', 'can you explain', 'tell me about', 'how does',
+          'what is the difference', 'let\'s plan', 'let\'s talk', 'opinion on']
+        if (chatSignals.some(s => lower.includes(s))) isChat = true
       }
 
       if (isChat) {
@@ -2036,7 +2034,15 @@ class DirectBridge {
           } else {
             // Text chat: stream from main model with conversation history + project context
             const workDir = cwd || process.cwd()
-            const chatSystemPrompt = `You are a helpful coding assistant working on a project at ${workDir}. You can discuss code, answer questions, brainstorm ideas, and explain concepts. When the user wants you to take action (write code, fix bugs, etc.), tell them to phrase it as a task and you'll switch to agent mode.\n\nProject file tree:\n${buildFileTree(workDir, 2)}`
+            const chatSystemPrompt = `You are a helpful coding assistant working on a project at ${workDir}. You can discuss code, answer questions, brainstorm ideas, and explain concepts.
+
+When brainstorming or presenting options, end your response with a clear numbered list of short choices (one line each, under 60 characters) so the user can easily pick one. Example:
+Which direction interests you?
+1. Option A
+2. Option B
+3. Option C
+
+When the user wants you to take action (write code, fix bugs, etc.), tell them to phrase it as a task and you'll switch to agent mode.`
             const messages = [{ role: 'system', content: chatSystemPrompt }]
             if (conversationHistory && conversationHistory.length > 0) {
               for (const m of conversationHistory.slice(-20)) {
@@ -4159,11 +4165,7 @@ Use **edit_todos** (not update_todos) when you need to:
 Use **update_todos** only to set the initial plan or completely reset the list.
 
 ## Asking the user
-When you need the user to make a choice or provide input, ALWAYS use the ask_user tool — do NOT just write options as text. The ask_user tool renders an interactive UI with clickable buttons.
-- Provide short, clear options in the "options" array (e.g. ["Option A", "Option B", "Option C"])
-- Keep option text concise (under 60 chars each)
-- The UI automatically adds an "Other…" option for custom input
-- Use ask_user for: choosing between approaches, confirming destructive actions, picking features to build, selecting technologies, or any decision point
+When you need the user to choose between options, use the ask_user tool — it renders clickable buttons. Provide short options (under 60 chars each) in the "options" array.
 
 ## Planning
 For complex tasks the user asks you to plan: write a task graph to .maccoder/tasks.md using write_file, then STOP. The orchestrator will execute each task with a subagent. Format:
