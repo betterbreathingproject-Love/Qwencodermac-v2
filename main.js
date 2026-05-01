@@ -1162,19 +1162,39 @@ app.whenReady().then(() => {
   }
 })
 app.on('window-all-closed', () => {
+  _cleanupAndQuit()
+})
+
+// Cmd+Q, dock quit, or Finder "Force Quit" — also need to kill the server
+app.on('before-quit', () => {
+  _cleanupAndQuit()
+})
+
+// Last resort — fires right before the process exits no matter what
+app.on('will-quit', (e) => {
+  if (!_quitting) {
+    e.preventDefault()
+    _cleanupAndQuit()
+  }
+})
+
+let _quitting = false
+function _cleanupAndQuit() {
+  if (_quitting) return
+  _quitting = true
   ipcServer.stopServer({ graceful: true })
   ipcWatcher.unwatchProject()
   if (lspManager) lspManager.stop().catch(() => {})
   if (telegramBot) telegramBot.stop()
   if (miniAppTunnel) { miniAppTunnel.kill(); miniAppTunnel = null }
   if (miniAppServer) { miniAppServer.stop(); miniAppServer = null }
-  // Shut down XcodeBuildMCP subprocess if running
   try { require('./xcode-tool').shutdown() } catch { /* not installed */ }
-  // Delay quit to let stopServer's SIGTERM/SIGKILL timers fire.
-  // Without this, app.quit() kills the Electron process immediately and
-  // the Python server is orphaned (still holding port 8090 and GPU memory).
-  setTimeout(() => app.quit(), 4000)
-})
+  // Final safety net: SIGKILL anything still on port 8090 before exiting
+  setTimeout(() => {
+    ipcServer.killStaleServer(8090)
+    app.quit()
+  }, 5000)
+}
 app.on('activate', () => { if (!mainWindow) createWindow() })
 
 // ── exports for testing ───────────────────────────────────────────────────────
