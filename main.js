@@ -473,7 +473,7 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
         for (const word of text.split(' ')) {
           mainWindow?.webContents.send('qwen-event', { type: 'token', content: word + ' ' })
         }
-        mainWindow?.webContents.send('qwen-event', { type: 'task_complete', summary: text })
+        mainWindow?.webContents.send('qwen-event', { type: 'session-end' })
       } else {
         // Text-only: use SSE streaming for real-time token display
         const body = JSON.stringify({ messages, max_tokens: 2048, stream: true })
@@ -512,10 +512,11 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
           req.write(body)
           req.end()
         })
-        mainWindow?.webContents.send('qwen-event', { type: 'task_complete', summary: result })
+        mainWindow?.webContents.send('qwen-event', { type: 'session-end' })
       }
     } catch (err) {
-      mainWindow?.webContents.send('qwen-event', { type: 'task_complete', summary: `Error: ${err.message}` })
+      mainWindow?.webContents.send('qwen-event', { type: 'token', content: `Error: ${err.message}` })
+      mainWindow?.webContents.send('qwen-event', { type: 'session-end' })
     }
     return { ok: true }
   }
