@@ -1359,6 +1359,10 @@ async def _route_vision_request(req: ChatRequest):
                 if result and result.result:
                     descriptions.append(result.result)
                 else:
+                    # Log the actual state to help diagnose
+                    has_vision_flag = getattr(_memory_bridge, '_extract_model_has_vision', 'N/A')
+                    model_loaded = getattr(_memory_bridge, '_extract_model', None) is not None
+                    print(f"[server] _handle_vision returned None — model_loaded={model_loaded}, has_vision={has_vision_flag}", file=sys.stderr)
                     errors.append("Vision model not loaded — load the 0.8B fast model to enable screenshot analysis")
             else:
                 errors.append("Vision model not available — load the 0.8B fast model in the app")
