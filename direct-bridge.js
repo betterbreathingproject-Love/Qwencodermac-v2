@@ -3035,7 +3035,14 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         }
       }
 
-      const { text, toolCalls, usage, finishReason } = completion
+      const { text: rawText, toolCalls, usage, finishReason } = completion
+
+      // Strip hallucinated system annotations from model output.
+      // The model sometimes generates text like "[Response interrupted by Fast assistant]"
+      // by mimicking injected annotations it sees in context. These confuse users.
+      // Only strip annotations that look like system-injected markers, not legitimate references.
+      const HALLUCINATED_ANNOTATIONS = /\[Response interrupted by (?:a )?[Ff]ast [Aa]ssistant\.?\]/g
+      const text = rawText ? rawText.replace(HALLUCINATED_ANNOTATIONS, '').trim() : rawText
 
       // Send usage stats
       if (usage) {
@@ -4846,7 +4853,7 @@ The project file tree is included at the end of this prompt — read it before c
 - write_file: keep each call under 300 lines. For larger files, write the first chunk then use bash with heredoc to append.
 - bash: prefer single focused commands. Check exit codes in the output. For installs and builds (npm install, pip install, swift build, xcodebuild), the timeout is 5 minutes — use them directly. Always add non-interactive flags to suppress prompts: npm init -y, pip install --no-input, brew install --no-interaction.
 - search_files: use regex patterns. Narrow with path/include filters to avoid noise.
-- NEVER output meta-commentary like "[Response interrupted by Fast assistant]", "[Summarized by fast model]", or any bracketed system annotations. These are injected automatically — do not reproduce or reference them in your text responses.
+- NEVER generate text that looks like system annotations: "[Response interrupted by ...]", "[Summarized by fast model ...]", "[Fast model ...]", or any text in square brackets that mimics system-injected markers. You see these in tool results because a separate model injects them — they are NOT part of your output format. If you generate them, they will be stripped.
 
 ## Progress tracking
 Before starting any multi-step task, call update_todos with all steps as "pending". Mark each "in_progress" when you start it and "done" when complete. Call task_complete when all items are done — this is the ONLY way to end a session.
