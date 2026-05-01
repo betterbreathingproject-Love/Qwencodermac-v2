@@ -1934,6 +1934,9 @@ async function sendAgentMode(prompt, opts = {}) {
         const fullText = allTextSegments.filter(Boolean).join('\n\n')
         const textEl = document.getElementById(respId+'-text')
         if (textEl) textEl.innerHTML = renderMd(fullText)
+        // If the agent's text ends with a numbered list (looks like options),
+        // inject clickable quick-reply chips so the user can respond easily.
+        if (textEl) _injectQuickReplyChips(textEl, fullText)
         // Finalize thinking box with extracted content
         const finalThink = extractThinking(fullText)
         const tb = document.getElementById(respId+'-think-body')
@@ -2656,6 +2659,94 @@ function renderAskUserCard(question, options, respId) {
 
 // Store option text by cardId so data-idx can look it up safely
 window._askUserOptions = {}
+
+/**
+ * Scan the agent's final text for a numbered list that looks like options
+ * the user should pick from. If found, inject clickable quick-reply chips
+ * below the text so the user can respond with one click.
+ */
+function _injectQuickReplyChips(textEl, rawText) {
+  // Look for numbered items: "1. Something", "2. Something", etc.
+  const lines = rawText.split('\n')
+  const numbered = []
+  for (const line of lines) {
+    const m = line.match(/^\s*(\d+)[\.\)]\s+\*{0,2}(.+?)\*{0,2}\s*(?:[-–—]\s*.+)?$/)
+    if (m) numbered.push(m[2].replace(/\*{1,2}/g, '').trim())
+  }
+  // Need at least 2 numbered items to consider it a list of options
+  if (numbered.length < 2) return
+  // Skip if items are too long (probably explanatory paragraphs, not choices)
+  if (numbered.some(o => o.length > 80)) return
+
+  const cardId = 'qr-' + Date.now()
+  const options = [...numbered, 'Other…']
+  window._askUserOptions[cardId] = options
+
+  const chipsHtml = options.map((opt, idx) => {
+    const isOther = /^other/i.test(opt.trim())
+    return `<button class="ask-user-chip${isOther ? ' ask-user-chip-other' : ''}" data-card="${cardId}" data-idx="${idx}" onclick="window._quickReplyPick(this)">${esc(opt)}</button>`
+  }).join('')
+
+  textEl.insertAdjacentHTML('afterend',
+    `<div class="ask-user-quick-reply" id="${cardId}">
+      <div class="ask-user-eyebrow" style="margin-bottom:8px">
+        <span>Quick reply</span>
+      </div>
+      <div class="ask-user-chips" id="${cardId}-chips">${chipsHtml}</div>
+      <div class="ask-user-custom" id="${cardId}-custom" style="display:none">
+        <div class="ask-user-input-row">
+          <textarea class="ask-user-textarea" id="${cardId}-input" placeholder="Type your answer… (Enter to send)" rows="2"></textarea>
+          <button class="ask-user-send" data-card="${cardId}" onclick="window._quickReplySend(this.dataset.card)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>`)
+
+  // Set up Enter key for the textarea
+  setTimeout(() => {
+    const ta = document.getElementById(cardId + '-input')
+    if (ta) ta.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); window._quickReplySend(cardId) }
+    })
+  }, 50)
+  scrollOutput()
+}
+
+// Quick-reply chip clicked — send as a new user message
+window._quickReplyPick = function(btn) {
+  const cardId = btn.dataset.card
+  const idx = parseInt(btn.dataset.idx, 10)
+  const options = window._askUserOptions[cardId] || []
+  const option = options[idx]
+  if (option === undefined) return
+  if (/^other/i.test(option.trim())) {
+    window._askUserShowCustom(cardId)
+    return
+  }
+  // Remove the quick-reply card and send as a new prompt
+  const card = document.getElementById(cardId)
+  if (card) card.remove()
+  _sendQuickReply(option)
+}
+
+window._quickReplySend = function(cardId) {
+  const ta = document.getElementById(cardId + '-input')
+  const reply = ta ? ta.value.trim() : ''
+  if (!reply) { if (ta) ta.focus(); return }
+  const card = document.getElementById(cardId)
+  if (card) card.remove()
+  _sendQuickReply(reply)
+}
+
+function _sendQuickReply(text) {
+  // Put the text in the prompt input and trigger send via sendAgentMode
+  const input = document.getElementById('agentPrompt')
+  if (input) input.value = text
+  if (typeof sendAgentMode === 'function') {
+    sendAgentMode(text)
+  }
+}
 
 window._askUserShowCustom = function(cardId) {
   const customEl = document.getElementById(cardId + '-custom')

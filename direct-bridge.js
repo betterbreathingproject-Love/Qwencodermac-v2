@@ -1828,7 +1828,13 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
       case 'ask_user': {
         if (!inputRequester) return { result: '(No input channel available — proceeding without user input)' }
         try {
-          const reply = await inputRequester.ask(args.question, args.options || [])
+          // Normalise options — model may send as array or JSON string
+          let opts = args.options || []
+          if (typeof opts === 'string') {
+            try { opts = JSON.parse(opts) } catch { opts = [] }
+          }
+          if (!Array.isArray(opts)) opts = []
+          const reply = await inputRequester.ask(args.question, opts)
           return { result: reply }
         } catch (err) {
           return { result: `(User input timed out: ${err.message})` }

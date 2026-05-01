@@ -1415,3 +1415,9 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   border-left: 2px solid var(--accent, #7c6af7);
   opacity: 0.88;
 }
+
+/* Quick-reply chips injected after agent text with numbered options */
+.ask-user-quick-reply {
+  padding: 10px 0 4px;
+  animation: ask-user-in 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
