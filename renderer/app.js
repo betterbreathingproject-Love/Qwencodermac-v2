@@ -6429,7 +6429,7 @@ function renderToolsGrid(selectedTools) {
   grid.innerHTML = ''
 
   const groups = [
-    { label: '📁 File', tools: ['read_file','write_file','edit_file','list_dir'] },
+    { label: '📁 File', tools: ['read_file','read_files','write_file','edit_file','list_dir'] },
     { label: '⚡ Shell & Search', tools: ['bash','search_files','web_search','web_fetch'] },
     { label: '🤖 Agent', tools: ['update_todos','edit_todos','task_complete','ask_user','rewind_context'] },
     { label: '🌐 Browser', tools: ['browser_navigate','browser_screenshot','browser_click','browser_type','browser_get_text','browser_get_html','browser_evaluate','browser_wait_for','browser_select_option','browser_close'] },

@@ -24,7 +24,7 @@ const TODO_WATCH_ENABLED = true
 const ASSIST_TIMEOUT_MS = 65000          // 5s longer than server timeout
 
 // Tools that are subject to pre-execution validation
-const VALIDATED_TOOLS = new Set(['edit_file', 'write_file', 'bash', 'read_file'])
+const VALIDATED_TOOLS = new Set(['edit_file', 'write_file', 'bash', 'read_file', 'read_files'])
 
 // ---------------------------------------------------------------------------
 // Internal helper

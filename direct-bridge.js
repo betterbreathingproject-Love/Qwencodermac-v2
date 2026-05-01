@@ -354,6 +354,24 @@ const TOOL_DEFS = [
   {
     type: 'function',
     function: {
+      name: 'read_files',
+      description: 'Read multiple files in a single call. Much faster than calling read_file repeatedly. Returns all file contents concatenated with clear file headers. Use this when you need to read 2+ files at once (e.g. before editing, understanding imports, comparing files).',
+      parameters: {
+        type: 'object',
+        properties: {
+          paths: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Array of file paths to read, e.g. ["src/app.js", "src/utils.js", "package.json"]',
+          },
+        },
+        required: ['paths'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'write_file',
       description: 'Write content to a file. Creates the file if it does not exist, overwrites if it does. Creates parent directories as needed.',
       parameters: {
@@ -1483,6 +1501,65 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         // this content, the trimmer can say "file was fully read but trimmed for
         // context space" instead of "call read_file again" which causes a loop.
         return { result: raw, _fullRead: true, _totalLines: totalLines }
+      }
+      case 'read_files': {
+        if (!Array.isArray(args.paths) || args.paths.length === 0) {
+          return { error: 'paths must be a non-empty array of file paths' }
+        }
+        // Cap at 20 files to prevent context explosion
+        const filePaths = args.paths.slice(0, 20)
+        const results = []
+        let totalChars = 0
+        const charBudget = config.READ_FILE_TRUNCATE
+        for (const filePath of filePaths) {
+          const v = validatePath(filePath)
+          if (v.error) {
+            results.push(`── ${filePath} ──\n[Error: ${v.error}]`)
+            continue
+          }
+          let p = v.resolved
+          if (!fs.existsSync(p)) {
+            // macOS case-insensitive fallback
+            const parentDir = path.dirname(p)
+            const targetName = path.basename(p)
+            if (fs.existsSync(parentDir)) {
+              try {
+                const match = fs.readdirSync(parentDir).find(e => e.toLowerCase() === targetName.toLowerCase())
+                if (match) p = path.join(parentDir, match)
+              } catch { /* ignore */ }
+            }
+            if (!fs.existsSync(p)) {
+              results.push(`── ${filePath} ──\n[Error: File not found]`)
+              continue
+            }
+          }
+          const stat = fs.statSync(p)
+          if (stat.size > 512 * 1024) {
+            results.push(`── ${filePath} ──\n[Error: File too large (${(stat.size / 1024).toFixed(0)}KB) — use read_file with line ranges]`)
+            continue
+          }
+          const raw = fs.readFileSync(p, 'utf-8')
+          const lines = raw.split('\n')
+          // If adding this file would exceed the budget, truncate it
+          if (totalChars + raw.length > charBudget && results.length > 0) {
+            const remaining = Math.max(1000, charBudget - totalChars)
+            let cutLine = lines.length
+            let charCount = 0
+            for (let i = 0; i < lines.length; i++) {
+              charCount += lines[i].length + 1
+              if (charCount > remaining) { cutLine = i; break }
+            }
+            results.push(`── ${filePath} (${lines.length} lines) ──\n${lines.slice(0, cutLine).join('\n')}\n[truncated — showing ${cutLine} of ${lines.length} lines to fit context budget]`)
+            totalChars += charCount
+            break // stop reading more files
+          }
+          results.push(`── ${filePath} (${lines.length} lines) ──\n${raw}`)
+          totalChars += raw.length
+        }
+        if (args.paths.length > 20) {
+          results.push(`\n[Note: only first 20 of ${args.paths.length} files were read]`)
+        }
+        return { result: results.join('\n\n'), _fullRead: true, _totalLines: results.length }
       }
       case 'write_file': {
         if (typeof args.content !== 'string') return { error: 'content must be a string' }
@@ -4353,6 +4430,7 @@ The project file tree is included at the end of this prompt — read it before c
 ## Tool call rules
 - ALWAYS use tools to read, write, and execute. Never output code or file contents as plain text — the user cannot use it.
 - read_file: use this to read source files — NOT bash/cat. read_file handles large files correctly with line ranges and avoids output limits. Never use cat, head, or tail to read source files. For files under 500 lines, read the entire file at once (omit start_line/end_line). For larger files, read in chunks of 500+ lines — never page through a file 200 lines at a time.
+- read_files: use this when you need to read 2 or more files. Pass an array of paths and get all contents in one call. Much faster than calling read_file multiple times.
 - edit_file: ALWAYS re-read the file with read_file in the same turn before editing. Compressed history may have stale content.
 - write_file: keep each call under 300 lines. For larger files, write the first chunk then use bash with heredoc to append.
 - bash: prefer single focused commands. Check exit codes in the output. For installs and builds (npm install, pip install, swift build, xcodebuild), the timeout is 5 minutes — use them directly. Always add non-interactive flags to suppress prompts: npm init -y, pip install --no-input, brew install --no-interaction.
