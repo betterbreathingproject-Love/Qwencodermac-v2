@@ -2171,6 +2171,13 @@ class DirectBridge {
         const originalUserMsg = messages.find(m => m.role === 'user')
         const originalRequest = originalUserMsg?.content?.slice(0, 500) || ''
 
+        // ── Protect system prompt through compaction ──────────────────────
+        // The system prompt (messages[0]) contains the role preamble, tool
+        // rules, steering docs, and file tree. At ~1,700 tokens it's <2% of
+        // context but critical for agent behaviour. Snapshot it here and
+        // guarantee it's restored as messages[0] after any compaction path.
+        const originalSystemPrompt = messages[0]?.role === 'system' ? messages[0] : null
+
         // ── Memory: archive messages before compaction ────────────────────
         if (memoryClient) {
           try {
@@ -2239,6 +2246,27 @@ class DirectBridge {
           messages.push(...trimmed)
           this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Post-compaction trim: ${before} → ${messages.length} messages (~${estimateMessagesTokens(messages)} tokens)` })
         }
+
+        // ── Restore system prompt after all compaction paths ──────────────
+        // Regardless of which compaction path ran (Python, builtin, or
+        // trimMessages fallback), ensure the original system prompt is at
+        // messages[0]. The builtin compactor already preserves system
+        // messages, but the Python compactor and trimMessages don't — so
+        // this is the safety net that guarantees role preamble, tool rules,
+        // steering docs, and file tree survive every compaction.
+        if (originalSystemPrompt) {
+          const currentFirst = messages[0]
+          const systemPromptMissing = !currentFirst || currentFirst.role !== 'system' ||
+            currentFirst.content !== originalSystemPrompt.content
+          if (systemPromptMissing) {
+            // Remove any truncated/mangled version of the system prompt
+            if (messages[0]?.role === 'system' && messages[0]?.content?.startsWith('You are a coding assistant')) {
+              messages.shift()
+            }
+            messages.unshift(originalSystemPrompt)
+          }
+        }
+
         // Suppress memory re-injection for the next 3 turns so we don't
         // immediately re-inflate the context we just compressed.
         _postCompactionCooldown = 3

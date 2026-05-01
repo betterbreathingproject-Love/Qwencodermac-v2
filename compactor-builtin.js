@@ -16,6 +16,10 @@ function estimateTokens(text) {
 /**
  * Compress a list of chat messages by summarizing older ones.
  * Keeps recent messages intact, compresses older ones.
+ * System messages (role === 'system') are protected from compression and
+ * preserved in their original position — they carry the system prompt,
+ * role preamble, tool rules, steering docs, and file tree which the agent
+ * needs throughout the entire session.
  */
 function compressMessages(messages, options = {}) {
   const keepRecent = options.keepRecent || 10
@@ -25,10 +29,28 @@ function compressMessages(messages, options = {}) {
     return { messages, stats: { compressed: false, reason: 'below threshold' } }
   }
 
-  const recent = messages.slice(-keepRecent)
-  const older = messages.slice(0, -keepRecent)
+  // ── Protect system messages from compression ────────────────────────────
+  // Extract all system messages with their original indices so we can
+  // re-insert them untouched after compressing the conversation messages.
+  const protectedSystemMsgs = [] // { index, msg }
+  const conversationMsgs = []
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].role === 'system') {
+      protectedSystemMsgs.push({ index: i, msg: messages[i] })
+    } else {
+      conversationMsgs.push(messages[i])
+    }
+  }
 
-  // Compress older messages: keep role, truncate long content
+  // If only system messages remain after extraction, nothing to compress
+  if (conversationMsgs.length <= keepRecent) {
+    return { messages, stats: { compressed: false, reason: 'below threshold (after excluding system messages)' } }
+  }
+
+  const recent = conversationMsgs.slice(-keepRecent)
+  const older = conversationMsgs.slice(0, -keepRecent)
+
+  // Compress older conversation messages: keep role, truncate long content
   const compressed = older.map(msg => {
     const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)
     const tokens = estimateTokens(content)
@@ -61,7 +83,15 @@ function compressMessages(messages, options = {}) {
   }
 
   const originalTokens = messages.reduce((sum, m) => sum + estimateTokens(typeof m.content === 'string' ? m.content : JSON.stringify(m.content)), 0)
-  const result = [summary, ...recent]
+
+  // ── Reassemble: protected system messages first, then summary + recent ──
+  // System messages go at the front (preserving their relative order),
+  // followed by the conversation summary and recent conversation messages.
+  const result = [
+    ...protectedSystemMsgs.map(p => p.msg),
+    summary,
+    ...recent,
+  ]
   const compressedTokens = result.reduce((sum, m) => sum + estimateTokens(typeof m.content === 'string' ? m.content : JSON.stringify(m.content)), 0)
 
   return {
@@ -73,6 +103,7 @@ function compressMessages(messages, options = {}) {
       original_tokens: originalTokens,
       compressed_tokens: compressedTokens,
       reduction_pct: originalTokens > 0 ? ((1 - compressedTokens / originalTokens) * 100) : 0,
+      protected_system_messages: protectedSystemMsgs.length,
     }
   }
 }
