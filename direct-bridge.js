@@ -1890,46 +1890,83 @@ class DirectBridge {
       recordingOptions: { dir: recordingDir, size: { width: 1280, height: 720 } },
     })
 
-    // If images are attached, call the vision endpoint directly (same as Vision tab)
-    // instead of relying on tool calls which the local model doesn't handle reliably.
-    let imageContext = ''
+    // If images are attached, stream a direct vision response and return early.
+    // Skip the full agent loop (tools, file tree, project context) — the user
+    // wants to talk about the image, not run a coding task.
     if (images && images.length > 0) {
-      this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Analyzing ${images.length} image(s)...` })
+      this.send('qwen-event', { type: 'session-start', cwd: cwd || process.cwd() })
       try {
-        const descriptions = []
-        for (let i = 0; i < images.length; i++) {
-          const img = images[i]
-          // Use a dedicated vision prompt that focuses on detailed description
-          // regardless of what the user's text prompt says
-          const content = [
-            { type: 'text', text: 'Describe what you see in this image in detail. Include all visible elements, text, UI components, colors, layout, and any notable features.' },
-            { type: 'image_url', image_url: { url: img.b64 } },
-          ]
-          const body = JSON.stringify({ messages: [{ role: 'user', content }], max_tokens: 1024 })
-          const result = await new Promise((resolve, reject) => {
-            const req = http.request({
-              hostname: '127.0.0.1', port: SERVER_PORT,
-              path: '/v1/chat/completions', method: 'POST',
-              timeout: 120000,
-              headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-            }, (res) => {
-              let data = ''
-              res.on('data', chunk => data += chunk)
-              res.on('end', () => { try { resolve(JSON.parse(data)) } catch { reject(new Error(data || 'Empty response')) } })
-            })
-            req.on('timeout', () => { req.destroy(); reject(new Error('Vision request timed out')) })
-            req.on('error', reject)
-            req.write(body)
-            req.end()
-          })
-          const desc = result.choices?.[0]?.message?.content || 'Could not analyze image.'
-          descriptions.push(`[Image ${i + 1}: ${img.name}]\n${desc}`)
+        // Build a multimodal message: user text + all attached images
+        const userContent = []
+        if (prompt && prompt.trim()) {
+          userContent.push({ type: 'text', text: prompt.trim() })
+        } else {
+          userContent.push({ type: 'text', text: 'Describe what you see in this image in detail.' })
         }
-        // Make the image context more prominent with clear instructions to acknowledge it
-        imageContext = `\n\n---\n\n**IMPORTANT: The user has attached ${images.length} image(s). You MUST acknowledge and discuss the image content in your response.**\n\nHere is what the vision model sees:\n\n${descriptions.join('\n\n')}\n\n---\n`
+        for (const img of images) {
+          userContent.push({ type: 'image_url', image_url: { url: img.b64 } })
+        }
+
+        const visionMessages = [{ role: 'user', content: userContent }]
+        const body = JSON.stringify({ messages: visionMessages, max_tokens: 1024, stream: true })
+
+        await new Promise((resolve) => {
+          const req = http.request({
+            hostname: '127.0.0.1', port: SERVER_PORT,
+            path: '/v1/chat/completions', method: 'POST',
+            timeout: 120000,
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+          }, (res) => {
+            let buf = ''
+            let fullText = ''
+            res.on('data', chunk => {
+              if (this._aborted) { req.destroy(); return }
+              buf += chunk.toString()
+              const lines = buf.split('\n')
+              buf = lines.pop()
+              for (const line of lines) {
+                if (line.startsWith('data: [DONE]')) continue
+                if (line.startsWith('data: ')) {
+                  try {
+                    const parsed = JSON.parse(line.slice(6))
+                    const delta = parsed.choices?.[0]?.delta?.content
+                    if (delta) {
+                      fullText += delta
+                      this.send('qwen-event', { type: 'token', content: delta })
+                    }
+                  } catch { /* skip malformed SSE line */ }
+                }
+              }
+            })
+            res.on('end', () => {
+              this.send('qwen-event', { type: 'task_complete', summary: fullText })
+              resolve()
+            })
+            res.on('error', (err) => {
+              this.send('qwen-event', { type: 'task_complete', summary: `Vision error: ${err.message}` })
+              resolve()
+            })
+          })
+          req.on('error', (err) => {
+            this.send('qwen-event', { type: 'task_complete', summary: `Vision request failed: ${err.message}` })
+            resolve()
+          })
+          req.on('timeout', () => {
+            req.destroy()
+            this.send('qwen-event', { type: 'task_complete', summary: 'Vision request timed out.' })
+            resolve()
+          })
+          req.write(body)
+          req.end()
+          this._currentReq = req
+        })
       } catch (err) {
-        imageContext = `\n\n(The user attached images but vision analysis failed: ${err.message})`
+        this.send('qwen-event', { type: 'task_complete', summary: `Vision failed: ${err.message}` })
+      } finally {
+        this._running = false
+        this._currentReq = null
       }
+      return
     }
 
     const workDir = cwd || process.cwd()
@@ -1997,7 +2034,7 @@ class DirectBridge {
       }
     }
 
-    finalPrompt += prompt + imageContext
+    finalPrompt += prompt
 
     const messages = [
       { role: 'system', content: finalSystemPrompt },
