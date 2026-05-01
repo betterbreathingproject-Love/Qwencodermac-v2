@@ -1972,6 +1972,7 @@ async def _handle_vision(payload: dict) -> AssistResponse:
     Uses the extraction model which is loaded via mlx_vlm when it has vision
     weights (e.g. Qwen3.5-0.8B). Falls back gracefully if not available.
     """
+    global _extract_model_has_vision
     import time, base64, tempfile, os as _os
     t0 = time.monotonic()
 
@@ -1988,7 +1989,6 @@ async def _handle_vision(payload: dict) -> AssistResponse:
     # Self-heal: if the flag is False but the processor is actually a VLM processor
     # (loaded before the vision-detection code existed), correct the flag at runtime.
     if not _extract_model_has_vision:
-        global _extract_model_has_vision
         # Check if the processor has vision capabilities at runtime
         _processor_type = type(_extract_processor).__name__
         _has_vision_runtime = (
