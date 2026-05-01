@@ -2988,9 +2988,40 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           const isSseError = /SSE error from server/.test(msg)
           if ((isTransient || isServerError || isSseError) && attempt < 7) {
             const reason = isServerError ? msg.match(/HTTP \d+/)?.[0] || 'server error' : code
+            // If the error is "No model loaded" (503), wait for the model to
+            // actually be loaded before retrying. This prevents all concurrent
+            // agents from hammering the server with 503-producing requests
+            // during crash recovery.
+            const isNoModel = /No model loaded/i.test(msg)
+            if (isNoModel) {
+              this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Model not loaded — polling /admin/status until ready... (${attempt + 1}/7)` })
+              const modelReady = await this._waitForModelReady(60)
+              if (this._aborted) return
+              if (!modelReady) {
+                this.send('qwen-event', { type: 'system', subtype: 'debug', data: 'Model still not loaded after 60s — retrying anyway' })
+              }
+              // Add a small stagger (0-3s) so concurrent agents don't all hit
+              // the server at the exact same instant after model loads
+              const jitter = Math.floor(Math.random() * 3000)
+              await new Promise(r => setTimeout(r, jitter))
+              continue
+            }
             // Backoff schedule designed to survive a full crash+restart+model-reload cycle:
             // attempt 0→1: 5s, 1→2: 8s, 2→3: 12s, 3→4: 15s, 4→5: 20s, 5→6: 25s, 6→7: 30s
             // Total max wait: ~115s — enough for 5s crash delay + server start + model reload
+            // For ECONNREFUSED (server down), also poll for model readiness instead
+            // of blind backoff — the server may take variable time to restart + reload
+            if (code === 'ECONNREFUSED' && attempt >= 1) {
+              this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Server down (ECONNREFUSED) — waiting for model to be ready... (${attempt + 1}/7)` })
+              const modelReady = await this._waitForModelReady(60)
+              if (this._aborted) return
+              if (modelReady) {
+                const jitter = Math.floor(Math.random() * 3000)
+                await new Promise(r => setTimeout(r, jitter))
+                continue
+              }
+              // Fall through to fixed backoff if model didn't come back
+            }
             const delay = attempt < 2 ? 5 + attempt * 3 : Math.min(12 + (attempt - 2) * 5, 30)
             this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Server not ready (${reason}), retrying in ${delay}s... (${attempt + 1}/7)` })
             // Sleep in 1s increments so we can check _aborted
@@ -4676,6 +4707,46 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         reject(err)
       }
     })
+  }
+
+  /**
+   * Poll /admin/status until a model is loaded or timeout expires.
+   * Returns true if model became ready, false if timed out.
+   * @param {number} maxWaitSec - Maximum seconds to wait
+   * @returns {Promise<boolean>}
+   */
+  async _waitForModelReady(maxWaitSec = 60) {
+    const pollInterval = 3000 // 3s between polls
+    const maxAttempts = Math.ceil((maxWaitSec * 1000) / pollInterval)
+    for (let i = 0; i < maxAttempts; i++) {
+      if (this._aborted) return false
+      try {
+        const ready = await new Promise((resolve) => {
+          const req = http.request({
+            hostname: '127.0.0.1', port: SERVER_PORT, path: '/admin/status',
+            method: 'GET', timeout: 5000,
+          }, (res) => {
+            let body = ''
+            res.on('data', (d) => { body += d })
+            res.on('end', () => {
+              try {
+                const status = JSON.parse(body)
+                resolve(!!status.loaded)
+              } catch { resolve(false) }
+            })
+          })
+          req.on('error', () => resolve(false))
+          req.on('timeout', () => { req.destroy(); resolve(false) })
+          req.end()
+        })
+        if (ready) return true
+      } catch { /* ignore */ }
+      // Wait before next poll
+      for (let w = 0; w < pollInterval / 1000 && !this._aborted; w++) {
+        await new Promise(r => setTimeout(r, 1000))
+      }
+    }
+    return false
   }
 
   _buildSystemPrompt(cwd, permissionMode) {
