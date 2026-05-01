@@ -657,8 +657,9 @@ function createWindow() {
   qwenBridge.setInputRequester(_windowInputRequester)
 
   // IPC: user submits a reply to an ask_user question
-  ipcMain.removeHandler('ask-user-reply')
+  try { ipcMain.removeHandler('ask-user-reply') } catch (_) {}
   ipcMain.handle('ask-user-reply', (_, reply) => {
+    console.log('[ask_user] reply received:', reply?.slice(0, 80))
     _windowInputRequester.resolveReply(reply || '')
     return { ok: true }
   })

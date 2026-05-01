@@ -232,6 +232,7 @@ class WindowInputRequester {
 
   async ask(question, options = []) {
     this._pending = true
+    console.log('[WindowInputRequester] asking:', question?.slice(0, 80))
     return new Promise((resolve) => {
       this._resolve = resolve
       this._sink.send('qwen-event', { type: 'ask-user', question, options })
@@ -239,6 +240,7 @@ class WindowInputRequester {
       this._timeout = setTimeout(() => {
         this._pending = false
         this._resolve = null
+        console.log('[WindowInputRequester] timed out')
         resolve('(No response received — continuing)')
       }, 10 * 60 * 1000)
     })
@@ -246,7 +248,11 @@ class WindowInputRequester {
 
   /** Called by main.js when the user submits a reply via IPC. */
   resolveReply(reply) {
-    if (!this._resolve) return
+    if (!this._resolve) {
+      console.warn('[WindowInputRequester] resolveReply called but no pending request')
+      return
+    }
+    console.log('[WindowInputRequester] resolving with:', reply?.slice(0, 80))
     clearTimeout(this._timeout)
     this._pending = false
     const fn = this._resolve

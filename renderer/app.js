@@ -2597,9 +2597,9 @@ function renderAskUserCard(question, options, respId) {
     if (!hasOther) parsedOptions.push('Other…')
   }
 
-  const chipsHtml = parsedOptions.map((opt) => {
+  const chipsHtml = parsedOptions.map((opt, idx) => {
     const isOther = /^other/i.test(opt.trim())
-    return `<button class="ask-user-chip${isOther ? ' ask-user-chip-other' : ''}" onclick="window._askUserPick('${cardId}', ${JSON.stringify(opt)})">${esc(opt)}</button>`
+    return `<button class="ask-user-chip${isOther ? ' ask-user-chip-other' : ''}" data-card="${cardId}" data-idx="${idx}" onclick="window._askUserPickIdx(this)">${esc(opt)}</button>`
   }).join('')
 
   const html = `<div class="ask-user-card" id="${cardId}">
@@ -2612,16 +2612,18 @@ function renderAskUserCard(question, options, respId) {
     <div class="ask-user-custom" id="${cardId}-custom" style="display:none">
       <div class="ask-user-input-row">
         <textarea class="ask-user-textarea" id="${cardId}-input" placeholder="Type your answer… (Enter to send)" rows="2" autofocus></textarea>
-        <button class="ask-user-send" onclick="window._askUserSend('${cardId}')">
+        <button class="ask-user-send" data-card="${cardId}" onclick="window._askUserSendById(this.dataset.card)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </button>
       </div>
       <div class="ask-user-hint">Shift+Enter for new line</div>
     </div>
-    ${parsedOptions.length === 0 ? `<div class="ask-user-chips"><button class="ask-user-chip ask-user-chip-other" onclick="window._askUserShowCustom('${cardId}')">Reply…</button></div>` : ''}
+    ${parsedOptions.length === 0 ? `<div class="ask-user-chips"><button class="ask-user-chip ask-user-chip-other" data-card="${cardId}" onclick="window._askUserShowCustom(this.dataset.card)">Reply…</button></div>` : ''}
   </div>`
 
   out.insertAdjacentHTML('beforeend', html)
+  // Store options by cardId so _askUserPickIdx can look them up
+  window._askUserOptions[cardId] = parsedOptions
   scrollOutput()
 
   // Auto-focus textarea if no chips (open-ended question)
@@ -2629,7 +2631,7 @@ function renderAskUserCard(question, options, respId) {
     const ta = document.getElementById(cardId + '-input')
     if (ta) {
       ta.addEventListener('keydown', e => {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); window._askUserSend(cardId) }
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); window._askUserSendById(cardId) }
       })
       if (parsedOptions.length === 0) {
         window._askUserShowCustom(cardId)
@@ -2637,6 +2639,9 @@ function renderAskUserCard(question, options, respId) {
     }
   }, 50)
 }
+
+// Store option text by cardId so data-idx can look it up safely
+window._askUserOptions = {}
 
 window._askUserShowCustom = function(cardId) {
   const customEl = document.getElementById(cardId + '-custom')
@@ -2647,6 +2652,16 @@ window._askUserShowCustom = function(cardId) {
     if (ta) { ta.focus(); ta.select() }
     scrollOutput()
   }
+}
+
+// Called from chip onclick via data-idx — avoids any quoting issues
+window._askUserPickIdx = function(btn) {
+  const cardId = btn.dataset.card
+  const idx = parseInt(btn.dataset.idx, 10)
+  const options = window._askUserOptions[cardId] || []
+  const option = options[idx]
+  if (option === undefined) return
+  window._askUserPick(cardId, option)
 }
 
 window._askUserPick = function(cardId, option) {
@@ -2674,12 +2689,15 @@ window._askUserPick = function(cardId, option) {
   setTimeout(() => _submitAskUserReply(cardId, option), 180)
 }
 
-window._askUserSend = function(cardId) {
+window._askUserSendById = function(cardId) {
   const ta = document.getElementById(cardId + '-input')
   const reply = ta ? ta.value.trim() : ''
   if (!reply) { if (ta) ta.focus(); return }
   _submitAskUserReply(cardId, reply)
 }
+
+// Keep old name for keyboard handler compatibility
+window._askUserSend = window._askUserSendById
 
 function _submitAskUserReply(cardId, reply) {
   const card = document.getElementById(cardId)
@@ -2690,7 +2708,15 @@ function _submitAskUserReply(cardId, reply) {
     ${esc(reply)}
   </div>`
   scrollOutput()
-  window.app.askUserReply(reply)
+  try {
+    if (window.app && typeof window.app.askUserReply === 'function') {
+      window.app.askUserReply(reply).catch(err => console.error('[ask_user] IPC reply failed:', err))
+    } else {
+      console.error('[ask_user] window.app.askUserReply not available')
+    }
+  } catch (err) {
+    console.error('[ask_user] Failed to send reply:', err)
+  }
 }
 
 function scrollOutput() {
