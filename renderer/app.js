@@ -382,30 +382,44 @@ function _renderModelSwitcher(models) {
 
 function toggleModelSwitcher() {
   const bar = document.getElementById('modelSwitcherBar')
-  const dd = document.getElementById('modelSwitcherDropdown')
-  const isOpen = dd.style.display !== 'none'
+  let dd = document.getElementById('modelSwitcherDropdown')
+  if (!bar || !dd) return
+
+  const isOpen = dd.style.display === 'flex'
   if (isOpen) {
     dd.style.display = 'none'
     bar.classList.remove('open')
     return
   }
-  // Position the dropdown below the switcher button using fixed coords
-  const btn = document.getElementById('modelSwitcherBtn')
-  const rect = btn.getBoundingClientRect()
-  dd.style.top = (rect.bottom + 4) + 'px'
-  dd.style.left = (rect.left) + 'px'
-  dd.style.width = (rect.width) + 'px'
-  dd.style.display = 'flex'
-  bar.classList.add('open')
-  // Close on outside click
-  const closer = (e) => {
-    if (!bar.contains(e.target) && !dd.contains(e.target)) {
-      dd.style.display = 'none'
-      bar.classList.remove('open')
-      document.removeEventListener('click', closer)
-    }
+
+  // Move dropdown to body on first open so it escapes overflow:hidden containers
+  if (dd.parentNode !== document.body) {
+    dd.parentNode.removeChild(dd)
+    document.body.appendChild(dd)
   }
-  setTimeout(() => document.addEventListener('click', closer), 0)
+
+  // Position dropdown below the switcher button
+  const btn = document.getElementById('modelSwitcherBtn')
+  if (!btn) return
+  const rect = btn.getBoundingClientRect()
+  dd.style.position = 'fixed'
+  dd.style.top = Math.round(rect.bottom + 4) + 'px'
+  dd.style.left = Math.round(rect.left) + 'px'
+  dd.style.width = Math.max(rect.width, 300) + 'px'
+  dd.style.display = 'flex'
+  dd.style.flexDirection = 'column'
+  bar.classList.add('open')
+
+  // Close on outside click
+  function closer(e) {
+    if (dd.contains(e.target) || bar.contains(e.target)) return
+    dd.style.display = 'none'
+    bar.classList.remove('open')
+    document.removeEventListener('mousedown', closer, true)
+  }
+  requestAnimationFrame(() => {
+    document.addEventListener('mousedown', closer, true)
+  })
 }
 
 async function switchModelFromSwitcher(id, modelPath) {

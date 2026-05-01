@@ -1660,10 +1660,19 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
 
         // Redirect cat/head/tail on source files to read_file — bash output is capped
         // at 2MB and has no line-range support, causing truncation on large files.
-        const catMatch = args.command.trim().match(/^(?:cat|head|tail)\s+"?([^"|&;]+\.(swift|js|ts|py|go|rs|java|kt|cpp|c|h|cs|rb|php|html|css|json|yaml|yml|md|txt|sh|bash|zsh|fish|toml|xml|gradle|plist|pbxproj))"?\s*$/)
-        if (catMatch) {
-          const filePath = catMatch[1].trim()
-          return { error: `Use read_file instead of cat/head/tail for source files. Call: read_file({"path": "${filePath}"})` }
+        // Match: cat/head/tail [optional flags like -n 100, -100, -c 50] <filepath>
+        const catTailMatch = args.command.trim().match(/^(cat|head|tail)\s+(.+)$/s)
+        if (catTailMatch) {
+          const verb = catTailMatch[1]
+          const rest = catTailMatch[2].trim()
+          // Strip flags/arguments (e.g. -100, -n 50, -c 200, --lines=50) to isolate the file path
+          const withoutFlags = rest.replace(/(?:^|\s)(?:-[a-zA-Z]+\s+\d+|-\d+|--[a-z]+=\d+)/g, '').trim()
+          // Remove surrounding quotes
+          const cleanPath = withoutFlags.replace(/^["']|["']$/g, '').trim()
+          const sourceExt = /\.(swift|js|ts|py|go|rs|java|kt|cpp|c|h|cs|rb|php|html|css|json|yaml|yml|md|txt|sh|bash|zsh|fish|toml|xml|gradle|plist|pbxproj)$/
+          if (cleanPath && sourceExt.test(cleanPath) && !cleanPath.startsWith('-')) {
+            return { error: `Use read_file instead of ${verb} for source files. Call: read_file({"path": "${cleanPath}"})` }
+          }
         }
 
         // Detect background commands (trailing & or nohup) — these never exit so we
