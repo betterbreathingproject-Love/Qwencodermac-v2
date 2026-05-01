@@ -2569,9 +2569,20 @@ function renderAskUserCard(question, options, respId) {
   const out = document.getElementById('agentOutput')
   const cardId = 'ask-user-' + Date.now()
 
-  // Parse options out of the question text if none were provided explicitly.
-  // Matches lines like: "1. Option text", "- Option text", "* Option text"
-  let parsedOptions = options && options.length ? [...options] : []
+  // Normalise options — the model may send a JSON string, an array, or nothing
+  let parsedOptions = []
+  if (Array.isArray(options) && options.length) {
+    parsedOptions = options.filter(o => typeof o === 'string' && o.trim())
+  } else if (typeof options === 'string' && options.trim()) {
+    // Model sent options as a JSON string — try to parse it
+    try {
+      const parsed = JSON.parse(options)
+      if (Array.isArray(parsed)) parsedOptions = parsed.filter(o => typeof o === 'string' && o.trim())
+    } catch { /* not JSON — ignore */ }
+  }
+
+  // If no options provided, try to parse numbered/bulleted lists from the question text.
+  // Matches: "1. Option", "- Option", "* Option"
   let cleanQuestion = question
   if (!parsedOptions.length) {
     const lines = question.split('\n')
@@ -2588,10 +2599,13 @@ function renderAskUserCard(question, options, respId) {
     }
   }
 
-  // Strip trailing "Or something totally different?" type lines from question
+  // Strip trailing "Or something totally different?" filler from question
   cleanQuestion = cleanQuestion.replace(/\n?Or something (totally )?different\??$/i, '').trim()
 
-  // Always add "Other…" as the last option if there are choices
+  // Guard: if any "option" is a single character, something went wrong — discard
+  if (parsedOptions.some(o => o.length <= 1)) parsedOptions = []
+
+  // Always add "Other…" as the last option when there are choices
   if (parsedOptions.length > 0) {
     const hasOther = parsedOptions.some(o => /^other/i.test(o.trim()))
     if (!hasOther) parsedOptions.push('Other…')
