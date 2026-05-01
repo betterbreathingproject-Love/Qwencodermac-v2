@@ -4437,8 +4437,8 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
 
       'context-gather':
         'You are in CONTEXT GATHER mode. Find the exact files and lines needed for a specific task — nothing more.\n' +
-        'Steps: (1) identify names/keywords the task touches, (2) search_files for those patterns, (3) read only the relevant sections, (4) trace direct imports/dependencies.\n' +
-        'Constraint: do NOT write or modify any files. Do NOT summarise the whole codebase.\n' +
+        'Steps: (1) identify names/keywords the task touches, (2) search_files for those patterns, (3) read only the specific sections you need (not whole files unless under 200 lines), (4) trace direct imports/dependencies.\n' +
+        'Constraint: do NOT write or modify any files. Do NOT read the entire project. Read the minimum needed.\n' +
         'Output format: list of `file:line_range — reason it is relevant` entries. Be precise and minimal.',
 
       'code-search':
@@ -4485,10 +4485,11 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       'implementation':
         'You are in IMPLEMENTATION mode. Write and modify code to complete the task.\n' +
         'Required sequence:\n' +
-        '  1. Read relevant files first — never edit blind.\n' +
+        '  1. Read ONLY the file(s) you are about to edit — do NOT read the entire project. If a file list is in your context, use it instead of reading.\n' +
         '  2. Make one focused change at a time using write_file or edit_file.\n' +
         '  3. After each file change, check LSP diagnostics in the tool result. Fix any errors before continuing.\n' +
         '  4. Verify with bash (run tests, check syntax, start the app).\n' +
+        'CRITICAL: Do NOT read all project files before starting. Read one file → edit it → move to the next. Reading everything upfront wastes context and triggers compaction.\n' +
         'Constraint: each write_file call must be under 300 lines. For larger files use bash with heredoc to append.',
 
       'general':
