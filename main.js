@@ -290,6 +290,7 @@ const ctx = {
   },
   getAgentPool: () => agentPool,
   getLspManager: () => lspManager,
+  getCalibrationProfile: ipcServer.getCalibrationProfile,
   findPython: ipcServer.findPython,
   appDir: __dirname,
 }

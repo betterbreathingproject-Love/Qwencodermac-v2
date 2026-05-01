@@ -313,17 +313,17 @@ function makeStats(originalTokens, compressedTokens) {
  * Compress a text block using type-aware strategies.
  * Dispatches on contentType before falling back to head/tail truncation.
  */
-function compressText(text, contentType = 'auto') {
+function compressText(text, contentType = 'auto', options = {}) {
   if (!text) return { compressed: text, stats: { compressed: false, original_tokens: 0, compressed_tokens: 0, reduction_pct: 0 } }
 
   const originalTokens = estimateTokens(text)
   // Target 15% of context window for compressed tool output.
-  // With 84K context, that's ~12,600 tokens (~50K chars) — enough to hold
-  // most source files without aggressive truncation. The old 4K target was
-  // too aggressive and caused the model to re-read files it already had.
+  // When a calibration profile is available, toolOutputTruncate (in chars)
+  // is passed via options.maxChars and already scales with the model's real
+  // context window. Fall back to config.CONTEXT_WINDOW for uncalibrated runs.
   const config = require('./config')
-  const maxTokens = Math.max(4000, Math.floor(config.CONTEXT_WINDOW * 0.15))
-  const maxChars = maxTokens * 4
+  const maxChars = options.maxChars || Math.max(16000, Math.floor(config.CONTEXT_WINDOW * 4 * 0.15))
+  const maxTokens = Math.ceil(maxChars / 4)
 
   // Apply type-specific compression first
   let compressed = text

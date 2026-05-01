@@ -46,7 +46,7 @@ module.exports = {
 
   // Tool output truncation limits (chars)
   READ_FILE_TRUNCATE: Math.floor(CONTEXT_WINDOW * 4 * 0.35),  // ~183K chars — 35% of context budget in chars
-  TOOL_OUTPUT_TRUNCATE: 32000,
+  TOOL_OUTPUT_TRUNCATE: Math.floor(CONTEXT_WINDOW * 4 * 0.10), // ~52K chars — 10% of context budget in chars
 
   // Calibrator floor — memory pressure can reduce budget but never below this
   CALIBRATOR_FLOOR: Math.floor(CONTEXT_WINDOW * 0.4),

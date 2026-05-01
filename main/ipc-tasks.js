@@ -12,7 +12,7 @@ const { generateSteeringDocs } = require('../steering-generator')
 function isNonEmptyString(v) { return typeof v === 'string' && v.length > 0 }
 
 // ── IPC registration ──────────────────────────────────────────────────────────
-function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, getLspManager, findPython }) {
+function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, getLspManager, findPython, getCalibrationProfile }) {
   let orchestratorInstance = null
   let _agentEventHandler = null  // track so we can remove it before creating a new orchestrator
 
@@ -109,6 +109,7 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
         specContext,
         lspManager: getLspManager ? getLspManager() : null,
         projectDir,
+        getCalibrationProfile: getCalibrationProfile || null,
       })
       orchestratorInstance.on('task-status-event', (evt) => {
         getMainWindow()?.webContents.send('task-status-event', evt)

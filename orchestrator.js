@@ -2,6 +2,7 @@
 
 const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
+const config = require('./config');
 const {
   updateNodeStatus,
   getNextExecutableNodes,
@@ -48,6 +49,7 @@ class Orchestrator extends EventEmitter {
     this._specContext = options.specContext || '';
     this._lspManager = options.lspManager || null;
     this._projectDir = options.projectDir || null;
+    this._getCalibrationProfile = options.getCalibrationProfile || null;
     this._onStatusChange = options.onStatusChange || null;
     this._onError = options.onError || null;
     this._onComplete = options.onComplete || null;
@@ -309,7 +311,10 @@ class Orchestrator extends EventEmitter {
       // Trim specContext to a per-step budget so large spec documents don't
       // bloat every task's initial prompt. The full spec is available via
       // memory retrieval if the agent needs it.
-      const SPEC_CONTEXT_BUDGET = 2000 // chars (~500 tokens)
+      // Budget scales with context window via calibration profile.
+      const _orchProfile = this._getCalibrationProfile?.()
+      const SPEC_CONTEXT_BUDGET = _orchProfile?.specContextBudget
+        ?? Math.max(4000, Math.floor(config.CONTEXT_WINDOW * 4 * 0.04))
       const trimmedSpecContext = this._specContext && this._specContext.length > SPEC_CONTEXT_BUDGET
         ? this._specContext.slice(0, SPEC_CONTEXT_BUDGET) + '\n\n... [spec truncated — full context available via memory retrieval]'
         : this._specContext
@@ -649,8 +654,8 @@ class Orchestrator extends EventEmitter {
    * @returns {string|null} Formatted predecessor summary, or null if none
    */
   _buildPredecessorSummary(node) {
-    const SUMMARY_PER_TASK = 300 // chars per predecessor output
-    const MAX_PREDECESSORS = 5   // cap to avoid bloat on wide graphs
+    const SUMMARY_PER_TASK = 600 // chars per predecessor output
+    const MAX_PREDECESSORS = 8   // cap to avoid bloat on wide graphs
 
     // Collect direct parents and their ancestors up to 2 levels
     const predecessorIds = new Set()

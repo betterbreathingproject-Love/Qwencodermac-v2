@@ -58,12 +58,22 @@ function computeProfile(metrics, mode = 'balanced') {
   const maxTurns = 500
   const poolTimeout = Math.max(120000, timeoutPerTurn * 3)
 
+  // ── Derived truncation budgets (chars) ──────────────────────────────────
+  // These scale with the effective context so tool outputs and file reads
+  // use the right proportion of the model's actual context window.
+  const readFileTruncate = Math.floor(effectiveContext * 4 * 0.35)   // 35% of context in chars
+  const toolOutputTruncate = Math.floor(effectiveContext * 4 * 0.10) // 10% of context in chars
+  const specContextBudget = Math.max(4000, Math.floor(effectiveContext * 4 * 0.04)) // 4% of context in chars
+
   return {
     maxTurns,
     timeoutPerTurn,
     maxInputTokens,
     compactionThreshold,
     poolTimeout,
+    readFileTruncate,
+    toolOutputTruncate,
+    specContextBudget,
     mode,
     memoryPressure: round2(memoryPressure),
     memoryScale: round2(memoryScale),
@@ -81,6 +91,9 @@ function defaultProfile() {
     maxInputTokens: MAX_INPUT_TOKENS,
     compactionThreshold: COMPACTION_THRESHOLD,
     poolTimeout: 600000,
+    readFileTruncate: Math.floor(CONTEXT_WINDOW * 4 * 0.35),
+    toolOutputTruncate: Math.floor(CONTEXT_WINDOW * 4 * 0.10),
+    specContextBudget: Math.max(4000, Math.floor(CONTEXT_WINDOW * 4 * 0.04)),
     metrics: null,
   }
 }

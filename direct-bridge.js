@@ -1536,7 +1536,8 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         const filePaths = args.paths.slice(0, 20)
         const results = []
         let totalChars = 0
-        const charBudget = config.READ_FILE_TRUNCATE
+        const _rfProfile = this._getCalibrationProfile?.()
+        const charBudget = _rfProfile?.readFileTruncate ?? config.READ_FILE_TRUNCATE
         for (const filePath of filePaths) {
           const v = validatePath(filePath)
           if (v.error) {
@@ -2563,6 +2564,8 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
     const effectiveMaxTurns = profile?.maxTurns ?? maxTurns
     const effectiveMaxInputTokens = profile?.maxInputTokens ?? config.MAX_INPUT_TOKENS
     const effectiveCompactionThreshold = profile?.compactionThreshold ?? config.COMPACTION_THRESHOLD
+    const effectiveReadFileTruncate = profile?.readFileTruncate ?? config.READ_FILE_TRUNCATE
+    const effectiveToolOutputTruncate = profile?.toolOutputTruncate ?? config.TOOL_OUTPUT_TRUNCATE
 
     let consecutiveErrors = 0
     let consecutiveReadsWithoutWrite = 0  // Track read-only loops
@@ -4037,7 +4040,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           }
         }
 
-        const truncateLimit = fnName === 'read_file' ? config.READ_FILE_TRUNCATE : config.TOOL_OUTPUT_TRUNCATE
+        const truncateLimit = fnName === 'read_file' ? effectiveReadFileTruncate : effectiveToolOutputTruncate
 
         // Navigational tools (list_dir, search, grep) get a higher limit and skip
         // the expensive Python compressor — their output is structural data the agent
@@ -4095,7 +4098,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
             const contentType = detectContentType(fnName, content)
             let compressed = false
             try {
-              const compResult = await compactor.compressText(pythonPath, content, contentType)
+              const compResult = await compactor.compressText(pythonPath, content, contentType, { maxChars: effectiveToolOutputTruncate })
               if (compResult.stats?.compressed) {
                 content = compResult.compressed || compResult.text || content
                 const pct = compResult.stats.reduction_pct ?? 0

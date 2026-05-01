@@ -192,7 +192,7 @@ function compressText(pythonPath, text, contentType = 'auto', options = {}) {
       maxBuffer: 5 * 1024 * 1024,
     }, (err, stdout) => {
       if (err) {
-        const fallback = builtin.compressText(text, contentType)
+        const fallback = builtin.compressText(text, contentType, options)
         fallback.stats = { ...fallback.stats, engine: 'builtin' }
         return resolve(fallback)
       }
@@ -209,11 +209,11 @@ function compressText(pythonPath, text, contentType = 'auto', options = {}) {
           }
           return resolve(result)
         }
-        const fallback = builtin.compressText(text, contentType)
+        const fallback = builtin.compressText(text, contentType, options)
         fallback.stats = { ...fallback.stats, engine: 'builtin' }
         resolve(fallback)
       } catch {
-        const fallback = builtin.compressText(text, contentType)
+        const fallback = builtin.compressText(text, contentType, options)
         fallback.stats = { ...fallback.stats, engine: 'builtin' }
         resolve(fallback)
       }
