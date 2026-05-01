@@ -339,13 +339,13 @@ const TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'read_file',
-      description: 'Read the contents of a file at the given path. Returns the file content as a string. For large files, use start_line and end_line to read specific sections — the response will tell you the total line count and how to continue reading.',
+      description: 'Read the contents of a file. Returns the ENTIRE file by default — just pass the path, do NOT set start_line/end_line unless the file is over 1000 lines. Only use line ranges for very large files (1000+ lines) or when you need a specific section.',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string', description: 'Absolute or relative file path to read' },
-          start_line: { type: 'number', description: 'First line to read (1-indexed, inclusive). Omit to start from the beginning.' },
-          end_line: { type: 'number', description: 'Last line to read (1-indexed, inclusive). Omit to read to the end of the file.' },
+          start_line: { type: 'number', description: 'First line to read (1-indexed). Only use for files over 1000 lines.' },
+          end_line: { type: 'number', description: 'Last line to read (1-indexed). Only use for files over 1000 lines.' },
         },
         required: ['path'],
       },
@@ -3321,6 +3321,31 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
             } catch {
               // stat failed — fall through to normal read
             }
+          }
+        }
+
+        // ── Paged re-read interception ───────────────────────────────────────
+        // If the agent already fully read a file and is now paging through it
+        // with start_line/end_line (200-line chunks), intercept and tell it
+        // the content is already in context. This prevents the slow 200-line
+        // paging pattern on files that were already returned in full.
+        if (fnName === 'read_file' && fnArgs.path && (fnArgs.start_line != null || fnArgs.end_line != null)) {
+          const readKey = fnArgs.path
+          const prev = _readFileHistory.get(readKey)
+          if (prev && prev.fullRead) {
+            try {
+              const resolvedPath = path.resolve(cwd, fnArgs.path.trim())
+              const currentMtime = fs.statSync(resolvedPath).mtimeMs
+              if (prev.mtime && currentMtime <= prev.mtime) {
+                this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Skipped paged re-read of ${readKey} lines ${fnArgs.start_line}-${fnArgs.end_line} (already fully read on turn ${prev.lastTurn})` })
+                const interceptContent = `You already read this entire file (${prev.totalLines} lines) on turn ${prev.lastTurn}. ` +
+                  `The content is in your context — do NOT page through it again. ` +
+                  `Proceed with your edit or use search_files to find specific patterns.`
+                this.send('qwen-event', { type: 'tool-result', tool_use_id: tc.id, content: interceptContent, is_error: false })
+                messages.push({ role: 'tool', tool_call_id: tc.id, content: interceptContent })
+                continue
+              }
+            } catch { /* stat failed — fall through to normal read */ }
           }
         }
 
