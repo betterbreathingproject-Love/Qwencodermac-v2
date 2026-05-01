@@ -1325,7 +1325,7 @@ async function sendAgentMode(prompt, opts = {}) {
   // Fast model instant acknowledgement — fire immediately, don't await the agent
   // Shows a short reply from the 0.8B while the 35B loads context and starts its loop
   // Skip when images are attached — the vision path uses the fast model directly
-  if (!sentImages || sentImages.length === 0) {
+  if (attachedImgs.length === 0) {
     window.app.assistChatReply(prompt, agentRole || 'general').then(reply => {
     if (!reply) return
     // Don't show the fast reply if the agent already finished (e.g. server was down)
