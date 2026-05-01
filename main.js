@@ -450,65 +450,9 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
       }
       messages.push({ role: 'user', content: userContent })
 
-      const body = JSON.stringify({ messages, max_tokens: 2048, stream: true })
-      const result = await new Promise((resolve, reject) => {
-        let fullText = ''
-        const req = http.request({
-          hostname: '127.0.0.1', port: 8090,
-          path: '/v1/chat/completions', method: 'POST',
-          timeout: 120000,
-          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-        }, (res) => {
-          let buf = ''
-          res.on('data', chunk => {
-            buf += chunk.toString()
-            const lines = buf.split('\n')
-            buf = lines.pop()
-            for (const line of lines) {
-              if (line.startsWith('data: [DONE]')) continue
-              if (line.startsWith('data: ')) {
-                try {
-                  const parsed = JSON.parse(line.slice(6))
-                  const delta = parsed.choices?.[0]?.delta?.content
-                  if (delta) {
-                    fullText += delta
-                    mainWindow?.webContents.send('qwen-event', { type: 'token', content: delta })
-                  }
-                } catch { /* skip */ }
-              }
-            }
-          })
-          res.on('end', () => resolve(fullText))
-          res.on('error', reject)
-        })
-        req.on('error', reject)
-        req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')) })
-        req.write(body)
-        req.end()
-      })
-      mainWindow?.webContents.send('qwen-event', { type: 'task_complete', summary: result })
-    } catch (err) {
-      mainWindow?.webContents.send('qwen-event', { type: 'task_complete', summary: `Error: ${err.message}` })
-    }
-    return { ok: true }
-  }
-
-  // ── Conversational image check: skip agent loop for "describe this" requests ─
-  // If images are attached and the prompt is conversational (not a coding task),
-  // describe the image via the fast model and return directly — no agent loop,
-  // no routing, no tools. Keeps the response fast and focused on the image.
-  if (images && images.length > 0) {
-    const ACTION_RE = /\b(fix|implement|update|change|make|add|remove|refactor|debug|why|how|build|create|write|edit|modify|improve|convert|migrate|deploy|test|check|find|show me the code|what('s| is) wrong|broken|error|issue|bug|crash)\b/i
-    if (!ACTION_RE.test(prompt)) {
-      console.log('[qwen-run] conversational image — skipping agent loop, using fast vision')
-      mainWindow?.webContents.send('qwen-event', { type: 'session-start', cwd: cwd || currentProject })
-      try {
-        const http = require('http')
-        const userContent = [{ type: 'text', text: prompt }]
-        for (const img of images) {
-          userContent.push({ type: 'image_url', image_url: { url: img.b64 } })
-        }
-        const body = JSON.stringify({ messages: [{ role: 'user', content: userContent }], max_tokens: 1024 })
+      if (hasImages) {
+        // Image requests: non-streaming — _route_vision_request returns plain JSON
+        const body = JSON.stringify({ messages, max_tokens: 1024 })
         const result = await new Promise((resolve, reject) => {
           const req = http.request({
             hostname: '127.0.0.1', port: 8090,
@@ -526,16 +470,54 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
           req.end()
         })
         const text = result.choices?.[0]?.message?.content || 'Could not analyze the image.'
-        // Stream word by word for responsive feel
         for (const word of text.split(' ')) {
           mainWindow?.webContents.send('qwen-event', { type: 'token', content: word + ' ' })
         }
         mainWindow?.webContents.send('qwen-event', { type: 'task_complete', summary: text })
-      } catch (err) {
-        mainWindow?.webContents.send('qwen-event', { type: 'task_complete', summary: `Vision failed: ${err.message}` })
+      } else {
+        // Text-only: use SSE streaming for real-time token display
+        const body = JSON.stringify({ messages, max_tokens: 2048, stream: true })
+        const result = await new Promise((resolve, reject) => {
+          let fullText = ''
+          const req = http.request({
+            hostname: '127.0.0.1', port: 8090,
+            path: '/v1/chat/completions', method: 'POST',
+            timeout: 120000,
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+          }, (res) => {
+            let buf = ''
+            res.on('data', chunk => {
+              buf += chunk.toString()
+              const lines = buf.split('\n')
+              buf = lines.pop()
+              for (const line of lines) {
+                if (line.startsWith('data: [DONE]')) continue
+                if (line.startsWith('data: ')) {
+                  try {
+                    const parsed = JSON.parse(line.slice(6))
+                    const delta = parsed.choices?.[0]?.delta?.content
+                    if (delta) {
+                      fullText += delta
+                      mainWindow?.webContents.send('qwen-event', { type: 'token', content: delta })
+                    }
+                  } catch { /* skip */ }
+                }
+              }
+            })
+            res.on('end', () => resolve(fullText))
+            res.on('error', reject)
+          })
+          req.on('error', reject)
+          req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')) })
+          req.write(body)
+          req.end()
+        })
+        mainWindow?.webContents.send('qwen-event', { type: 'task_complete', summary: result })
       }
-      return { ok: true }
+    } catch (err) {
+      mainWindow?.webContents.send('qwen-event', { type: 'task_complete', summary: `Error: ${err.message}` })
     }
+    return { ok: true }
   }
 
   // Use small model to pick the best agent role for this prompt (if no explicit role given)
