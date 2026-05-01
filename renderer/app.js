@@ -5800,6 +5800,7 @@ function renderCalibrationDashboard(profile) {
   if (empty) empty.style.display = 'none'
 
   const m = profile.metrics || {}
+  const currentMode = profile.mode || 'balanced'
 
   const benchmarkChips = [
     { label: 'Generation TPS', value: m.generation_tps != null ? m.generation_tps + ' tk/s' : '—', accent: true },
@@ -5817,12 +5818,27 @@ function renderCalibrationDashboard(profile) {
     { label: 'Pool Timeout',         value: (profile.poolTimeout / 1000).toFixed(0) + 's' },
   ]
 
+  // Memory pressure info
+  const pressurePct = profile.memoryPressure != null ? (profile.memoryPressure * 100).toFixed(0) + '%' : '—'
+  const scalePct = profile.memoryScale != null ? (profile.memoryScale * 100).toFixed(0) + '%' : '—'
+
   function chipHtml(chips) {
     return chips.map(c => {
       const cls = c.accent ? 'stat-chip accent' : 'stat-chip'
       return `<div class="${cls}"><span class="stat-label">${c.label}</span><span class="stat-val">${c.value}</span></div>`
     }).join('')
   }
+
+  const modeButtons = ['stable', 'balanced', 'heavy'].map(mode => {
+    const labels = { stable: '🛡 Stable', balanced: '⚖️ Balanced', heavy: '🔥 Heavy' }
+    const descs = {
+      stable: 'Conservative — respects memory pressure',
+      balanced: 'Default — halves memory pressure penalty',
+      heavy: 'Full context — ignores memory pressure',
+    }
+    const active = mode === currentMode ? 'background:var(--accent);color:#fff;' : 'opacity:0.6;'
+    return `<button class="btn-sm" style="font-size:11px;${active}" onclick="calibrationSetMode('${mode}')" title="${descs[mode]}">${labels[mode]}</button>`
+  }).join(' ')
 
   content.innerHTML = `
     <div class="calibration-section">
@@ -5834,9 +5850,21 @@ function renderCalibrationDashboard(profile) {
     <div class="calibration-section">
       <div class="calibration-section-title">Computed Settings</div>
       <div class="calibration-grid">${chipHtml(settingsChips)}</div>
+      <div style="margin-top:6px;font-size:10px;color:var(--muted)">
+        Memory pressure: ${pressurePct} · Context scale: ${scalePct}
+      </div>
+    </div>
+    <div class="calibration-section" style="margin-top:8px">
+      <div class="calibration-section-title">Performance Mode</div>
+      <div style="display:flex;gap:6px;margin-top:4px">${modeButtons}</div>
     </div>
     <div style="margin-top:10px">
       <button class="btn-sm" onclick="recalibrateNow()" style="font-size:11px;opacity:0.7">🔄 Recalibrate (force fresh benchmark)</button>
+    </div>
+    <div style="margin-top:8px;padding:8px 10px;background:rgba(255,200,50,0.08);border-radius:6px;font-size:10px;color:var(--muted);line-height:1.5">
+      💡 <strong>Tip:</strong> Close other heavy apps (Chrome, Xcode, Simulator) before recalibrating for higher limits.
+      The calibrator measures available memory and adjusts context budgets accordingly.
+      Switch to <strong>Heavy</strong> mode for maximum context when QwenCoder is your primary app.
     </div>
   `
 }
@@ -5856,6 +5884,21 @@ async function recalibrateNow() {
     showToast('Recalibration started — results will appear shortly', 'info')
   } catch (err) {
     showToast('Recalibration failed: ' + err.message, 'error')
+  }
+}
+
+async function calibrationSetMode(mode) {
+  if (!window.app.calibrationSetMode) return
+  try {
+    const profile = await window.app.calibrationSetMode(mode)
+    if (profile && !profile.error) {
+      renderCalibrationDashboard(profile)
+      showToast(`Switched to ${mode} mode`, 'info')
+    } else {
+      showToast(profile?.error || 'Failed to switch mode', 'error')
+    }
+  } catch (err) {
+    showToast('Mode switch failed: ' + err.message, 'error')
   }
 }
 

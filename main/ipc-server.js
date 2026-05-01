@@ -417,6 +417,10 @@ function getCalibrationProfile() {
   return _calibrationProfile
 }
 
+function setCalibrationProfile(profile) {
+  _calibrationProfile = profile
+}
+
 function isCalibrating() {
   return _calibrating
 }
@@ -702,4 +706,4 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
   })
 }
 
-module.exports = { register, startServer, stopServer, restartServer, waitForServer, killStaleServer, findPython, runCalibration, getCalibrationProfile, isCalibrating, clearCalibration, setLastLoadedModel }
+module.exports = { register, startServer, stopServer, restartServer, waitForServer, killStaleServer, findPython, runCalibration, getCalibrationProfile, setCalibrationProfile, isCalibrating, clearCalibration, setLastLoadedModel }

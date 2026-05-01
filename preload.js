@@ -170,6 +170,7 @@ contextBridge.exposeInMainWorld('app', {
   getCalibration:        ()   => ipcRenderer.invoke('get-calibration'),
   calibrationStatus:     ()   => ipcRenderer.invoke('calibration-status'),
   recalibrate:           (modelId) => ipcRenderer.invoke('recalibrate', modelId),
+  calibrationSetMode:    (mode)    => ipcRenderer.invoke('calibration-set-mode', mode),
   onCalibrationComplete: (cb) => ipcRenderer.on('calibration-complete', (_, d) => cb(d)),
   offCalibrationComplete:()   => ipcRenderer.removeAllListeners('calibration-complete'),
   onCalibrationStatus:   (cb) => ipcRenderer.on('calibration-status', (_, d) => cb(d)),

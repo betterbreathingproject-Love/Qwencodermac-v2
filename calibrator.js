@@ -3,11 +3,29 @@
 const { CONTEXT_WINDOW, MAX_INPUT_TOKENS, COMPACTION_THRESHOLD, CALIBRATOR_FLOOR } = require('./config')
 
 /**
+ * Performance modes — trade memory safety for larger context budgets.
+ *
+ * stable:   Conservative. Full memory pressure scaling. Best for long sessions
+ *           or when running other heavy apps alongside.
+ * balanced: Default. Reduces memory pressure penalty by 50%. Good for medium
+ *           projects with moderate app usage.
+ * heavy:    Aggressive. Ignores memory pressure entirely — uses full context
+ *           window. Risk of OOM on very long sessions. Best when QwenCoder
+ *           is the primary app running.
+ */
+const MODES = {
+  stable:   { label: 'Stable',   pressureWeight: 1.0, description: 'Conservative — respects memory pressure fully' },
+  balanced: { label: 'Balanced', pressureWeight: 0.5, description: 'Default — halves memory pressure penalty' },
+  heavy:    { label: 'Heavy',    pressureWeight: 0.0, description: 'Aggressive — ignores memory pressure, full context' },
+}
+
+/**
  * Compute a Calibration_Profile from benchmark metrics.
  * @param {object} metrics - { generation_tps, prompt_tps, peak_memory_gb, available_memory_gb, context_window }
+ * @param {string} [mode='balanced'] - Performance mode: 'stable', 'balanced', or 'heavy'
  * @returns {object} Calibration_Profile
  */
-function computeProfile(metrics) {
+function computeProfile(metrics, mode = 'balanced') {
   const { generation_tps, prompt_tps, peak_memory_gb, available_memory_gb, context_window } = metrics
 
   const roundedMetrics = {
@@ -20,19 +38,19 @@ function computeProfile(metrics) {
 
   // Memory pressure factor: smooth cosine curve that maximizes token budget
   // at low pressure and gradually reduces it as memory fills up.
-  // pressure = peak / (peak + available), ranges 0→1
-  // scale uses a cosine ease: full capacity up to ~30% pressure, then a
-  // smooth S-curve down to 0.5 at 100% pressure. This extracts more
-  // performance from available memory compared to a linear ramp.
   const memoryPressure = available_memory_gb > 0
     ? Math.min(1, peak_memory_gb / (peak_memory_gb + available_memory_gb))
     : 0.5
   // Cosine interpolation from 1.0 → 0.5 over the 0→1 pressure range
-  const memoryScale = 0.5 + 0.5 * Math.cos(memoryPressure * Math.PI)
+  const rawMemoryScale = 0.5 + 0.5 * Math.cos(memoryPressure * Math.PI)
+
+  // Apply mode: pressureWeight controls how much memory pressure affects the budget.
+  // weight=1.0 (stable) uses full pressure scaling, weight=0.0 (heavy) ignores it.
+  const modeConfig = MODES[mode] || MODES.balanced
+  const memoryScale = 1.0 - modeConfig.pressureWeight * (1.0 - rawMemoryScale)
 
   const rawTimeout = (context_window / generation_tps) * 1000 + 30000
   const timeoutPerTurn = Math.max(60000, Math.round(rawTimeout))
-  // Use configured context budget regardless of model-reported context_window
   const effectiveContext = Math.max(context_window, CONTEXT_WINDOW)
   const rawMaxInput = Math.round(effectiveContext * 0.85 * memoryScale)
   const maxInputTokens = Math.min(200000, Math.max(CALIBRATOR_FLOOR, rawMaxInput))
@@ -46,6 +64,9 @@ function computeProfile(metrics) {
     maxInputTokens,
     compactionThreshold,
     poolTimeout,
+    mode,
+    memoryPressure: round2(memoryPressure),
+    memoryScale: round2(memoryScale),
     metrics: roundedMetrics,
   }
 }
@@ -67,4 +88,4 @@ function defaultProfile() {
 function round2(n) { return Math.round(n * 100) / 100 }
 function round3(n) { return Math.round(n * 1000) / 1000 }
 
-module.exports = { computeProfile, defaultProfile, round2, round3 }
+module.exports = { computeProfile, defaultProfile, round2, round3, MODES }

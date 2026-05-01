@@ -303,7 +303,7 @@ ipcProjects.register(ipcMain, ctx)
 ipcTasks.register(ipcMain, ctx)
 ipcWatcher.register(ipcMain, ctx)
 ipcLsp.register(ipcMain, ctx)
-ipcCalibration.register(ipcMain, { getCalibrationProfile: ipcServer.getCalibrationProfile, isCalibrating: ipcServer.isCalibrating })
+ipcCalibration.register(ipcMain, { getCalibrationProfile: ipcServer.getCalibrationProfile, setCalibrationProfile: ipcServer.setCalibrationProfile, isCalibrating: ipcServer.isCalibrating })
 
 // ── Setup: launch main window from setup wizard ───────────────────────────────
 ipcMain.handle('setup-launch-main', async () => {
