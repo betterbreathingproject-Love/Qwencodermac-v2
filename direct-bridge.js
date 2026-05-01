@@ -2338,22 +2338,40 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       // Retrieve relevant past context using the current prompt as the query.
       // This is especially valuable on session resume when conversation history
       // has been trimmed — the agent gets relevant memories even without full history.
+      // Fetch more candidates than needed, then filter by relevance score and
+      // cap by token budget so high-relevance sessions get rich context while
+      // cold starts with no good matches waste minimal tokens.
       if (memoryClient) {
         try {
           const recallMode = detectRecallMode(prompt)
           const memResult = await memoryClient.retrieve(prompt, {
             mode: recallMode,
             agentName: this._agentRole || 'main-agent',
-            topK: 8,
+            topK: 20,
             projectId: path.basename(workDir),
           })
           if (memResult && memResult.results && memResult.results.length > 0) {
-            const memLines = memResult.results.map(r => `[${r.source}] ${r.content}`).join('\n')
-            messages.push({
-              role: 'system',
-              content: `[Memory Context — from previous sessions]\n${memLines}`,
-            })
-            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Memory: retrieved ${memResult.results.length} relevant items from past sessions` })
+            // Filter by relevance score — drop items below 0.3 threshold
+            const SCORE_THRESHOLD = 0.3
+            const TOKEN_BUDGET = 2000 // ~8000 chars of memory context
+            const charBudget = TOKEN_BUDGET * 4
+            const relevant = memResult.results.filter(r => (r.score || 0) >= SCORE_THRESHOLD)
+            // Cap by token budget
+            let totalChars = 0
+            const capped = []
+            for (const r of relevant) {
+              const line = `[${r.source}] ${r.content}`
+              if (totalChars + line.length > charBudget && capped.length > 0) break
+              capped.push(line)
+              totalChars += line.length
+            }
+            if (capped.length > 0) {
+              messages.push({
+                role: 'system',
+                content: `[Memory Context — from previous sessions]\n${capped.join('\n')}`,
+              })
+              this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Memory: retrieved ${capped.length} relevant items (of ${memResult.results.length} candidates, score >= ${SCORE_THRESHOLD})` })
+            }
           }
         } catch (_) { /* memory unavailable — proceed without */ }
 
