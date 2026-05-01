@@ -1901,11 +1901,16 @@ class DirectBridge {
       let isChat = false
       const hasImages = images && images.length > 0
 
-      // Fast classification via the small model — takes ~200ms
-      if (assistClient) {
+      if (hasImages) {
+        // Images attached — always chat mode (describe the image).
+        // If the user wants the agent to act on the image, the normal agent loop
+        // handles it via the imageContext injection below.
+        isChat = true
+      } else if (assistClient) {
+        // Text-only: use fast model to classify intent (~200ms)
         try {
           const classifyResult = await assistClient._assistRequest('route_task', {
-            task: `Classify this user message as either "chat" or "task". Reply with ONLY the word "chat" or "task".\n- "chat" = the user wants to discuss, ask questions, brainstorm, get explanations, or talk about an image\n- "task" = the user wants you to write code, fix bugs, create files, run commands, or make changes\n\nUser message: "${prompt.slice(0, 300)}"`
+            task: `Classify this user message as either "chat" or "task". Reply with ONLY the word "chat" or "task".\n- "chat" = the user wants to discuss, ask questions, brainstorm, get explanations\n- "task" = the user wants you to write code, fix bugs, create files, run commands, or make changes\n\nUser message: "${prompt.slice(0, 300)}"`
           }, 5000)
           const routeResult = classifyResult?.result_data?.agent_type || classifyResult?.result || ''
           isChat = routeResult.toLowerCase().includes('chat') || routeResult.toLowerCase().includes('general')
