@@ -47,6 +47,9 @@ contextBridge.exposeInMainWorld('app', {
   onQwenEvent:    (cb)      => ipcRenderer.on('qwen-event', (_, d) => cb(d)),
   offQwenEvents:  ()        => ipcRenderer.removeAllListeners('qwen-event'),
 
+  // ask_user — desktop input channel
+  askUserReply:   (reply)   => ipcRenderer.invoke('ask-user-reply', reply),
+
   // steering docs
   steeringList:   ()        => ipcRenderer.invoke('steering-list'),
   steeringCreate: (p)       => ipcRenderer.invoke('steering-create', p),

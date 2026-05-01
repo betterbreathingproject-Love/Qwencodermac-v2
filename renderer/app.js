@@ -1522,6 +1522,14 @@ async function sendAgentMode(prompt, opts = {}) {
         }
         break
       }
+      case 'ask-user': {
+        // Agent is asking the user a question — render a question card with
+        // clickable option chips and a custom "Other…" input.
+        renderAskUserCard(ev.question || '', ev.options || [], respId)
+        stopPromptProgress()
+        setActivity('💬 Waiting for your reply… <span class="activity-dot">●</span>')
+        break
+      }
       case 'session-start':
         setActivity('🤖 Agent running in ' + esc(ev.cwd||'.') + ' <span class="activity-dot">●</span>')
         startPromptProgress()
@@ -2552,6 +2560,104 @@ function appendMsg(role, text) {
   if(role==='user') out.insertAdjacentHTML('beforeend', `<div class="msg-user"><div class="msg-user-label">You</div>${text}</div>`)
   else if(role==='system') out.insertAdjacentHTML('beforeend', `<div class="msg-system">${text}</div>`)
   scrollOutput()
+}
+
+// ── ask_user question card ────────────────────────────────────────────────────
+// Renders a question from the agent with clickable option chips + custom input.
+// Parses numbered/bulleted lists out of the question text into option chips.
+function renderAskUserCard(question, options, respId) {
+  const out = document.getElementById('agentOutput')
+  const cardId = 'ask-user-' + Date.now()
+
+  // Parse options out of the question text if none were provided explicitly.
+  // Matches lines like: "1. Option text", "- Option text", "* Option text"
+  let parsedOptions = options && options.length ? [...options] : []
+  let cleanQuestion = question
+  if (!parsedOptions.length) {
+    const lines = question.split('\n')
+    const optionLines = []
+    const nonOptionLines = []
+    for (const line of lines) {
+      const m = line.match(/^\s*(?:\d+[\.\)]\s+|\*\s+|-\s+)(.+)$/)
+      if (m) optionLines.push(m[1].trim())
+      else nonOptionLines.push(line)
+    }
+    if (optionLines.length >= 2) {
+      parsedOptions = optionLines
+      cleanQuestion = nonOptionLines.join('\n').trim()
+    }
+  }
+
+  // Always add "Other (custom)…" as the last option
+  const hasOther = parsedOptions.some(o => /other|custom/i.test(o))
+  if (!hasOther) parsedOptions.push('Other…')
+
+  const chipsHtml = parsedOptions.map((opt, i) =>
+    `<button class="ask-user-chip" onclick="window._askUserPick('${cardId}', ${JSON.stringify(opt)})">${esc(opt)}</button>`
+  ).join('')
+
+  const html = `<div class="ask-user-card" id="${cardId}">
+    <div class="ask-user-header">
+      <span class="ask-user-icon">💬</span>
+      <span class="ask-user-label">Agent is asking</span>
+    </div>
+    <div class="ask-user-question">${esc(cleanQuestion)}</div>
+    ${parsedOptions.length > 1 ? `<div class="ask-user-chips">${chipsHtml}</div>` : ''}
+    <div class="ask-user-custom" id="${cardId}-custom" style="display:none">
+      <textarea class="ask-user-textarea" id="${cardId}-input" placeholder="Type your answer…" rows="2"></textarea>
+      <button class="ask-user-send" onclick="window._askUserSend('${cardId}')">Send ↵</button>
+    </div>
+    ${parsedOptions.length <= 1 ? `<div class="ask-user-chips"><button class="ask-user-chip ask-user-chip-reply" onclick="window._askUserShowCustom('${cardId}')">Reply…</button></div>` : ''}
+  </div>`
+
+  out.insertAdjacentHTML('beforeend', html)
+  scrollOutput()
+
+  // Set up keyboard shortcut for the textarea
+  setTimeout(() => {
+    const ta = document.getElementById(cardId + '-input')
+    if (ta) {
+      ta.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); window._askUserSend(cardId) }
+      })
+    }
+  }, 50)
+}
+
+window._askUserShowCustom = function(cardId) {
+  const customEl = document.getElementById(cardId + '-custom')
+  if (customEl) {
+    customEl.style.display = 'flex'
+    const ta = document.getElementById(cardId + '-input')
+    if (ta) ta.focus()
+  }
+}
+
+window._askUserPick = function(cardId, option) {
+  if (option === 'Other…') {
+    window._askUserShowCustom(cardId)
+    return
+  }
+  _submitAskUserReply(cardId, option)
+}
+
+window._askUserSend = function(cardId) {
+  const ta = document.getElementById(cardId + '-input')
+  const reply = ta ? ta.value.trim() : ''
+  if (!reply) return
+  _submitAskUserReply(cardId, reply)
+}
+
+function _submitAskUserReply(cardId, reply) {
+  const card = document.getElementById(cardId)
+  if (!card) return
+  // Replace card with a compact "you replied" bubble
+  card.outerHTML = `<div class="msg-user ask-user-replied">
+    <div class="msg-user-label">You</div>
+    ${esc(reply)}
+  </div>`
+  scrollOutput()
+  window.app.askUserReply(reply)
 }
 
 function scrollOutput() {

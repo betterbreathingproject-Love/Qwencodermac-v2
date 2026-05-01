@@ -216,6 +216,50 @@ class WorkerSink {
 }
 
 /**
+ * WindowInputRequester — sends ask_user questions to the Electron renderer window
+ * and waits for the user's reply via IPC. Used for desktop (non-Telegram) sessions.
+ *
+ * The sink sends a 'qwen-event' with type 'ask-user' to the renderer.
+ * The renderer shows a question UI and calls back via 'ask-user-reply' IPC.
+ * main.js resolves the pending promise by calling resolveAskUser(reply).
+ */
+class WindowInputRequester {
+  constructor(sink) {
+    this._sink = sink
+    this._pending = false
+    this._resolve = null
+  }
+
+  async ask(question, options = []) {
+    this._pending = true
+    return new Promise((resolve) => {
+      this._resolve = resolve
+      this._sink.send('qwen-event', { type: 'ask-user', question, options })
+      // 10-minute timeout — agent continues with a fallback message
+      this._timeout = setTimeout(() => {
+        this._pending = false
+        this._resolve = null
+        resolve('(No response received — continuing)')
+      }, 10 * 60 * 1000)
+    })
+  }
+
+  /** Called by main.js when the user submits a reply via IPC. */
+  resolveReply(reply) {
+    if (!this._resolve) return
+    clearTimeout(this._timeout)
+    this._pending = false
+    const fn = this._resolve
+    this._resolve = null
+    fn(reply)
+  }
+
+  hasPendingRequest() {
+    return this._pending
+  }
+}
+
+/**
  * InputRequester — sends questions to a Telegram chat and waits for the user's reply.
  * Used by the ask_user tool during Telegram-initiated jobs.
  */
@@ -476,11 +520,16 @@ const TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'ask_user',
-      description: 'Ask the user a question and wait for their reply. Use when you need clarification or input.',
+      description: 'Ask the user a question and wait for their reply. Use when you need clarification or input. Provide suggested options when the answer is likely one of a few choices — the user can click them or type a custom reply.',
       parameters: {
         type: 'object',
         properties: {
           question: { type: 'string', description: 'The question to ask the user' },
+          options: {
+            type: 'array',
+            description: 'Optional list of suggested answer choices the user can click. Always include an "Other…" option if you provide choices.',
+            items: { type: 'string' },
+          },
         },
         required: ['question'],
       },
@@ -1773,7 +1822,7 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
       case 'ask_user': {
         if (!inputRequester) return { result: '(No input channel available — proceeding without user input)' }
         try {
-          const reply = await inputRequester.ask(args.question)
+          const reply = await inputRequester.ask(args.question, args.options || [])
           return { result: reply }
         } catch (err) {
           return { result: `(User input timed out: ${err.message})` }
@@ -1849,10 +1898,17 @@ class DirectBridge {
     this._routeTask = opts.routeTask || null
     // Queue of user messages to inject at the next turn boundary
     this._pendingInjections = []
+    // WindowInputRequester for desktop ask_user — set via setInputRequester()
+    this._inputRequester = opts.inputRequester || null
   }
 
   setLspManager(lspManager) {
     this._lspManager = lspManager
+  }
+
+  /** Attach a WindowInputRequester so ask_user works in the desktop app. */
+  setInputRequester(requester) {
+    this._inputRequester = requester
   }
 
   /**
@@ -3114,7 +3170,7 @@ class DirectBridge {
         }
 
         // Execute
-        const result = await executeTool(fnName, fnArgs, cwd, this._browserInstance, this._lspManager, undefined, { send: this.send.bind(this), _sessionId })
+        const result = await executeTool(fnName, fnArgs, cwd, this._browserInstance, this._lspManager, this._inputRequester, { send: this.send.bind(this), _sessionId })
         const isError = !!result.error
         let content = result.error || result.result
 
@@ -4141,4 +4197,4 @@ ${autoEdit ? '\nAuto-edit mode: proceed with all changes without asking for conf
   }
 }
 
-module.exports = { DirectBridge, WindowSink, CallbackSink, WorkerSink, InputRequester, executeTool, getToolDefs, LSP_TOOL_SETS, LSP_TOOL_DEFS, buildProjectContext, detectEntryPoints, formatSymbolOutline, detectContentType, undoList, undoApply, undoClear, undoRecord }
+module.exports = { DirectBridge, WindowSink, CallbackSink, WorkerSink, InputRequester, WindowInputRequester, executeTool, getToolDefs, LSP_TOOL_SETS, LSP_TOOL_DEFS, buildProjectContext, detectEntryPoints, formatSymbolOutline, detectContentType, undoList, undoApply, undoClear, undoRecord }

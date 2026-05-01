@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, nativeTheme } = require('electron')
 const path = require('path')
 const os = require('os')
 const fs = require('node:fs')
-const { DirectBridge, WindowSink } = require('./direct-bridge')
+const { DirectBridge, WindowSink, WindowInputRequester } = require('./direct-bridge')
 const { AgentPool, CATEGORY_KEYWORDS } = require('./agent-pool')
 const { loadSteeringDocs, formatSteeringForPrompt } = require('./steering-loader')
 
@@ -650,6 +650,17 @@ function createWindow() {
       }
       return null
     },
+  })
+
+  // Attach a WindowInputRequester so ask_user works in the desktop app
+  const _windowInputRequester = new WindowInputRequester(new WindowSink(mainWindow))
+  qwenBridge.setInputRequester(_windowInputRequester)
+
+  // IPC: user submits a reply to an ask_user question
+  ipcMain.removeHandler('ask-user-reply')
+  ipcMain.handle('ask-user-reply', (_, reply) => {
+    _windowInputRequester.resolveReply(reply || '')
+    return { ok: true }
   })
 
   // Start LSP manager asynchronously — does not block window creation
