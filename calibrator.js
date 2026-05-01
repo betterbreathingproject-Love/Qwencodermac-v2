@@ -51,9 +51,17 @@ function computeProfile(metrics, mode = 'balanced') {
 
   const rawTimeout = (context_window / generation_tps) * 1000 + 30000
   const timeoutPerTurn = Math.max(60000, Math.round(rawTimeout))
-  const effectiveContext = Math.max(context_window, CONTEXT_WINDOW)
+  // Use the model's actual context window — it's the hard limit that matters.
+  // CONTEXT_WINDOW from config.js is a default; the model's max_position_embeddings
+  // is the real ceiling. Using Math.max here previously caused compaction to never
+  // fire when the model's context (32k) was smaller than the config default (131k).
+  const effectiveContext = context_window || CONTEXT_WINDOW
+
+  // Floor must also respect the model's real context — can't allow more tokens
+  // than the model supports, even as a minimum.
+  const effectiveFloor = Math.min(CALIBRATOR_FLOOR, Math.round(effectiveContext * 0.70))
   const rawMaxInput = Math.round(effectiveContext * 0.85 * memoryScale)
-  const maxInputTokens = Math.min(200000, Math.max(CALIBRATOR_FLOOR, rawMaxInput))
+  const maxInputTokens = Math.min(200000, Math.max(effectiveFloor, rawMaxInput))
   const compactionThreshold = Math.round(maxInputTokens * 0.70)
   const maxTurns = 500
   const poolTimeout = Math.max(120000, timeoutPerTurn * 3)

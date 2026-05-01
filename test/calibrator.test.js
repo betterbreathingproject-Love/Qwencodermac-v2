@@ -27,10 +27,12 @@ describe('calibrator', () => {
       // timeoutPerTurn = max(60000, round((32768 / 40) * 1000 + 30000))
       assert.equal(p.timeoutPerTurn, 849200)
 
-      // effectiveContext = max(32768, CONTEXT_WINDOW) = 84000
-      // maxInputTokens = clamp(round(84000 * 0.85 * scale), CALIBRATOR_FLOOR, 200000)
-      const effectiveContext = Math.max(32768, config.CONTEXT_WINDOW)
-      const expectedMaxInput = Math.min(200000, Math.max(config.CALIBRATOR_FLOOR, Math.round(effectiveContext * 0.85 * scale)))
+      // effectiveContext = context_window (model's real limit) = 32768
+      // effectiveFloor = min(CALIBRATOR_FLOOR, round(32768 * 0.70)) = 22938
+      // maxInputTokens = clamp(round(32768 * 0.85 * scale), effectiveFloor, 200000)
+      const effectiveContext = 32768
+      const effectiveFloor = Math.min(config.CALIBRATOR_FLOOR, Math.round(effectiveContext * 0.70))
+      const expectedMaxInput = Math.min(200000, Math.max(effectiveFloor, Math.round(effectiveContext * 0.85 * scale)))
       assert.equal(p.maxInputTokens, expectedMaxInput)
 
       // compactionThreshold = round(maxInputTokens * 0.70)
@@ -109,15 +111,15 @@ describe('calibrator', () => {
   })
 
   describe('edge case: very small context window (100)', () => {
-    it('maxInputTokens hits calibrator floor', () => {
-      // effectiveContext = max(100, 84000) = 84000
-      // With low pressure (peak=2, avail=4), scale ≈ 0.75
-      // rawMaxInput = 84000 * 0.85 * 0.75 ≈ 53550 > floor
+    it('maxInputTokens hits effective floor', () => {
+      // effectiveContext = 100, effectiveFloor = min(CALIBRATOR_FLOOR, round(100 * 0.70)) = 70
+      // rawMaxInput = 100 * 0.85 * scale ≈ 74 > 70 → uses rawMaxInput
       const p = computeProfile({
         generation_tps: 50, prompt_tps: 100,
         peak_memory_gb: 2, available_memory_gb: 4, context_window: 100,
       })
-      assert.ok(p.maxInputTokens >= config.CALIBRATOR_FLOOR, 'Should be at or above floor')
+      const effectiveFloor = Math.min(config.CALIBRATOR_FLOOR, Math.round(100 * 0.70))
+      assert.ok(p.maxInputTokens >= effectiveFloor, 'Should be at or above effective floor')
       assert.equal(p.compactionThreshold, Math.round(p.maxInputTokens * 0.70))
     })
   })
@@ -128,9 +130,9 @@ describe('calibrator', () => {
         generation_tps: 50, prompt_tps: 100,
         peak_memory_gb: 4, available_memory_gb: 12, context_window: 32768,
       })
-      // effectiveContext = 84000, scale ≈ 0.85 at low pressure
-      // rawMaxInput ≈ 84000 * 0.85 * 0.85 ≈ 60690
-      assert.ok(p.maxInputTokens >= config.CALIBRATOR_FLOOR, 'Should be well above floor at low pressure')
+      // effectiveFloor = min(CALIBRATOR_FLOOR, round(32768 * 0.70)) = 22938
+      const effectiveFloor = Math.min(config.CALIBRATOR_FLOOR, Math.round(32768 * 0.70))
+      assert.ok(p.maxInputTokens >= effectiveFloor, 'Should be at or above effective floor at low pressure')
     })
 
     it('moderate reduction at medium pressure', () => {
@@ -140,34 +142,36 @@ describe('calibrator', () => {
         generation_tps: 50, prompt_tps: 100,
         peak_memory_gb: 16, available_memory_gb: 16, context_window: 32768,
       })
-      assert.ok(p.maxInputTokens >= config.CALIBRATOR_FLOOR, 'Should be at or above floor')
-      // At 50% pressure in balanced mode, should still be reduced from max
-      const maxPossible = Math.round(config.CONTEXT_WINDOW * 0.85 * 1.0)
-      assert.ok(p.maxInputTokens < maxPossible, 'Should be reduced at 50% pressure')
+      const effectiveFloor = Math.min(config.CALIBRATOR_FLOOR, Math.round(32768 * 0.70))
+      assert.ok(p.maxInputTokens >= effectiveFloor, 'Should be at or above effective floor')
+      // At 50% pressure in balanced mode, should be reduced from low-pressure max
+      const pLow = computeProfile({
+        generation_tps: 50, prompt_tps: 100,
+        peak_memory_gb: 4, available_memory_gb: 12, context_window: 32768,
+      })
+      assert.ok(p.maxInputTokens <= pLow.maxInputTokens, 'Should be at or below low-pressure value')
     })
 
     it('scales down significantly when memory pressure is high', () => {
       // peak=30, available=6 → pressure ≈ 0.833 → rawScale ≈ 0.067
       // balanced mode: scale = 1.0 - 0.5 * (1.0 - 0.067) ≈ 0.534
-      // rawMaxInput = 131072 * 0.85 * 0.534 ≈ 59437 > floor
+      // rawMaxInput = 32768 * 0.85 * 0.534 ≈ 14867 → hits floor
       const p = computeProfile({
         generation_tps: 50, prompt_tps: 100,
         peak_memory_gb: 30, available_memory_gb: 6, context_window: 32768,
       })
-      assert.ok(p.maxInputTokens >= config.CALIBRATOR_FLOOR, 'Should be at or above floor at high pressure')
-      // Should be significantly reduced from max
-      const maxPossible = Math.round(config.CONTEXT_WINDOW * 0.85 * 1.0)
-      assert.ok(p.maxInputTokens < maxPossible * 0.7, 'Should be well below max at high pressure')
+      const effectiveFloor = Math.min(config.CALIBRATOR_FLOOR, Math.round(32768 * 0.70))
+      assert.equal(p.maxInputTokens, effectiveFloor, 'Should hit effective floor at high pressure')
     })
 
     it('hits minimum floor when memory is nearly exhausted', () => {
-      // In balanced mode, even extreme pressure only halves the penalty,
-      // so we need stable mode to actually hit the floor
+      // In stable mode with extreme pressure, should hit the effective floor
       const p = computeProfile({
         generation_tps: 50, prompt_tps: 100,
         peak_memory_gb: 100, available_memory_gb: 0.01, context_window: 32768,
       }, 'stable')
-      assert.equal(p.maxInputTokens, config.CALIBRATOR_FLOOR, 'Should hit floor at extreme pressure in stable mode')
+      const effectiveFloor = Math.min(config.CALIBRATOR_FLOOR, Math.round(32768 * 0.70))
+      assert.equal(p.maxInputTokens, effectiveFloor, 'Should hit effective floor at extreme pressure in stable mode')
     })
 
     it('compactionThreshold scales with maxInputTokens under memory pressure', () => {
@@ -179,8 +183,8 @@ describe('calibrator', () => {
         generation_tps: 50, prompt_tps: 100,
         peak_memory_gb: 30, available_memory_gb: 6, context_window: 32768,
       })
-      assert.ok(pHigh.compactionThreshold < pLow.compactionThreshold,
-        'Compaction threshold should be lower under high pressure')
+      assert.ok(pHigh.compactionThreshold <= pLow.compactionThreshold,
+        'Compaction threshold should be lower or equal under high pressure')
       assert.equal(pHigh.compactionThreshold, Math.round(pHigh.maxInputTokens * 0.70))
       assert.equal(pLow.compactionThreshold, Math.round(pLow.maxInputTokens * 0.70))
     })
@@ -195,8 +199,8 @@ describe('calibrator', () => {
         peak_memory_gb: 11, available_memory_gb: 10, context_window: 32768,
       })
       const diff = Math.abs(base.maxInputTokens - slight.maxInputTokens)
-      // With 84K context, adjacent levels can differ by up to ~3.5K tokens
-      assert.ok(diff < 3500, `Adjacent pressure levels should differ by <3500 tokens, got ${diff}`)
+      // With 32K context, adjacent levels should differ by <1500 tokens
+      assert.ok(diff < 1500, `Adjacent pressure levels should differ by <1500 tokens, got ${diff}`)
     })
   })
 
