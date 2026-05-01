@@ -763,6 +763,22 @@ function getToolDefs(lspManager, agentRole, allowedTools) {
   // Filter base tools when an explicit allowedTools list is provided
   if (allowedTools && allowedTools.length > 0) {
     tools = tools.filter(t => allowedTools.includes(t.function.name))
+  } else {
+    // Default filtering: exclude heavy tool sets that bloat the prompt (~15K tokens)
+    // unless the agent role specifically needs them.
+    // Browser tools are only included for tester role.
+    // Xcode tools are only included for tester/implementation roles.
+    const BROWSER_NAMES = new Set(['browser_navigate', 'browser_screenshot', 'browser_click',
+      'browser_type', 'browser_get_text', 'browser_get_html', 'browser_evaluate',
+      'browser_wait_for', 'browser_select_option', 'browser_close'])
+    const needsBrowser = agentRole === 'tester'
+    const needsXcode = agentRole === 'tester' || agentRole === 'implementation'
+    tools = tools.filter(t => {
+      const name = t.function.name
+      if (BROWSER_NAMES.has(name) && !needsBrowser) return false
+      if (name.startsWith('xcode_') && !needsXcode) return false
+      return true
+    })
   }
   if (lspManager?.getStatus().status === 'ready') {
     const toolNames = LSP_TOOL_SETS[agentRole] || []
