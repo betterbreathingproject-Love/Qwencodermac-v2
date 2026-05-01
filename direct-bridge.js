@@ -2542,6 +2542,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
     const effectiveCompactionThreshold = profile?.compactionThreshold ?? config.COMPACTION_THRESHOLD
 
     let consecutiveErrors = 0
+    let consecutiveReadsWithoutWrite = 0  // Track read-only loops
     let lastTextResponses = []  // Track recent text-only responses for repetition detection
     let consecutivePlanningNudges = 0  // Track how many times we've nudged for planning-only responses
     let _lastTodos = null  // Track the latest todo list for completion checking
@@ -4154,6 +4155,26 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
 
         if (isError) consecutiveErrors++
         else consecutiveErrors = 0
+
+        // Track read-only loops: if the model keeps reading without writing,
+        // inject a system nudge to force it to start editing
+        const READ_TOOLS = new Set(['read_file', 'read_files', 'list_dir', 'search_files'])
+        const WRITE_TOOLS = new Set(['write_file', 'edit_file', 'edit_files'])
+        if (READ_TOOLS.has(fnName) && !isError) {
+          consecutiveReadsWithoutWrite++
+        } else if (WRITE_TOOLS.has(fnName) && !isError) {
+          consecutiveReadsWithoutWrite = 0
+        }
+        if (consecutiveReadsWithoutWrite >= 6) {
+          messages.push({
+            role: 'system',
+            content: `STOP READING. You have made ${consecutiveReadsWithoutWrite} consecutive read/search calls without writing any code. ` +
+              `You have enough context. Start making changes NOW using write_file or edit_file. ` +
+              `If you are unsure what to change, pick the most important file and start editing it.`,
+          })
+          this.send('qwen-event', { type: 'system', subtype: 'warning', data: `⚠️ Read-only loop detected (${consecutiveReadsWithoutWrite} reads, 0 writes) — nudging agent to start editing` })
+          consecutiveReadsWithoutWrite = 0
+        }
 
         // Check if the model called task_complete — end the session
         if (fnName === 'task_complete' && !isError) {
