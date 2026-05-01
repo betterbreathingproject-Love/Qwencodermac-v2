@@ -427,7 +427,9 @@ ipcMain.handle('qwen-run', async (_, { prompt, cwd, permissionMode, agentRole, m
       resolvedRole = keywordName
       routedByKeyword = true
       console.log('[qwen-run] keyword routing:', resolvedRole)
-    } else if (_memoryClientForRouting?.assistRouteTask) {
+    } else if (_memoryClientForRouting?.assistRouteTask && !images) {
+      // Skip small model routing when images are attached — direct-bridge.js
+      // handles intent detection and the fast model call would block Metal
       // Ambiguous — fall back to small model
       try {
         const routed = await _memoryClientForRouting.assistRouteTask(prompt.slice(0, 200))
