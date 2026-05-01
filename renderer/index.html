@@ -40,8 +40,7 @@
   <div class="app-layout">
     <!-- activity bar -->
     <nav class="activity-bar">
-      <button class="ab-btn active" data-panel="models" onclick="showPanel('models',this)" title="Models">🤖</button>
-      <button class="ab-btn" data-panel="files" onclick="showPanel('files',this)" title="Files">📁</button>
+      <button class="ab-btn active" data-panel="files" onclick="showPanel('files',this)" title="Files">📁</button>
       <button class="ab-btn" data-panel="git" onclick="showPanel('git',this)" title="Git">🔀</button>
       <button class="ab-btn" data-panel="tasks" onclick="showPanel('tasks',this)" title="Tasks">📋</button>
       <button class="ab-btn" data-panel="specs" onclick="showPanel('specs',this)" title="Specs">📐</button>
@@ -51,21 +50,8 @@
 
     <!-- sidebar -->
     <aside class="sidebar" id="sidebar">
-      <!-- models panel -->
-      <div class="side-panel active" id="sp-models">
-        <div class="sp-header">
-          <div class="section-label">LOADED MODEL</div>
-          <div id="loadedModelName" class="loaded-model-name">None</div>
-        </div>
-        <div class="section-label" style="padding:0 12px;margin-bottom:4px">MODELS</div>
-        <div class="model-list" id="modelList"><div class="model-empty">Waiting for server...</div></div>
-        <div class="sp-footer">
-          <button class="btn-primary" id="loadBtn" disabled onclick="loadSelected()"><span id="loadBtnText">Select a model</span></button>
-        </div>
-      </div>
-
-      <!-- files panel -->
-      <div class="side-panel" id="sp-files">
+      <!-- files panel (default) -->
+      <div class="side-panel active" id="sp-files">
         <div class="sp-header" style="display:flex;flex-direction:column;gap:6px">
           <div style="display:flex;align-items:center;gap:6px">
             <span class="section-label" style="flex:1">PROJECT</span>
@@ -692,7 +678,15 @@
             <span class="model-switcher-arrow">▾</span>
           </div>
           <div class="model-switcher-dropdown" id="modelSwitcherDropdown" style="display:none">
+            <div class="ms-section-label">Primary Model</div>
             <div class="model-switcher-list" id="modelSwitcherList"></div>
+            <div class="ms-divider"></div>
+            <div class="ms-section-label">⚡ Fast Vision Assistant</div>
+            <div class="ms-fast-section" id="msFastSection">
+              <div class="ms-fast-status" id="msFastStatus">
+                <span style="color:var(--muted)">Not loaded</span>
+              </div>
+            </div>
           </div>
         </div>
 

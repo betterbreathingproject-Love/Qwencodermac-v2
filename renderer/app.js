@@ -283,17 +283,21 @@ function setServerStatus(r) {
 // ── models ────────────────────────────────────────────────────────────────────
 function renderModels(models) {
   allModels = models
-  // Update sidebar model list
+  // Update sidebar model list (if present)
   const l = document.getElementById('modelList')
-  if(!models.length) { l.innerHTML='<div class="model-empty">No models</div>'; return }
-  l.innerHTML = models.map(m => {
-    const name = _formatModelName(m.id)
-    const cls = m.id===loadedModelId ? 'model-card loaded' : (selectedModel?.id===m.id ? 'model-card selected' : 'model-card')
-    return `<div class="${cls}" id="card-${CSS.escape(m.id)}" onclick="selectModel('${m.id}','${m.path}')">
-      <div class="model-card-name">${esc(name)}</div>
-      <div class="model-card-meta"><span class="badge ${m.vision?'badge-vision':'badge-text'}">${m.vision?'👁 Vision':'💬 Text'}</span><span class="badge badge-type">${esc(m.model_type)}</span></div></div>`
-  }).join('')
-  // Also update the central model switcher
+  if (l) {
+    if(!models.length) { l.innerHTML='<div class="model-empty">No models</div>' }
+    else {
+      l.innerHTML = models.map(m => {
+        const name = _formatModelName(m.id)
+        const cls = m.id===loadedModelId ? 'model-card loaded' : (selectedModel?.id===m.id ? 'model-card selected' : 'model-card')
+        return `<div class="${cls}" id="card-${CSS.escape(m.id)}" onclick="selectModel('${m.id}','${m.path}')">
+          <div class="model-card-name">${esc(name)}</div>
+          <div class="model-card-meta"><span class="badge ${m.vision?'badge-vision':'badge-text'}">${m.vision?'👁 Vision':'💬 Text'}</span><span class="badge badge-type">${esc(m.model_type)}</span></div></div>`
+      }).join('')
+    }
+  }
+  // Update the chat model switcher
   _renderModelSwitcher(models)
   // Update extraction model dropdown
   populateExtractionModelList(models)
@@ -324,6 +328,23 @@ function _renderModelSwitcher(models) {
   } else {
     nameEl.textContent = 'No model loaded'
     nameEl.style.color = 'var(--muted)'
+  }
+
+  // Update the fast model status indicator on the switcher button
+  let fastIndicator = document.getElementById('modelSwitcherFastDot')
+  if (!fastIndicator) {
+    fastIndicator = document.createElement('span')
+    fastIndicator.id = 'modelSwitcherFastDot'
+    fastIndicator.style.cssText = 'font-size:9px;flex-shrink:0;margin-left:4px'
+    const arrow = document.querySelector('.model-switcher-arrow')
+    if (arrow) arrow.parentNode.insertBefore(fastIndicator, arrow)
+  }
+  if (_extractionModelStatus && _extractionModelStatus.loaded) {
+    fastIndicator.textContent = '⚡'
+    fastIndicator.title = 'Fast Vision Assistant: ' + (_extractionModelStatus.modelName || 'active')
+  } else {
+    fastIndicator.textContent = ''
+    fastIndicator.title = ''
   }
 
   if (!models.length) { list.innerHTML = '<div class="ms-empty">No models found in ~/.lmstudio/models/</div>'; return }
@@ -363,19 +384,28 @@ function toggleModelSwitcher() {
   const bar = document.getElementById('modelSwitcherBar')
   const dd = document.getElementById('modelSwitcherDropdown')
   const isOpen = dd.style.display !== 'none'
-  dd.style.display = isOpen ? 'none' : 'block'
-  bar.classList.toggle('open', !isOpen)
-  // Close on outside click
-  if (!isOpen) {
-    const closer = (e) => {
-      if (!bar.contains(e.target)) {
-        dd.style.display = 'none'
-        bar.classList.remove('open')
-        document.removeEventListener('click', closer)
-      }
-    }
-    setTimeout(() => document.addEventListener('click', closer), 0)
+  if (isOpen) {
+    dd.style.display = 'none'
+    bar.classList.remove('open')
+    return
   }
+  // Position the dropdown below the switcher button using fixed coords
+  const btn = document.getElementById('modelSwitcherBtn')
+  const rect = btn.getBoundingClientRect()
+  dd.style.top = (rect.bottom + 4) + 'px'
+  dd.style.left = (rect.left) + 'px'
+  dd.style.width = (rect.width) + 'px'
+  dd.style.display = 'flex'
+  bar.classList.add('open')
+  // Close on outside click
+  const closer = (e) => {
+    if (!bar.contains(e.target) && !dd.contains(e.target)) {
+      dd.style.display = 'none'
+      bar.classList.remove('open')
+      document.removeEventListener('click', closer)
+    }
+  }
+  setTimeout(() => document.addEventListener('click', closer), 0)
 }
 
 async function switchModelFromSwitcher(id, modelPath) {
@@ -430,33 +460,36 @@ function selectModel(id, path) {
   selectedModel={id,path}
   document.querySelectorAll('.model-card').forEach(c => { c.className = c.id==='card-'+CSS.escape(loadedModelId)?'model-card loaded':(c.id==='card-'+CSS.escape(id)?'model-card selected':'model-card') })
   const b=document.getElementById('loadBtn'), t=document.getElementById('loadBtnText')
-  b.disabled=id===loadedModelId; t.textContent=id===loadedModelId?'Already loaded':`Load ${_formatModelName(id)}`
+  if (b && t) { b.disabled=id===loadedModelId; t.textContent=id===loadedModelId?'Already loaded':`Load ${_formatModelName(id)}` }
 }
 async function loadSelected() {
   if(!selectedModel) return
   const b=document.getElementById('loadBtn'), t=document.getElementById('loadBtnText')
   const modelName = _formatModelName(selectedModel.id)
-  b.disabled=true; t.innerHTML='<span class="spinner"></span> Loading...'
+  if (b) b.disabled=true
+  if (t) t.innerHTML='<span class="spinner"></span> Loading...'
   _showModelLoadingOverlay(modelName)
   try {
     const r=await window.app.loadModel(selectedModel.path)
     setLoadedModel(r.model_id||selectedModel.id)
     window.app.saveAppSettings({ lastModelPath: selectedModel.path })
-    t.textContent='Already loaded'
+    if (t) t.textContent='Already loaded'
     _hideModelLoadingOverlay()
     appendMsg('system', `✅ Model loaded: ${modelName}`)
   }
   catch {
-    t.textContent='Failed'
-    b.disabled=false
+    if (t) t.textContent='Failed'
+    if (b) b.disabled=false
     _hideModelLoadingOverlay()
     appendMsg('system', `⚠️ Failed to load model: ${modelName}`)
   }
 }
 function setLoadedModel(id) {
   loadedModelId=id
-  document.getElementById('loadedModelName').textContent = id ? _formatModelName(id) : 'None'
-  document.getElementById('f-modelid').textContent=id||'—'
+  const lmn = document.getElementById('loadedModelName')
+  if (lmn) lmn.textContent = id ? _formatModelName(id) : 'None'
+  const fmi = document.getElementById('f-modelid')
+  if (fmi) fmi.textContent=id||'—'
   renderModels(allModels)
   if (!id && typeof clearCalibrationUI === 'function') clearCalibrationUI()
 }
@@ -6105,45 +6138,44 @@ async function refreshExtractionModelStatus() {
 }
 
 /**
- * Render the extraction model section in the model picker panel.
- * Inserts/updates the section below the primary model list.
+ * Render the Fast Vision Assistant section in the model switcher dropdown.
  */
 function _renderExtractionModelSection() {
-  let section = document.getElementById('extractionModelSection')
-  if (!section) {
-    // Create the section and insert it before the sp-footer in sp-models
-    const footer = document.querySelector('#sp-models .sp-footer')
-    if (!footer) return
-    section = document.createElement('div')
-    section.id = 'extractionModelSection'
-    section.style.cssText = 'padding:8px 12px;border-top:1px solid var(--border,#333);margin-top:4px'
-    footer.parentNode.insertBefore(section, footer)
-  }
+  const section = document.getElementById('msFastSection')
+  if (!section) return
 
   const status = _extractionModelStatus
   const isLoaded = status && status.loaded
-
-  const statusHtml = isLoaded
-    ? `<span style="color:var(--green,#4caf50)">● ${esc(status.modelName)}${status.memoryGb ? ` (${status.memoryGb.toFixed(1)}GB)` : ''}</span> <span style="color:var(--accent,#7c6af7);font-size:10px">⚡ Fast Assistant active</span>`
-    : `<span style="color:var(--muted,#666)">Not loaded</span> <span style="color:var(--muted,#666);font-size:10px">Fast Assistant inactive</span>`
 
   const modelOptions = _extractionModelList.length > 0
     ? _extractionModelList.map(m => `<option value="${esc(m.path)}">${esc(_formatModelName(m.id))}</option>`).join('')
     : '<option value="">No models available</option>'
 
-  section.innerHTML = `
-    <div class="section-label" style="margin-bottom:6px">EXTRACTION MODEL</div>
-    <div style="font-size:11px;margin-bottom:6px">${statusHtml}</div>
-    ${!isLoaded ? `
-      <select id="extractionModelSelect" class="mode-select" style="width:100%;margin-bottom:6px">
-        <option value="">Select model for extraction...</option>
+  if (isLoaded) {
+    section.innerHTML = `
+      <div class="ms-fast-status">
+        <span class="ms-fast-dot active"></span>
+        <span style="color:var(--green);font-size:11px;font-weight:500">${esc(status.modelName)}${status.memoryGb ? ` · ${status.memoryGb.toFixed(1)}GB` : ''}</span>
+      </div>
+      <div class="ms-fast-actions">
+        <button class="btn-sm" style="background:var(--bg3);color:var(--text);border:1px solid var(--border)" onclick="unloadExtractionModel()">Unload</button>
+      </div>
+    `
+  } else {
+    section.innerHTML = `
+      <div class="ms-fast-status">
+        <span class="ms-fast-dot inactive"></span>
+        <span style="color:var(--muted);font-size:11px">Not loaded</span>
+      </div>
+      <select id="extractionModelSelect" class="ms-fast-select">
+        <option value="">Select a model...</option>
         ${modelOptions}
       </select>
-      <button class="btn-primary" style="width:100%;font-size:11px;padding:4px 8px" onclick="loadExtractionModel()">Load</button>
-    ` : `
-      <button class="btn-secondary" style="width:100%;font-size:11px;padding:4px 8px" onclick="unloadExtractionModel()">Unload</button>
-    `}
-  `
+      <div class="ms-fast-actions">
+        <button class="btn-sm" onclick="loadExtractionModel()">Load</button>
+      </div>
+    `
+  }
 }
 
 /**
