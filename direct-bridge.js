@@ -1904,55 +1904,53 @@ class DirectBridge {
       const isTaskPrompt = prompt && ACTION_RE.test(prompt)
 
       if (!isTaskPrompt) {
-        // ── Direct vision path: stream straight from vision model ─────────
+        // ── Direct vision path: use fast model via /memory/assist ─────────
         this.send('qwen-event', { type: 'session-start', cwd: cwd || process.cwd() })
         try {
-          const userContent = []
-          userContent.push({ type: 'text', text: (prompt && prompt.trim()) || 'Describe what you see in this image in detail.' })
+          const descriptions = []
           for (const img of images) {
-            userContent.push({ type: 'image_url', image_url: { url: img.b64 } })
-          }
-
-          const visionMessages = [{ role: 'user', content: userContent }]
-          const body = JSON.stringify({ messages: visionMessages, max_tokens: 1024, stream: true })
-
-          await new Promise((resolve) => {
-            const req = http.request({
-              hostname: '127.0.0.1', port: SERVER_PORT,
-              path: '/v1/chat/completions', method: 'POST',
-              timeout: 120000,
-              headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-            }, (res) => {
-              let buf = ''
-              let fullText = ''
-              res.on('data', chunk => {
-                if (this._aborted) { req.destroy(); return }
-                buf += chunk.toString()
-                const lines = buf.split('\n')
-                buf = lines.pop()
-                for (const line of lines) {
-                  if (line.startsWith('data: [DONE]')) continue
-                  if (line.startsWith('data: ')) {
-                    try {
-                      const parsed = JSON.parse(line.slice(6))
-                      const delta = parsed.choices?.[0]?.delta?.content
-                      if (delta) {
-                        fullText += delta
-                        this.send('qwen-event', { type: 'token', content: delta })
-                      }
-                    } catch { /* skip malformed SSE line */ }
-                  }
-                }
+            // Strip data URI prefix — assistVision expects raw base64
+            const b64 = img.b64.replace(/^data:[^;]+;base64,/, '')
+            const mime = img.b64.match(/^data:([^;]+);/)?.[1] || 'image/png'
+            let desc = null
+            if (assistClient) {
+              desc = await assistClient.assistVision(b64, mime,
+                (prompt && prompt.trim()) || 'Describe what you see in this image in detail.')
+            }
+            if (!desc) {
+              // Fall back to /v1/chat/completions which routes to _route_vision_request
+              const userContent = [
+                { type: 'text', text: (prompt && prompt.trim()) || 'Describe what you see in this image in detail.' },
+                { type: 'image_url', image_url: { url: img.b64 } },
+              ]
+              const body = JSON.stringify({ messages: [{ role: 'user', content: userContent }], max_tokens: 1024 })
+              const result = await new Promise((resolve, reject) => {
+                const r = http.request({
+                  hostname: '127.0.0.1', port: SERVER_PORT,
+                  path: '/v1/chat/completions', method: 'POST',
+                  timeout: 120000,
+                  headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+                }, (res) => {
+                  let data = ''
+                  res.on('data', chunk => data += chunk)
+                  res.on('end', () => { try { resolve(JSON.parse(data)) } catch { reject(new Error(data || 'Empty')) } })
+                })
+                r.on('error', reject)
+                r.on('timeout', () => { r.destroy(); reject(new Error('timeout')) })
+                r.write(body)
+                r.end()
               })
-              res.on('end', () => { this.send('qwen-event', { type: 'task_complete', summary: fullText }); resolve() })
-              res.on('error', (err) => { this.send('qwen-event', { type: 'task_complete', summary: `Vision error: ${err.message}` }); resolve() })
-            })
-            req.on('error', (err) => { this.send('qwen-event', { type: 'task_complete', summary: `Vision request failed: ${err.message}` }); resolve() })
-            req.on('timeout', () => { req.destroy(); this.send('qwen-event', { type: 'task_complete', summary: 'Vision request timed out.' }); resolve() })
-            req.write(body)
-            req.end()
-            this._currentReq = req
-          })
+              desc = result.choices?.[0]?.message?.content || null
+            }
+            if (desc) descriptions.push(desc)
+          }
+          const fullText = descriptions.join('\n\n') || 'Could not analyze the image.'
+          // Stream the text token by token for a responsive feel
+          const words = fullText.split(' ')
+          for (const word of words) {
+            this.send('qwen-event', { type: 'token', content: word + ' ' })
+          }
+          this.send('qwen-event', { type: 'task_complete', summary: fullText })
         } catch (err) {
           this.send('qwen-event', { type: 'task_complete', summary: `Vision failed: ${err.message}` })
         } finally {
