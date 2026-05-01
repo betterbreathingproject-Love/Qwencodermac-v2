@@ -1088,7 +1088,7 @@ function trimMessages(messages, maxInputTokens) {
     if (maxLen > allowedChars) {
       const oldLen = messages[maxIdx].content.length
       messages[maxIdx].content = messages[maxIdx].content.slice(0, allowedChars) +
-        '\n\n... [trimmed: content too large for context window. Use more specific queries or read smaller sections.]'
+        '\n\n[TRIMMED for context space — do NOT re-read this file. The content above is sufficient. Use search_files if you need to find specific patterns.]'
       current -= Math.ceil((oldLen - messages[maxIdx].content.length) / charBudgetPerToken)
     }
   }
@@ -1115,7 +1115,7 @@ function trimMessages(messages, maxInputTokens) {
       const minKeep = isNavResult ? Math.max(scaledFloor, 2000) : scaledFloor
       if (msg.content.length > minKeep) {
         const oldLen = msg.content.length
-        msg.content = msg.content.slice(0, minKeep) + '\n\n... [trimmed to save context space]'
+        msg.content = msg.content.slice(0, minKeep) + '\n\n[TRIMMED for context space — do NOT re-read this content.]'
         current -= Math.ceil((oldLen - msg.content.length) / 4)
       }
     }
@@ -1461,6 +1461,7 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         const stat = fs.statSync(p)
         if (stat.size > 512 * 1024) return { error: `File too large (${(stat.size / 1024).toFixed(0)}KB). Use start_line/end_line to read sections, or use search_files to find specific content.` }
         const raw = fs.readFileSync(p, 'utf-8')
+        const totalLines = raw.split('\n').length
         // Line range support — lets the agent page through large files
         if (args.start_line != null || args.end_line != null) {
           const lines = raw.split('\n')
@@ -1469,9 +1470,13 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
           const end = args.end_line != null ? Math.min(total, args.end_line) : total
           const slice = lines.slice(start, end).join('\n')
           const hasMore = end < total
-          return { result: slice + (hasMore ? `\n\n[lines ${start + 1}-${end} of ${total} total — call read_file again with start_line=${end + 1} to continue]` : '') }
+          return { result: slice + (hasMore ? `\n\n[lines ${start + 1}-${end} of ${total} total — call read_file again with start_line=${end + 1} to continue]` : ''), _fullRead: !hasMore, _totalLines: total }
         }
-        return { result: raw }
+        // Tag the result so post-processing knows the entire file was returned.
+        // This prevents the truncation loop: when context pressure later trims
+        // this content, the trimmer can say "file was fully read but trimmed for
+        // context space" instead of "call read_file again" which causes a loop.
+        return { result: raw, _fullRead: true, _totalLines: totalLines }
       }
       case 'write_file': {
         if (typeof args.content !== 'string') return { error: 'content must be a string' }
@@ -1497,6 +1502,7 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
           '\n\n[compressed:',
           '[lines 1-',
           'call read_file again with start_line=',
+          '[TRIMMED for context space',
         ]
         for (const marker of TRUNCATION_MARKERS) {
           if (args.content.includes(marker)) {
@@ -2362,6 +2368,13 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
     const _compileFailCounts = new Map()  // filePath → consecutive fail count
     let _lastCompileFile = null
 
+    // ── Read-file loop detection ─────────────────────────────────────────────
+    // Tracks consecutive read_file calls on the same path. When the agent reads
+    // the same file 2+ times (typically because context trimming removed the
+    // earlier result and the model thinks it was truncated), intercept the call
+    // and return a short notice instead of the full file content again.
+    const _readFileHistory = new Map()  // path → { count, lastTurn }
+
     // ── Memory: session start ─────────────────────────────────────────────────
     const _sessionId = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     if (memoryClient) {
@@ -2640,7 +2653,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
                 const allowedChars = Math.max(800, Math.floor(maxTotalChars / messages.length))
                 if (m.content.length > allowedChars) {
                   const oldLen = m.content.length
-                  m.content = m.content.slice(0, allowedChars) + '\n\n... [trimmed: content too large for context window. Use more specific queries or read smaller sections.]'
+                  m.content = m.content.slice(0, allowedChars) + '\n\n[TRIMMED for context space — do NOT re-read this file. The content above is sufficient.]'
                   currentChars -= (oldLen - m.content.length)
                 }
               }
@@ -3222,10 +3235,48 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           } catch (_) {}
         }
 
+        // ── Read-file loop interception ──────────────────────────────────────
+        // If the agent is re-reading a file it already fully read in this session,
+        // and it's NOT using line ranges (which would indicate intentional paging),
+        // intercept the call and return a short notice instead of re-reading the
+        // entire file. This breaks the truncation loop on small projects.
+        if (fnName === 'read_file' && fnArgs.path && fnArgs.start_line == null && fnArgs.end_line == null) {
+          const readKey = fnArgs.path
+          const prev = _readFileHistory.get(readKey)
+          if (prev && prev.count >= 1 && prev.fullRead) {
+            // Agent is re-reading a file it already fully read — intercept
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Blocked re-read of ${readKey} (already fully read on turn ${prev.lastTurn})` })
+            const interceptContent = `You already read this entire file (${prev.totalLines} lines) on turn ${prev.lastTurn}. ` +
+              `The earlier content was trimmed from context to save space, but the file has NOT changed. ` +
+              `Do NOT re-read it. Work with what you remember, or use search_files to find specific patterns. ` +
+              `If you need to edit this file, use edit_file with the exact strings you need to change.`
+            this.send('qwen-event', { type: 'tool-result', tool_use_id: tc.id, content: interceptContent, is_error: false })
+            messages.push({ role: 'tool', tool_call_id: tc.id, content: interceptContent })
+            continue
+          }
+        }
+
         // Execute
         const result = await executeTool(fnName, fnArgs, cwd, this._browserInstance, this._lspManager, this._inputRequester, { send: this.send.bind(this), _sessionId })
         const isError = !!result.error
         let content = result.error || result.result
+        // Track whether read_file returned the complete file — used to prevent
+        // the truncation loop where the model re-reads a file that was already
+        // fully read but later trimmed for context space.
+        const _wasFullRead = !!(result._fullRead)
+
+        // Update read_file history after successful reads
+        if (fnName === 'read_file' && !isError && fnArgs.path) {
+          const readKey = fnArgs.path
+          const prev = _readFileHistory.get(readKey) || { count: 0, lastTurn: turn, fullRead: false, totalLines: 0 }
+          prev.count++
+          prev.lastTurn = turn
+          if (_wasFullRead) {
+            prev.fullRead = true
+            prev.totalLines = result._totalLines || 0
+          }
+          _readFileHistory.set(readKey, prev)
+        }
 
         // ── Memory: archive tool call ─────────────────────────────────────
         if (memoryClient) {
@@ -3527,9 +3578,19 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
               // Count total lines so the agent knows how to page through the file
               const totalLines = content.split('\n').length
               const shownLines = content.slice(0, effectiveLimit).split('\n').length
-              content = content.slice(0, effectiveLimit) +
-                `\n\n... [file truncated — showing lines 1-${shownLines} of ~${totalLines} total. ` +
-                `Call read_file with start_line=${shownLines + 1} to read the next section.]`
+              // If the file was fully read (not a partial/paged read), do NOT tell
+              // the model to call read_file again — that creates a truncation loop.
+              // Instead, tell it the content was trimmed for context space and suggest
+              // using search_files or edit_file with the knowledge it already has.
+              if (_wasFullRead) {
+                content = content.slice(0, effectiveLimit) +
+                  `\n\n[TRUNCATED — original length ~${totalLines} lines. The ENTIRE file was read successfully but trimmed to fit the context window. ` +
+                  `Do NOT call read_file again on this file — you already have the content. Use search_files to find specific patterns, or work with what is shown above.]`
+              } else {
+                content = content.slice(0, effectiveLimit) +
+                  `\n\n... [file truncated — showing lines 1-${shownLines} of ~${totalLines} total. ` +
+                  `Call read_file with start_line=${shownLines + 1} to read the next section.]`
+              }
             }
             } // end non-nav-tool compression
           }
@@ -3904,7 +3965,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
             const allowedChars = Math.max(1000, Math.floor(maxTotalChars / trimmed.length))
             if (m.content.length > allowedChars) {
               const oldLen = m.content.length
-              m.content = m.content.slice(0, allowedChars) + '\n\n... [trimmed: content too large for context window. Use more specific queries or read smaller sections.]'
+              m.content = m.content.slice(0, allowedChars) + '\n\n[TRIMMED for context space — do NOT re-read this file. The content above is sufficient.]'
               currentChars -= (oldLen - m.content.length)
             }
           }
@@ -4205,6 +4266,7 @@ After every write_file or edit_file the LSP reports new errors in the tool resul
 
 ## Compressed context
 Large tool results are compressed automatically. If you see [compressed: ... rewind key: rw_xxx], call rewind_context with that key only if you need the full content.
+If you see [TRIMMED for context space], the content was already fully read but shortened to fit. Do NOT call read_file again on that file — use search_files or work with what you have.
 
 ## Memory system
 Your context may include injected blocks — read them before starting work:
