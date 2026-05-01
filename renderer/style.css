@@ -119,10 +119,13 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .copy-sm { background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); font-size: 11px; padding: 2px 5px; cursor: pointer; }
 .copy-sm:hover { color: var(--text); border-color: var(--accent); }
 
-/* main area */
-.main-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+/* main area — horizontal split: center + chat */
+.main-area { flex: 1; display: flex; flex-direction: row; overflow: hidden; }
+
+/* center content column — tabs + tab panels */
+.center-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 300px; }
 .editor-tabs { display: flex; gap: 1px; padding: 4px 8px 0; background: var(--bg2); border-bottom: 1px solid var(--border); flex-shrink: 0; }
-.ed-tab { padding: 6px 14px; font-size: 12px; cursor: pointer; color: var(--muted); border: none; background: none; border-radius: 6px 6px 0 0; }
+.ed-tab { padding: 6px 14px; font-size: 12px; cursor: pointer; color: var(--muted); border: none; background: none; border-radius: 6px 6px 0 0; white-space: nowrap; }
 .ed-tab:hover:not(.active) { color: var(--text); background: var(--bg3); }
 .ed-tab.active { color: var(--text); background: var(--bg); border: 1px solid var(--border); border-bottom: 1px solid var(--bg); margin-bottom: -1px; }
 .main-panel { display: none; flex: 1; overflow: hidden; }
@@ -1427,16 +1430,12 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
    macOS-vibed design with frosted glass, soft shadows, rounded corners
    ══════════════════════════════════════════════════════════════════════════════ */
 
-/* ── Agent layout: horizontal split ── */
-.agent-layout.agent-layout-split {
-  flex-direction: row;
-  overflow: hidden;
-}
+/* ── Agent layout: preview fills the panel ── */
+.agent-layout { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 
-/* ── Preview Center Panel ── */
+/* ── Preview Center Panel — fills mt-agent ── */
 .preview-center {
   flex: 1;
-  min-width: 300px;
   display: flex;
   flex-direction: column;
   background: #0e0e12;
@@ -1598,7 +1597,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   width: 2px;
 }
 
-/* ── Chat Panel (Right) ── */
+/* ── Chat Panel (Right — always visible) ── */
 .chat-panel {
   width: 420px;
   min-width: 320px;
@@ -1608,6 +1607,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   overflow: hidden;
   background: var(--bg);
   border-left: 1px solid rgba(255,255,255,0.06);
+  flex-shrink: 0;
 }
 
 /* ── Frosted glass session bar ── */

@@ -148,6 +148,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   await loadApiKeys()
   await restoreActiveSpec()
   checkCompactor()
+  // Auto-load preview for current project
+  if (currentProject && typeof autoUpdateCenterPreview === 'function') autoUpdateCenterPreview()
   checkSearchEngine()
   refreshTelegramStatus()
   refreshWelcomeProjectBar()
@@ -178,7 +180,7 @@ function showPanel(name, btn) {
 }
 function switchMainTab(name, btn) {
   document.querySelectorAll('.ed-tab').forEach(t => t.classList.remove('active'))
-  document.querySelectorAll('.main-panel').forEach(p => p.classList.remove('active'))
+  document.querySelectorAll('.center-content .main-panel').forEach(p => p.classList.remove('active'))
   btn.classList.add('active')
   document.getElementById('mt-'+name).classList.add('active')
   if (name === 'agents') loadAgentRoles()
@@ -706,6 +708,7 @@ async function openProject() {
   currentProject = sanitizePath(p)
   await renderFileTree(currentProject, document.getElementById('fileTree'))
   startFileWatcher(currentProject)
+  if (typeof autoUpdateCenterPreview === 'function') autoUpdateCenterPreview()
 }
 
 // ── file watcher for auto-refresh ─────────────────────────────────────────────
@@ -720,6 +723,10 @@ function startFileWatcher(dir) {
     // Refresh the file tree
     if (currentProject) {
       renderFileTree(currentProject, document.getElementById('fileTree'))
+    }
+    // Auto-refresh center preview when HTML files change
+    if (ev.filename && /\.(html?|css|js|svg)$/i.test(ev.filename) && _centerPreviewFile) {
+      refreshCenterPreview()
     }
     // Auto-refresh live preview if an HTML file changed and preview is open
     if (previewOpen && ev.filename && /\.(html?|svg)$/i.test(ev.filename)) {
@@ -829,6 +836,11 @@ async function switchProject(id) {
     clearChatOutput(); document.getElementById('projectPath').textContent=''
     renderSessionSelect([]); updateSessionInfo()
     window.app.unwatchProject(); _lastWatchedDir = null
+    _centerPreviewFile = null // clear preview
+    const frame = document.getElementById('previewCenterFrame')
+    if (frame) { frame.style.display = 'none'; frame.removeAttribute('src'); frame.removeAttribute('srcdoc') }
+    const empty = document.getElementById('previewCenterEmpty')
+    if (empty) empty.style.display = ''
     await loadContextSettings(); return
   }
   const p = await window.app.openProjectById(id)
@@ -843,6 +855,8 @@ async function switchProject(id) {
   await loadSessions(p.activeSession)
   refreshWelcomeProjectBar()
   refreshSteeringDocs()
+  // Auto-load preview for new project
+  if (typeof autoUpdateCenterPreview === 'function') autoUpdateCenterPreview()
 }
 
 // ── sessions ──────────────────────────────────────────────────────────────────
@@ -6728,32 +6742,6 @@ async function autoUpdateCenterPreview() {
 })()
 
 // ── Hook into tool-result events to auto-update center preview ───────────────
-// Patch the existing qwen-event listener to also refresh center preview on file writes
-;(function hookCenterPreview() {
-  const _origShowPreviewButton = typeof showPreviewButton === 'function' ? showPreviewButton : null
-  if (_origShowPreviewButton) {
-    window._origShowPreviewButton = _origShowPreviewButton
-    window.showPreviewButton = async function(respId) {
-      await _origShowPreviewButton(respId)
-      autoUpdateCenterPreview()
-    }
-    // Replace global reference
-    if (typeof showPreviewButton !== 'undefined') {
-      // The function is already global, patch it
-    }
-  }
-
-  // Also auto-update on DOMContentLoaded if a project is already open
-  document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(() => autoUpdateCenterPreview(), 1000)
-  })
-})()
-
-// ── Auto-refresh center preview when file watcher detects HTML changes ────────
-if (typeof window !== 'undefined' && window.app && window.app.onFileChange) {
-  window.app.onFileChange((filePath) => {
-    if (/\.html?$/i.test(filePath) && _centerPreviewFile) {
-      refreshCenterPreview()
-    }
-  })
-}
+// showPreviewButton already calls autoUpdateCenterPreview directly (patched above)
+// File watcher already calls refreshCenterPreview on HTML/CSS/JS changes
+// switchProject and openProject already call autoUpdateCenterPreview

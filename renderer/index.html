@@ -404,28 +404,28 @@
 
     </aside>
 
-    <!-- main area -->
+    <!-- main area — horizontal split: center content + always-visible chat -->
     <div class="main-area">
-      <!-- editor tabs -->
-      <div class="editor-tabs" id="editorTabs">
-        <button class="ed-tab active" data-tab="agent" onclick="switchMainTab('agent',this)">💻 Agent</button>
-        <button class="ed-tab" data-tab="editor" onclick="switchMainTab('editor',this)">📝 Editor</button>
-        <button class="ed-tab" data-tab="vision" onclick="switchMainTab('vision',this)">👁 Vision</button>
-        <button class="ed-tab" data-tab="tools" onclick="switchMainTab('tools',this)">🔧 Tools</button>
-        <button class="ed-tab" data-tab="calibration" onclick="switchMainTab('calibration',this)">📊 Calibration</button>
-        <button class="ed-tab" data-tab="agents" onclick="switchMainTab('agents',this)">🤖 Agents</button>
-        <button class="ed-tab" data-tab="memory" onclick="switchMainTab('memory',this);if(!_memoryLoaded)memoryRefresh()">🧠 Memory</button>
-        <button class="ed-tab" data-tab="about" onclick="switchMainTab('about',this)">💙 About</button>
-      </div>
 
-      <!-- AGENT TAB -->
-      <div class="main-panel active" id="mt-agent">
-        <div class="agent-layout agent-layout-split">
+      <!-- ═══ CENTER CONTENT ═══ -->
+      <div class="center-content" id="centerContent">
+        <!-- editor tabs -->
+        <div class="editor-tabs" id="editorTabs">
+          <button class="ed-tab active" data-tab="agent" onclick="switchMainTab('agent',this)">💻 Preview</button>
+          <button class="ed-tab" data-tab="editor" onclick="switchMainTab('editor',this)">📝 Editor</button>
+          <button class="ed-tab" data-tab="vision" onclick="switchMainTab('vision',this)">👁 Vision</button>
+          <button class="ed-tab" data-tab="tools" onclick="switchMainTab('tools',this)">🔧 Tools</button>
+          <button class="ed-tab" data-tab="calibration" onclick="switchMainTab('calibration',this)">📊 Calibration</button>
+          <button class="ed-tab" data-tab="agents" onclick="switchMainTab('agents',this)">🤖 Agents</button>
+          <button class="ed-tab" data-tab="memory" onclick="switchMainTab('memory',this);if(!_memoryLoaded)memoryRefresh()">🧠 Memory</button>
+          <button class="ed-tab" data-tab="about" onclick="switchMainTab('about',this)">💙 About</button>
+        </div>
 
-          <!-- ── CENTER: Preview Area ── -->
+        <!-- PREVIEW TAB (was Agent tab — now shows live preview) -->
+        <div class="main-panel active" id="mt-agent">
           <div class="preview-center" id="previewCenter">
             <div class="preview-center-header">
-              <span class="preview-center-title">Preview</span>
+              <span class="preview-center-title">Live Preview</span>
               <div class="preview-center-devices" id="previewCenterDevices">
                 <button class="pcd-btn active" data-device="responsive" onclick="setCenterPreviewDevice('responsive')" title="Fill">↔</button>
                 <button class="pcd-btn" data-device="desktop" onclick="setCenterPreviewDevice('desktop')" title="Desktop">🖥</button>
@@ -438,128 +438,13 @@
             <div class="preview-center-viewport" id="previewCenterViewport">
               <div class="preview-center-empty" id="previewCenterEmpty">
                 <div class="pce-icon">✦</div>
-                <div class="pce-title">Preview</div>
-                <div class="pce-sub">HTML output from the agent will appear here automatically.</div>
+                <div class="pce-title">Live Preview</div>
+                <div class="pce-sub">HTML files from your project appear here automatically as the agent builds them.</div>
               </div>
               <iframe id="previewCenterFrame" style="display:none" sandbox="allow-scripts allow-same-origin"></iframe>
             </div>
           </div>
-
-          <!-- ── Resize handle ── -->
-          <div class="split-resize-handle" id="splitResizeHandle"></div>
-
-          <!-- ── RIGHT: Chat Panel ── -->
-          <div class="chat-panel" id="chatPanel">
-            <!-- session bar -->
-            <div class="session-bar" id="sessionBar">
-              <div class="session-bar-left">
-                <select id="sessionSelect" class="session-select" onchange="switchSession(this.value)">
-                  <option value="">No session</option>
-                </select>
-                <button class="session-btn" onclick="newSession()" title="New session">＋</button>
-                <button class="session-btn" onclick="renameCurrentSession()" title="Rename session">✏️</button>
-                <button class="session-btn danger" onclick="deleteCurrentSession()" title="Delete session">🗑</button>
-              </div>
-              <div class="session-bar-right">
-                <span class="session-info" id="sessionInfo"></span>
-                <button class="compact-btn" id="compactBtn" onclick="runCompactNow()" title="Compress conversation with claw-compactor">🦞 Compact</button>
-              </div>
-            </div>
-
-            <!-- model switcher bar -->
-            <div class="model-switcher-bar" id="modelSwitcherBar">
-              <div class="model-switcher-current" id="modelSwitcherBtn" onclick="toggleModelSwitcher()">
-                <span class="model-switcher-icon">🤖</span>
-                <span class="model-switcher-name" id="modelSwitcherName">No model loaded</span>
-                <span class="model-switcher-arrow">▾</span>
-              </div>
-              <div class="model-switcher-dropdown" id="modelSwitcherDropdown" style="display:none">
-                <div class="model-switcher-list" id="modelSwitcherList"></div>
-              </div>
-            </div>
-
-            <!-- persistent todo panel -->
-            <div class="todo-panel" id="todoPanel" style="display:none">
-              <div class="todo-panel-header" onclick="toggleTodoPanel()">
-                <span class="todo-panel-icon">📋</span>
-                <span class="todo-panel-title">Todo List</span>
-                <span class="todo-panel-count" id="todoPanelCount"></span>
-                <span class="todo-panel-toggle" id="todoPanelToggle">▾</span>
-              </div>
-              <div class="todo-panel-body" id="todoPanelBody"></div>
-            </div>
-
-            <!-- chat/output area -->
-            <div class="agent-output" id="agentOutput">
-              <div class="build-picker">
-                <div class="build-picker-icon">✦</div>
-                <div class="build-picker-title">Let's build</div>
-                <div class="build-picker-subtitle">Plan, search, or build anything</div>
-                <div class="build-picker-project" id="welcomeProjectBar">
-                  <div class="bp-project-row" id="welcomeProjectRow">
-                    <span class="bp-project-icon">📁</span>
-                    <select id="welcomeProjectSelect" class="bp-project-select" onchange="welcomeSwitchProject(this.value)">
-                      <option value="">— Select a project —</option>
-                    </select>
-                    <button class="bp-project-btn" onclick="welcomePickProject()" title="Open folder">Open Folder</button>
-                  </div>
-                  <div class="bp-project-path" id="welcomeProjectPath"></div>
-                </div>
-                <div class="build-picker-cards">
-                  <button class="build-card build-card-vibe" onclick="startSessionWithType('vibe')">
-                    <span class="build-card-icon">💬</span>
-                    <span class="build-card-label">Vibe</span>
-                    <span class="build-card-desc">Chat and build. Jump straight in and iterate.</span>
-                  </button>
-                  <button class="build-card build-card-spec" onclick="openSpecPanel()">
-                    <span class="build-card-icon">📐</span>
-                    <span class="build-card-label">Spec</span>
-                    <span class="build-card-desc">Plan first. AI generates requirements, design, and tasks before you code.</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <!-- compact notification -->
-            <div class="compact-notice" id="compactNotice" style="display:none">
-              <span id="compactNoticeText"></span>
-              <button class="compact-notice-close" onclick="document.getElementById('compactNotice').style.display='none'">✕</button>
-            </div>
-
-            <!-- stats bar (unified: status + tokens above input) -->
-            <div class="agent-stats" id="agentStats" style="display:none"></div>
-
-            <!-- undo toggle button — shown when there are undoable changes -->
-            <div style="padding: 0 12px 4px; display:flex; justify-content:flex-end;">
-              <button class="undo-toggle-btn" id="undo-toggle-btn" onclick="toggleUndoPanel()" style="display:none" title="View and undo recent file changes">
-                ↩ Undo <span class="undo-count-badge">0</span>
-              </button>
-            </div>
-
-            <!-- input -->
-            <div class="agent-input-area">
-              <div class="agent-input-row">
-                <button class="perm-toggle auto" id="permToggle" onclick="togglePermMode()" title="Toggle auto-approve / ask before changes">🔓 Auto</button>
-                <select class="role-select" id="roleSelect" onchange="changeAgentRole(this.value)" title="Agent role — controls which LSP tools and system prompt the agent uses">
-                  <option value="general">⚡ General</option>
-                </select>
-              </div>
-              <div class="agent-input-box">
-                <div class="input-wrap" style="position:relative">
-                  <div class="attached-images" id="attachedImages"></div>
-                  <textarea id="agentPrompt" placeholder="Ask anything... drop images here. ⌘↵ to send" rows="3"></textarea>
-                  <div class="slash-autocomplete" id="slashAutocomplete" style="display:none"></div>
-                </div>
-                <div class="input-actions">
-                  <label class="attach-btn" title="Attach image">📎<input type="file" accept="image/*" multiple style="display:none" onchange="attachImages(event)"></label>
-                  <button class="btn-send" id="sendBtn" onclick="sendAgent()">Send ↵</button>
-                </div>
-              </div>
-            </div>
-          </div>
-
         </div>
-      </div>
 
       <!-- EDITOR TAB -->
       <div class="main-panel" id="mt-editor">
@@ -775,6 +660,121 @@
           </div>
         </div>
       </div>
+
+      </div><!-- /center-content -->
+
+      <!-- ═══ RESIZE HANDLE ═══ -->
+      <div class="split-resize-handle" id="splitResizeHandle"></div>
+
+      <!-- ═══ CHAT PANEL (always visible) ═══ -->
+      <div class="chat-panel" id="chatPanel">
+        <!-- session bar -->
+        <div class="session-bar" id="sessionBar">
+          <div class="session-bar-left">
+            <select id="sessionSelect" class="session-select" onchange="switchSession(this.value)">
+              <option value="">No session</option>
+            </select>
+            <button class="session-btn" onclick="newSession()" title="New session">＋</button>
+            <button class="session-btn" onclick="renameCurrentSession()" title="Rename session">✏️</button>
+            <button class="session-btn danger" onclick="deleteCurrentSession()" title="Delete session">🗑</button>
+          </div>
+          <div class="session-bar-right">
+            <span class="session-info" id="sessionInfo"></span>
+            <button class="compact-btn" id="compactBtn" onclick="runCompactNow()" title="Compress conversation with claw-compactor">🦞 Compact</button>
+          </div>
+        </div>
+
+        <!-- model switcher bar -->
+        <div class="model-switcher-bar" id="modelSwitcherBar">
+          <div class="model-switcher-current" id="modelSwitcherBtn" onclick="toggleModelSwitcher()">
+            <span class="model-switcher-icon">🤖</span>
+            <span class="model-switcher-name" id="modelSwitcherName">No model loaded</span>
+            <span class="model-switcher-arrow">▾</span>
+          </div>
+          <div class="model-switcher-dropdown" id="modelSwitcherDropdown" style="display:none">
+            <div class="model-switcher-list" id="modelSwitcherList"></div>
+          </div>
+        </div>
+
+        <!-- persistent todo panel -->
+        <div class="todo-panel" id="todoPanel" style="display:none">
+          <div class="todo-panel-header" onclick="toggleTodoPanel()">
+            <span class="todo-panel-icon">📋</span>
+            <span class="todo-panel-title">Todo List</span>
+            <span class="todo-panel-count" id="todoPanelCount"></span>
+            <span class="todo-panel-toggle" id="todoPanelToggle">▾</span>
+          </div>
+          <div class="todo-panel-body" id="todoPanelBody"></div>
+        </div>
+
+        <!-- chat/output area -->
+        <div class="agent-output" id="agentOutput">
+          <div class="build-picker">
+            <div class="build-picker-icon">✦</div>
+            <div class="build-picker-title">Let's build</div>
+            <div class="build-picker-subtitle">Plan, search, or build anything</div>
+            <div class="build-picker-project" id="welcomeProjectBar">
+              <div class="bp-project-row" id="welcomeProjectRow">
+                <span class="bp-project-icon">📁</span>
+                <select id="welcomeProjectSelect" class="bp-project-select" onchange="welcomeSwitchProject(this.value)">
+                  <option value="">— Select a project —</option>
+                </select>
+                <button class="bp-project-btn" onclick="welcomePickProject()" title="Open folder">Open Folder</button>
+              </div>
+              <div class="bp-project-path" id="welcomeProjectPath"></div>
+            </div>
+            <div class="build-picker-cards">
+              <button class="build-card build-card-vibe" onclick="startSessionWithType('vibe')">
+                <span class="build-card-icon">💬</span>
+                <span class="build-card-label">Vibe</span>
+                <span class="build-card-desc">Chat and build. Jump straight in and iterate.</span>
+              </button>
+              <button class="build-card build-card-spec" onclick="openSpecPanel()">
+                <span class="build-card-icon">📐</span>
+                <span class="build-card-label">Spec</span>
+                <span class="build-card-desc">Plan first. AI generates requirements, design, and tasks before you code.</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- compact notification -->
+        <div class="compact-notice" id="compactNotice" style="display:none">
+          <span id="compactNoticeText"></span>
+          <button class="compact-notice-close" onclick="document.getElementById('compactNotice').style.display='none'">✕</button>
+        </div>
+
+        <!-- stats bar -->
+        <div class="agent-stats" id="agentStats" style="display:none"></div>
+
+        <!-- undo toggle -->
+        <div style="padding: 0 12px 4px; display:flex; justify-content:flex-end;">
+          <button class="undo-toggle-btn" id="undo-toggle-btn" onclick="toggleUndoPanel()" style="display:none" title="View and undo recent file changes">
+            ↩ Undo <span class="undo-count-badge">0</span>
+          </button>
+        </div>
+
+        <!-- input -->
+        <div class="agent-input-area">
+          <div class="agent-input-row">
+            <button class="perm-toggle auto" id="permToggle" onclick="togglePermMode()" title="Toggle auto-approve / ask before changes">🔓 Auto</button>
+            <select class="role-select" id="roleSelect" onchange="changeAgentRole(this.value)" title="Agent role">
+              <option value="general">⚡ General</option>
+            </select>
+          </div>
+          <div class="agent-input-box">
+            <div class="input-wrap" style="position:relative">
+              <div class="attached-images" id="attachedImages"></div>
+              <textarea id="agentPrompt" placeholder="Ask anything... drop images here. ⌘↵ to send" rows="3"></textarea>
+              <div class="slash-autocomplete" id="slashAutocomplete" style="display:none"></div>
+            </div>
+            <div class="input-actions">
+              <label class="attach-btn" title="Attach image">📎<input type="file" accept="image/*" multiple style="display:none" onchange="attachImages(event)"></label>
+              <button class="btn-send" id="sendBtn" onclick="sendAgent()">Send ↵</button>
+            </div>
+          </div>
+        </div>
+      </div><!-- /chat-panel -->
 
     </div>
   </div>
