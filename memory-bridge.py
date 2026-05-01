@@ -1991,7 +1991,7 @@ async def _handle_vision(payload: dict) -> AssistResponse:
     Uses the extraction model which is loaded via mlx_vlm when it has vision
     weights (e.g. Qwen3.5-0.8B). Falls back gracefully if not available.
     """
-    global _extract_model_has_vision
+    global _extract_model_has_vision, _extract_model, _extract_processor
     import time, base64, tempfile, os as _os
     t0 = time.monotonic()
 
