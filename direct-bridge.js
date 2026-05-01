@@ -1890,6 +1890,115 @@ class DirectBridge {
       recordingOptions: { dir: recordingDir, size: { width: 1280, height: 720 } },
     })
 
+    // ── Intent detection: conversational vs task ──────────────────────────────
+    // Use the fast model to classify whether the user wants to chat/discuss or
+    // wants the agent to take action (write code, fix bugs, etc.).
+    // Conversational prompts get a direct streaming response — no tools, no
+    // file tree, no project context. Much faster and more natural for discussion.
+    // Only applies to vibe mode (no systemPromptOverride) to avoid interfering
+    // with spec-driven flows.
+    if (!systemPromptOverride && !taskGraphPath) {
+      let isChat = false
+      const hasImages = images && images.length > 0
+
+      // Fast classification via the small model — takes ~200ms
+      if (assistClient) {
+        try {
+          const classifyResult = await assistClient._assistRequest('route_task', {
+            task: `Classify this user message as either "chat" or "task". Reply with ONLY the word "chat" or "task".\n- "chat" = the user wants to discuss, ask questions, brainstorm, get explanations, or talk about an image\n- "task" = the user wants you to write code, fix bugs, create files, run commands, or make changes\n\nUser message: "${prompt.slice(0, 300)}"`
+          }, 5000)
+          const routeResult = classifyResult?.result_data?.agent_type || classifyResult?.result || ''
+          isChat = routeResult.toLowerCase().includes('chat') || routeResult.toLowerCase().includes('general')
+        } catch { /* classification failed — default to task */ }
+      }
+
+      if (isChat) {
+        this.send('qwen-event', { type: 'session-start', cwd: cwd || process.cwd() })
+        this.send('qwen-event', { type: 'system', subtype: 'debug', data: '💬 Chat mode — direct response' })
+
+        try {
+          if (hasImages) {
+            // Image chat: fast model describes the image via /v1/chat/completions
+            const userContent = [{ type: 'text', text: prompt || 'Describe what you see in this image in detail.' }]
+            for (const img of images) {
+              userContent.push({ type: 'image_url', image_url: { url: img.b64 } })
+            }
+            const body = JSON.stringify({ messages: [{ role: 'user', content: userContent }], max_tokens: 1024 })
+            const result = await new Promise((resolve, reject) => {
+              const r = http.request({
+                hostname: '127.0.0.1', port: SERVER_PORT,
+                path: '/v1/chat/completions', method: 'POST',
+                timeout: 120000,
+                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+              }, (res) => {
+                let data = ''
+                res.on('data', chunk => data += chunk)
+                res.on('end', () => { try { resolve(JSON.parse(data)) } catch { reject(new Error(data || 'Empty')) } })
+              })
+              r.on('error', reject)
+              r.on('timeout', () => { r.destroy(); reject(new Error('Vision request timed out')) })
+              r.write(body)
+              r.end()
+            })
+            const text = result.choices?.[0]?.message?.content || 'Could not analyze the image.'
+            for (const word of text.split(' ')) {
+              this.send('qwen-event', { type: 'token', content: word + ' ' })
+            }
+          } else {
+            // Text chat: stream from main model with conversation history
+            const messages = []
+            if (conversationHistory && conversationHistory.length > 0) {
+              for (const m of conversationHistory.slice(-20)) {
+                messages.push({ role: m.role, content: m.content })
+              }
+            }
+            messages.push({ role: 'user', content: prompt })
+            const body = JSON.stringify({ messages, max_tokens: 2048, stream: true })
+            await new Promise((resolve, reject) => {
+              const r = http.request({
+                hostname: '127.0.0.1', port: SERVER_PORT,
+                path: '/v1/chat/completions', method: 'POST',
+                timeout: 120000,
+                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+              }, (res) => {
+                let buf = ''
+                res.on('data', chunk => {
+                  if (this._aborted) { r.destroy(); return }
+                  buf += chunk.toString()
+                  const lines = buf.split('\n')
+                  buf = lines.pop()
+                  for (const line of lines) {
+                    if (line.startsWith('data: [DONE]')) continue
+                    if (line.startsWith('data: ')) {
+                      try {
+                        const parsed = JSON.parse(line.slice(6))
+                        const delta = parsed.choices?.[0]?.delta?.content
+                        if (delta) this.send('qwen-event', { type: 'token', content: delta })
+                      } catch { /* skip */ }
+                    }
+                  }
+                })
+                res.on('end', resolve)
+                res.on('error', reject)
+              })
+              r.on('error', reject)
+              r.on('timeout', () => { r.destroy(); reject(new Error('Request timed out')) })
+              r.write(body)
+              r.end()
+              this._currentReq = r
+            })
+          }
+        } catch (err) {
+          this.send('qwen-event', { type: 'token', content: `\n\nError: ${err.message}` })
+        } finally {
+          this.send('qwen-event', { type: 'session-end' })
+          this._running = false
+          this._currentReq = null
+        }
+        return
+      }
+    }
+
     // If images are attached, describe them via the vision endpoint first,
     // then inject the description as text context for the agent loop.
     // Images always go to /v1/chat/completions which the server routes to the
