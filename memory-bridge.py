@@ -2058,6 +2058,8 @@ async def _handle_vision(payload: dict) -> AssistResponse:
 
     try:
         from mlx_vlm import generate as vlm_generate
+        from mlx_vlm.prompt_utils import apply_chat_template as vlm_apply_chat_template
+        from mlx_vlm.utils import load_config as vlm_load_config
 
         # Decode the base64 image to a temp file
         image_data = base64.b64decode(image_b64)
@@ -2066,13 +2068,18 @@ async def _handle_vision(payload: dict) -> AssistResponse:
             tmp.write(image_data)
             tmp_path = tmp.name
 
-        import sys as _sys
-        print(f"[_handle_vision] calling vlm_generate with image={tmp_path}, prompt={prompt[:50]}...", file=_sys.stderr)
         try:
+            # Build prompt with image tokens — required for Qwen3.5 VLM models.
+            # apply_chat_template injects <|vision_start|><|image_pad|><|vision_end|>
+            # so the model knows where to place image features in the embedding.
+            _vlm_config = vlm_load_config(_extract_model_path)
+            formatted_prompt = vlm_apply_chat_template(
+                _extract_processor, _vlm_config, prompt, num_images=1
+            )
             response = vlm_generate(
                 _extract_model,
                 _extract_processor,
-                prompt=prompt,
+                prompt=formatted_prompt,
                 image=tmp_path,
                 max_tokens=512,
                 verbose=False,
@@ -2083,16 +2090,13 @@ async def _handle_vision(payload: dict) -> AssistResponse:
             except Exception:
                 pass
 
-        description = response if isinstance(response, str) else str(response)
+        description = response.text if hasattr(response, 'text') else (response if isinstance(response, str) else str(response))
         description = description[:VISION_MAX_CHARS]
         output_tokens = len(description) // 4
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         return AssistResponse(result=description, elapsed_ms=elapsed_ms, output_tokens=output_tokens)
 
     except Exception as e:
-        import traceback, sys
-        print(f"[_handle_vision] EXCEPTION: {e}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
         logger.warning(f"[_handle_vision] failed: {e}", exc_info=True)
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         return AssistResponse(result=None, elapsed_ms=elapsed_ms, output_tokens=0)
