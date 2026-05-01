@@ -2114,9 +2114,15 @@ async def _handle_todo_bootstrap(payload: dict) -> AssistResponse:
     try:
         import mlx_lm
         prompt = (
-            "You are a task planner. Given the user's request, produce a JSON array of todo items.\n"
-            "Each item must have: id (integer starting at 1), content (string), status (\"pending\").\n"
+            "You are a task planner. Break the user's request into 3-5 DISTINCT implementation steps.\n"
+            "Each step must be a DIFFERENT action — never repeat the same task.\n"
+            "Each item must have: id (integer starting at 1), content (string describing ONE specific step), status (\"pending\").\n"
             "Output ONLY the JSON array, no explanation.\n\n"
+            "Example for \"build a calculator app\":\n"
+            '[{"id":1,"content":"Create HTML layout with display and buttons","status":"pending"},'
+            '{"id":2,"content":"Add CSS styling for calculator grid","status":"pending"},'
+            '{"id":3,"content":"Implement JS calculation logic","status":"pending"},'
+            '{"id":4,"content":"Add keyboard input support","status":"pending"}]\n\n'
             f"User request: {user_prompt[:800]}\n\nTodos:"
         )
         response = _extract_generate(prompt, max_tokens=400)
@@ -2125,6 +2131,7 @@ async def _handle_todo_bootstrap(payload: dict) -> AssistResponse:
             raise ValueError("No JSON array found in response")
         todos_raw = json.loads(json_match.group(0))
         todos = []
+        seen_content = set()
         for item in todos_raw:
             if not isinstance(item, dict):
                 continue
@@ -2133,7 +2140,12 @@ async def _handle_todo_bootstrap(payload: dict) -> AssistResponse:
             status = item.get("status", "pending")
             if not isinstance(item_id, int) or not isinstance(content, str) or not content.strip():
                 continue
-            todos.append({"id": item_id, "content": content, "status": "pending"})
+            # Deduplicate: skip items whose content matches a previous item (case-insensitive)
+            content_key = content.strip().lower()
+            if content_key in seen_content:
+                continue
+            seen_content.add(content_key)
+            todos.append({"id": len(todos) + 1, "content": content, "status": "pending"})
 
         output_tokens = len(response) // 4
         elapsed_ms = int((time.monotonic() - t0) * 1000)
