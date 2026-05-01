@@ -1946,8 +1946,11 @@ class DirectBridge {
               r.end()
             })
             const text = result.choices?.[0]?.message?.content || 'Could not analyze the image.'
+            // Send as text-delta events (accumulated text) — matches renderer's expected format
+            let accumulated = ''
             for (const word of text.split(' ')) {
-              this.send('qwen-event', { type: 'token', content: word + ' ' })
+              accumulated += word + ' '
+              this.send('qwen-event', { type: 'text-delta', text: accumulated })
             }
           } else {
             // Text chat: stream from main model with conversation history + project context
@@ -1961,6 +1964,7 @@ class DirectBridge {
             }
             messages.push({ role: 'user', content: prompt })
             const body = JSON.stringify({ messages, max_tokens: 2048, stream: true })
+            let _chatAccumulated = ''
             await new Promise((resolve, reject) => {
               const r = http.request({
                 hostname: '127.0.0.1', port: SERVER_PORT,
@@ -1980,7 +1984,10 @@ class DirectBridge {
                       try {
                         const parsed = JSON.parse(line.slice(6))
                         const delta = parsed.choices?.[0]?.delta?.content
-                        if (delta) this.send('qwen-event', { type: 'token', content: delta })
+                        if (delta) {
+                          _chatAccumulated = (_chatAccumulated || '') + delta
+                          this.send('qwen-event', { type: 'text-delta', text: _chatAccumulated })
+                        }
                       } catch { /* skip */ }
                     }
                   }
@@ -1996,7 +2003,7 @@ class DirectBridge {
             })
           }
         } catch (err) {
-          this.send('qwen-event', { type: 'token', content: `\n\nError: ${err.message}` })
+          this.send('qwen-event', { type: 'text-delta', text: `Error: ${err.message}` })
         } finally {
           this.send('qwen-event', { type: 'session-end' })
           this._running = false
