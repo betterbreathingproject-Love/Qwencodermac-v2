@@ -1904,50 +1904,38 @@ class DirectBridge {
       const isTaskPrompt = prompt && ACTION_RE.test(prompt)
 
       if (!isTaskPrompt) {
-        // ── Direct vision path: use fast model via /memory/assist ─────────
+        // ── Direct vision path: route through /v1/chat/completions ────────
+        // The server routes image requests to the fast model via _route_vision_request
+        // which calls _handle_vision directly (no semaphore contention).
         this.send('qwen-event', { type: 'session-start', cwd: cwd || process.cwd() })
         try {
-          const descriptions = []
+          const userContent = []
+          userContent.push({ type: 'text', text: (prompt && prompt.trim()) || 'Describe what you see in this image in detail.' })
           for (const img of images) {
-            // Strip data URI prefix — assistVision expects raw base64
-            const b64 = img.b64.replace(/^data:[^;]+;base64,/, '')
-            const mime = img.b64.match(/^data:([^;]+);/)?.[1] || 'image/png'
-            let desc = null
-            if (assistClient) {
-              desc = await assistClient.assistVision(b64, mime,
-                (prompt && prompt.trim()) || 'Describe what you see in this image in detail.')
-            }
-            if (!desc) {
-              // Fall back to /v1/chat/completions which routes to _route_vision_request
-              const userContent = [
-                { type: 'text', text: (prompt && prompt.trim()) || 'Describe what you see in this image in detail.' },
-                { type: 'image_url', image_url: { url: img.b64 } },
-              ]
-              const body = JSON.stringify({ messages: [{ role: 'user', content: userContent }], max_tokens: 1024 })
-              const result = await new Promise((resolve, reject) => {
-                const r = http.request({
-                  hostname: '127.0.0.1', port: SERVER_PORT,
-                  path: '/v1/chat/completions', method: 'POST',
-                  timeout: 120000,
-                  headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-                }, (res) => {
-                  let data = ''
-                  res.on('data', chunk => data += chunk)
-                  res.on('end', () => { try { resolve(JSON.parse(data)) } catch { reject(new Error(data || 'Empty')) } })
-                })
-                r.on('error', reject)
-                r.on('timeout', () => { r.destroy(); reject(new Error('timeout')) })
-                r.write(body)
-                r.end()
-              })
-              desc = result.choices?.[0]?.message?.content || null
-            }
-            if (desc) descriptions.push(desc)
+            userContent.push({ type: 'image_url', image_url: { url: img.b64 } })
           }
-          const fullText = descriptions.join('\n\n') || 'Could not analyze the image.'
-          // Stream the text token by token for a responsive feel
-          const words = fullText.split(' ')
-          for (const word of words) {
+          const visionMessages = [{ role: 'user', content: userContent }]
+          const body = JSON.stringify({ messages: visionMessages, max_tokens: 1024 })
+          const result = await new Promise((resolve, reject) => {
+            const r = http.request({
+              hostname: '127.0.0.1', port: SERVER_PORT,
+              path: '/v1/chat/completions', method: 'POST',
+              timeout: 120000,
+              headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+            }, (res) => {
+              let data = ''
+              res.on('data', chunk => data += chunk)
+              res.on('end', () => { try { resolve(JSON.parse(data)) } catch { reject(new Error(data || 'Empty')) } })
+            })
+            r.on('error', reject)
+            r.on('timeout', () => { r.destroy(); reject(new Error('Vision request timed out')) })
+            r.write(body)
+            r.end()
+            this._currentReq = r
+          })
+          const fullText = result.choices?.[0]?.message?.content || 'Could not analyze the image.'
+          // Stream the text word by word for a responsive feel
+          for (const word of fullText.split(' ')) {
             this.send('qwen-event', { type: 'token', content: word + ' ' })
           }
           this.send('qwen-event', { type: 'task_complete', summary: fullText })
@@ -1970,40 +1958,31 @@ class DirectBridge {
         const descriptions = []
         for (let i = 0; i < images.length; i++) {
           const img = images[i]
-          // Try fast model first (assistVision), fall back to main vision endpoint
-          let desc = null
-          if (assistClient) {
-            // Strip the data URI prefix — assistVision expects raw base64
-            const b64 = img.b64.replace(/^data:[^;]+;base64,/, '')
-            const mime = img.b64.match(/^data:([^;]+);/)?.[1] || 'image/png'
-            desc = await assistClient.assistVision(b64, mime,
-              `The user is asking: "${(prompt || '').slice(0, 200)}". Describe this image in detail, focusing on UI elements, errors, layout, and anything relevant to the task.`)
-          }
-          if (!desc) {
-            // Fall back to main vision endpoint (non-streaming)
-            const content = [
-              { type: 'text', text: `The user is asking: "${(prompt || '').slice(0, 200)}". Describe this image in detail, focusing on UI elements, errors, layout, and anything relevant to the task.` },
-              { type: 'image_url', image_url: { url: img.b64 } },
-            ]
-            const body = JSON.stringify({ messages: [{ role: 'user', content }], max_tokens: 1024 })
-            const result = await new Promise((resolve, reject) => {
-              const req = http.request({
-                hostname: '127.0.0.1', port: SERVER_PORT,
-                path: '/v1/chat/completions', method: 'POST',
-                timeout: 120000,
-                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-              }, (res) => {
-                let data = ''
-                res.on('data', chunk => data += chunk)
-                res.on('end', () => { try { resolve(JSON.parse(data)) } catch { reject(new Error(data || 'Empty response')) } })
-              })
-              req.on('timeout', () => { req.destroy(); reject(new Error('Vision request timed out')) })
-              req.on('error', reject)
-              req.write(body)
-              req.end()
+          // Route through /v1/chat/completions — server delegates to fast model
+          // via _route_vision_request (no semaphore contention with main model)
+          const visionPrompt = `The user is asking: "${(prompt || '').slice(0, 200)}". Describe this image in detail, focusing on UI elements, errors, layout, and anything relevant to the task.`
+          const content = [
+            { type: 'text', text: visionPrompt },
+            { type: 'image_url', image_url: { url: img.b64 } },
+          ]
+          const body = JSON.stringify({ messages: [{ role: 'user', content }], max_tokens: 1024 })
+          const result = await new Promise((resolve, reject) => {
+            const req = http.request({
+              hostname: '127.0.0.1', port: SERVER_PORT,
+              path: '/v1/chat/completions', method: 'POST',
+              timeout: 120000,
+              headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+            }, (res) => {
+              let data = ''
+              res.on('data', chunk => data += chunk)
+              res.on('end', () => { try { resolve(JSON.parse(data)) } catch { reject(new Error(data || 'Empty response')) } })
             })
-            desc = result.choices?.[0]?.message?.content || 'Could not analyze image.'
-          }
+            req.on('timeout', () => { req.destroy(); reject(new Error('Vision request timed out')) })
+            req.on('error', reject)
+            req.write(body)
+            req.end()
+          })
+          const desc = result.choices?.[0]?.message?.content || 'Could not analyze image.'
           descriptions.push(`[Image ${i + 1}: ${img.name}]\n${desc}`)
         }
         imageContext = `\n\n[Attached image(s) — vision analysis for task context]\n${descriptions.join('\n\n')}`
