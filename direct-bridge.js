@@ -4312,7 +4312,7 @@ The project file tree is included at the end of this prompt — read it before c
 
 ## Tool call rules
 - ALWAYS use tools to read, write, and execute. Never output code or file contents as plain text — the user cannot use it.
-- read_file: use this to read source files — NOT bash/cat. read_file handles large files correctly with line ranges and avoids output limits. Never use cat, head, or tail to read source files.
+- read_file: use this to read source files — NOT bash/cat. read_file handles large files correctly with line ranges and avoids output limits. Never use cat, head, or tail to read source files. For files under 500 lines, read the entire file at once (omit start_line/end_line). For larger files, read in chunks of 500+ lines — never page through a file 200 lines at a time.
 - edit_file: ALWAYS re-read the file with read_file in the same turn before editing. Compressed history may have stale content.
 - write_file: keep each call under 300 lines. For larger files, write the first chunk then use bash with heredoc to append.
 - bash: prefer single focused commands. Check exit codes in the output. For installs and builds (npm install, pip install, swift build, xcodebuild), the timeout is 5 minutes — use them directly. Always add non-interactive flags to suppress prompts: npm init -y, pip install --no-input, brew install --no-interaction.
