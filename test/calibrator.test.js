@@ -18,9 +18,11 @@ describe('calibrator', () => {
       const p = computeProfile(metrics)
 
       // Memory pressure: 6.123 / (6.123 + 10.456) = 6.123 / 16.579 ≈ 0.3693
-      // memoryScale = 0.5 + 0.5 * cos(0.3693 * π) ≈ 0.5 + 0.5 * 0.3987 ≈ 0.6994
+      // rawMemoryScale = 0.5 + 0.5 * cos(0.3693 * π) ≈ 0.6994
+      // balanced mode: memoryScale = 1.0 - 0.5 * (1.0 - rawMemoryScale)
       const pressure = 6.123 / (6.123 + 10.456)
-      const scale = 0.5 + 0.5 * Math.cos(pressure * Math.PI)
+      const rawScale = 0.5 + 0.5 * Math.cos(pressure * Math.PI)
+      const scale = 1.0 - 0.5 * (1.0 - rawScale)
 
       // timeoutPerTurn = max(60000, round((32768 / 40) * 1000 + 30000))
       assert.equal(p.timeoutPerTurn, 849200)
@@ -31,8 +33,8 @@ describe('calibrator', () => {
       const expectedMaxInput = Math.min(200000, Math.max(config.CALIBRATOR_FLOOR, Math.round(effectiveContext * 0.85 * scale)))
       assert.equal(p.maxInputTokens, expectedMaxInput)
 
-      // compactionThreshold = round(maxInputTokens * 0.85)
-      assert.equal(p.compactionThreshold, Math.round(expectedMaxInput * 0.85))
+      // compactionThreshold = round(maxInputTokens * 0.70)
+      assert.equal(p.compactionThreshold, Math.round(expectedMaxInput * 0.70))
 
       assert.equal(p.maxTurns, 500)
       assert.equal(p.poolTimeout, 2547600)
@@ -102,7 +104,7 @@ describe('calibrator', () => {
         peak_memory_gb: 8, available_memory_gb: 16, context_window: 1000000,
       })
       assert.equal(p.maxInputTokens, 200000)
-      assert.equal(p.compactionThreshold, 170000)
+      assert.equal(p.compactionThreshold, 140000)
     })
   })
 
@@ -116,7 +118,7 @@ describe('calibrator', () => {
         peak_memory_gb: 2, available_memory_gb: 4, context_window: 100,
       })
       assert.ok(p.maxInputTokens >= config.CALIBRATOR_FLOOR, 'Should be at or above floor')
-      assert.equal(p.compactionThreshold, Math.round(p.maxInputTokens * 0.85))
+      assert.equal(p.compactionThreshold, Math.round(p.maxInputTokens * 0.70))
     })
   })
 
@@ -132,34 +134,40 @@ describe('calibrator', () => {
     })
 
     it('moderate reduction at medium pressure', () => {
-      // peak=16, available=16 → pressure = 0.5 → cos(0.5π) = 0 → scale = 0.5
+      // peak=16, available=16 → pressure = 0.5 → cos(0.5π) = 0 → rawScale = 0.5
+      // balanced mode: scale = 1.0 - 0.5 * (1.0 - 0.5) = 0.75
       const p = computeProfile({
         generation_tps: 50, prompt_tps: 100,
         peak_memory_gb: 16, available_memory_gb: 16, context_window: 32768,
       })
-      // rawMaxInput = 84000 * 0.85 * 0.5 = 35700
       assert.ok(p.maxInputTokens >= config.CALIBRATOR_FLOOR, 'Should be at or above floor')
-      // At 50% pressure, should be reduced from max
+      // At 50% pressure in balanced mode, should still be reduced from max
       const maxPossible = Math.round(config.CONTEXT_WINDOW * 0.85 * 1.0)
       assert.ok(p.maxInputTokens < maxPossible, 'Should be reduced at 50% pressure')
     })
 
     it('scales down significantly when memory pressure is high', () => {
-      // peak=30, available=6 → pressure ≈ 0.833 → scale ≈ 0.067
-      // rawMaxInput = 84000 * 0.85 * 0.067 ≈ 4786 → clamped to floor
+      // peak=30, available=6 → pressure ≈ 0.833 → rawScale ≈ 0.067
+      // balanced mode: scale = 1.0 - 0.5 * (1.0 - 0.067) ≈ 0.534
+      // rawMaxInput = 131072 * 0.85 * 0.534 ≈ 59437 > floor
       const p = computeProfile({
         generation_tps: 50, prompt_tps: 100,
         peak_memory_gb: 30, available_memory_gb: 6, context_window: 32768,
       })
-      assert.equal(p.maxInputTokens, config.CALIBRATOR_FLOOR, 'Should hit floor at high pressure')
+      assert.ok(p.maxInputTokens >= config.CALIBRATOR_FLOOR, 'Should be at or above floor at high pressure')
+      // Should be significantly reduced from max
+      const maxPossible = Math.round(config.CONTEXT_WINDOW * 0.85 * 1.0)
+      assert.ok(p.maxInputTokens < maxPossible * 0.7, 'Should be well below max at high pressure')
     })
 
     it('hits minimum floor when memory is nearly exhausted', () => {
+      // In balanced mode, even extreme pressure only halves the penalty,
+      // so we need stable mode to actually hit the floor
       const p = computeProfile({
         generation_tps: 50, prompt_tps: 100,
         peak_memory_gb: 100, available_memory_gb: 0.01, context_window: 32768,
-      })
-      assert.equal(p.maxInputTokens, config.CALIBRATOR_FLOOR, 'Should hit floor at extreme pressure')
+      }, 'stable')
+      assert.equal(p.maxInputTokens, config.CALIBRATOR_FLOOR, 'Should hit floor at extreme pressure in stable mode')
     })
 
     it('compactionThreshold scales with maxInputTokens under memory pressure', () => {
@@ -173,8 +181,8 @@ describe('calibrator', () => {
       })
       assert.ok(pHigh.compactionThreshold < pLow.compactionThreshold,
         'Compaction threshold should be lower under high pressure')
-      assert.equal(pHigh.compactionThreshold, Math.round(pHigh.maxInputTokens * 0.85))
-      assert.equal(pLow.compactionThreshold, Math.round(pLow.maxInputTokens * 0.85))
+      assert.equal(pHigh.compactionThreshold, Math.round(pHigh.maxInputTokens * 0.70))
+      assert.equal(pLow.compactionThreshold, Math.round(pLow.maxInputTokens * 0.70))
     })
 
     it('smooth curve — no sudden jumps between adjacent pressure levels', () => {

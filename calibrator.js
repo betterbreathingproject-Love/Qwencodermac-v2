@@ -54,7 +54,7 @@ function computeProfile(metrics, mode = 'balanced') {
   const effectiveContext = Math.max(context_window, CONTEXT_WINDOW)
   const rawMaxInput = Math.round(effectiveContext * 0.85 * memoryScale)
   const maxInputTokens = Math.min(200000, Math.max(CALIBRATOR_FLOOR, rawMaxInput))
-  const compactionThreshold = Math.round(maxInputTokens * 0.85)
+  const compactionThreshold = Math.round(maxInputTokens * 0.70)
   const maxTurns = 500
   const poolTimeout = Math.max(120000, timeoutPerTurn * 3)
 

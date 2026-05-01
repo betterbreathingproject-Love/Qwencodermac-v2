@@ -2690,11 +2690,17 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         : turn < 30
           ? Math.floor(effectiveMaxInputTokens * 0.65)
           : Math.floor(effectiveMaxInputTokens * 0.55)
-      const activeCompactionThreshold = Math.min(adaptiveCompactionThreshold, effectiveCompactionThreshold)
+      // Never compact below the calibrator floor — prevents premature compaction
+      // when memory pressure has already reduced effectiveMaxInputTokens
+      const activeCompactionThreshold = Math.max(
+        config.CALIBRATOR_FLOOR,
+        Math.min(adaptiveCompactionThreshold, effectiveCompactionThreshold)
+      )
 
       // (at the compaction threshold) to give the compactor room to work before
       // hitting the hard maxInputTokens ceiling.
       if (estimateMessagesTokens(messages) > activeCompactionThreshold) {
+        this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Compaction triggered: ~${estimateMessagesTokens(messages)} tokens > threshold ${activeCompactionThreshold} (adaptive: ${adaptiveCompactionThreshold}, calibrated: ${effectiveCompactionThreshold}, turn: ${turn})` })
         const before = messages.length
         // Preserve the user's original request so compaction can't erase the task
         const originalUserMsg = messages.find(m => m.role === 'user')
@@ -2799,6 +2805,12 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         // Suppress memory re-injection for the next 3 turns so we don't
         // immediately re-inflate the context we just compressed.
         _postCompactionCooldown = 3
+
+        // Clear read-file history after compaction — the original file content
+        // has been trimmed/compressed away, so the agent genuinely needs to
+        // re-read files it wants to edit. Without this, the loop detection
+        // blocks re-reads of files whose content is no longer in context.
+        _readFileHistory.clear()
       }
 
       // ── Memory: emit memory-archive event after compaction ────────────────
@@ -3621,10 +3633,16 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           const readKey = fnArgs.path
           const prev = _readFileHistory.get(readKey)
           if (prev && prev.fullRead) {
-            const contentStillInContext = messages.some(m =>
-              m.role === 'tool' && m.content && m.content.length > 500 &&
-              m.content.includes(readKey.split('/').pop())
-            )
+            const TRIMMED_MARKERS = ['[TRIMMED for context space', '[TRUNCATED', '[compressed:']
+            const contentStillInContext = messages.some(m => {
+              if (m.role !== 'tool' || !m.content || m.content.length <= 500) return false
+              if (!m.content.includes(readKey.split('/').pop())) return false
+              const tail = m.content.slice(-300)
+              for (const marker of TRIMMED_MARKERS) {
+                if (tail.includes(marker)) return false
+              }
+              return true
+            })
             if (contentStillInContext) {
               try {
                 const resolvedPath = path.resolve(cwd, fnArgs.path.trim())
@@ -3650,13 +3668,19 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         if (fnName === 'read_files' && Array.isArray(fnArgs.paths) && fnArgs.paths.length > 0) {
           const alreadyRead = []
           const needsRead = []
+          const TRIMMED_MARKERS = ['[TRIMMED for context space', '[TRUNCATED', '[compressed:']
           for (const filePath of fnArgs.paths) {
             const prev = _readFileHistory.get(filePath)
             if (prev && prev.fullRead) {
-              const contentStillInContext = messages.some(m =>
-                m.role === 'tool' && m.content && m.content.length > 500 &&
-                m.content.includes(filePath.split('/').pop())
-              )
+              const contentStillInContext = messages.some(m => {
+                if (m.role !== 'tool' || !m.content || m.content.length <= 500) return false
+                if (!m.content.includes(filePath.split('/').pop())) return false
+                const tail = m.content.slice(-300)
+                for (const marker of TRIMMED_MARKERS) {
+                  if (tail.includes(marker)) return false
+                }
+                return true
+              })
               if (contentStillInContext) {
                 try {
                   const resolvedPath = path.resolve(cwd, filePath.trim())
@@ -4272,6 +4296,9 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
               `If you are unsure what to change, pick the most important file and start editing it.`,
           })
           this.send('qwen-event', { type: 'system', subtype: 'warning', data: `⚠️ Read-only loop detected (${consecutiveReadsWithoutWrite} reads, 0 writes) — nudging agent to start editing` })
+          // Clear read history so the agent can re-read files if it genuinely
+          // needs content that was trimmed during compaction
+          _readFileHistory.clear()
           consecutiveReadsWithoutWrite = 0
         }
 

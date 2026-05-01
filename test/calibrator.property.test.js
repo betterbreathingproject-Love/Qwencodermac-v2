@@ -52,7 +52,11 @@ describe('Feature: adaptive-agent-calibration — calibrator property tests', ()
         const memoryPressure = metrics.available_memory_gb > 0
           ? Math.min(1, metrics.peak_memory_gb / (metrics.peak_memory_gb + metrics.available_memory_gb))
           : 0.5
-        const memoryScale = 0.5 + 0.5 * Math.cos(memoryPressure * Math.PI)
+        const rawMemoryScale = 0.5 + 0.5 * Math.cos(memoryPressure * Math.PI)
+
+        // Apply balanced mode: pressureWeight = 0.5
+        // memoryScale = 1.0 - pressureWeight * (1.0 - rawMemoryScale)
+        const memoryScale = 1.0 - 0.5 * (1.0 - rawMemoryScale)
 
         // effectiveContext = max(context_window, CONTEXT_WINDOW)
         // maxInputTokens = clamp(round(effectiveContext * 0.85 * memoryScale), CALIBRATOR_FLOOR, 200000)
@@ -61,8 +65,8 @@ describe('Feature: adaptive-agent-calibration — calibrator property tests', ()
         assert.equal(profile.maxInputTokens, expectedMaxInput,
           `maxInputTokens mismatch for context_window=${metrics.context_window}`)
 
-        // compactionThreshold = round(maxInputTokens * 0.85)
-        const expectedCompaction = Math.round(expectedMaxInput * 0.85)
+        // compactionThreshold = round(maxInputTokens * 0.70)
+        const expectedCompaction = Math.round(expectedMaxInput * 0.70)
         assert.equal(profile.compactionThreshold, expectedCompaction,
           `compactionThreshold mismatch`)
 
