@@ -335,13 +335,15 @@ async def initialize(data_dir: str = "~/.qwencoder/memory/"):
         await _kg.init()
         logger.info(f"KnowledgeGraph initialized: {kg_path}")
 
-        # Initialize VectorMemory with sentence-transformers (all-MiniLM-L6-v2)
-        # Uses 'local' mode — sentence-transformers is installed and works on Apple Silicon.
-        # Falls back gracefully if the model can't load.
+        # Initialize VectorMemory with ONNX embedding (CPU-only, no Metal conflict)
+        # Uses all-MiniLM-L6-v2 ONNX model for 0.3ms/embed CPU inference.
+        # This avoids the Metal race condition that crashes the server when
+        # sentence-transformers (which uses MPS/Metal) runs alongside the main MLX model.
         vm_path = str(data_path / "vector-memory.db")
-        _vm = VectorMemory(vm_path, embed_mode="local")
+        onnx_model_path = str(Path(os.path.expanduser("~/.qwencoder/models/minilm-onnx")))
+        _vm = VectorMemory(vm_path, embed_mode="onnx", onnx_path=onnx_model_path)
         await _vm.init()
-        logger.info(f"VectorMemory initialized (embed_mode=local, all-MiniLM-L6-v2): {vm_path}")
+        logger.info(f"VectorMemory initialized (embed_mode=onnx, CPU-only): {vm_path}")
 
         # Initialize Archive with JSONL storage + FTS5 index
         archive_dir = str(data_path / "archive")
