@@ -1903,8 +1903,8 @@ class DirectBridge {
 
       if (hasImages) {
         // Images attached — always chat mode (describe the image).
-        // If the user wants the agent to act on the image, the normal agent loop
-        // handles it via the imageContext injection below.
+        // The fast model is also the vision model; running both concurrently
+        // causes semaphore contention. Chat mode avoids that race.
         isChat = true
       } else if (assistClient) {
         // Text-only: use fast model to classify intent (~200ms)
@@ -1913,13 +1913,16 @@ class DirectBridge {
             task: `Classify this user message as either "chat" or "task". Reply with ONLY the word "chat" or "task".\n- "chat" = the user wants to discuss, ask questions, brainstorm, get explanations\n- "task" = the user wants you to write code, fix bugs, create files, run commands, or make changes\n\nUser message: "${prompt.slice(0, 300)}"`
           }, 5000)
           const routeResult = classifyResult?.result_data?.agent_type || classifyResult?.result || ''
-          isChat = routeResult.toLowerCase().includes('chat') || routeResult.toLowerCase().includes('general')
+          // Only treat as chat if the classifier explicitly says "chat".
+          // Do NOT treat "general" as chat — "general" is the fallback task agent role.
+          isChat = routeResult.toLowerCase().trim() === 'chat'
         } catch { /* classification failed — default to task */ }
       }
 
       if (isChat) {
         this.send('qwen-event', { type: 'session-start', cwd: cwd || process.cwd() })
         this.send('qwen-event', { type: 'system', subtype: 'debug', data: '💬 Chat mode — direct response' })
+        this.send('qwen-event', { type: 'agent-role', role: 'chat' })
 
         try {
           if (hasImages) {

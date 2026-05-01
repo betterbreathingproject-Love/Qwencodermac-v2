@@ -116,6 +116,10 @@ const ROLE_OVERLAYS = {
 
   'general':
     'You are a general-purpose coding assistant. Adapt your approach to whatever the task requires.',
+
+  'chat':
+    'You are in CHAT mode. Answer questions, explain concepts, brainstorm, and discuss code directly in your response.\n' +
+    'You may include code snippets and examples inline. Do NOT call tools or write files — respond conversationally.',
 }
 
 // ── Routing instruction builder for branch point tasks ────────────────────────
