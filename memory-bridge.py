@@ -1942,7 +1942,16 @@ def _extract_generate(prompt: str, max_tokens: int = 400) -> str:
     the VLM processor (e.g. Qwen3VLProcessor) lacks eos_token_id. In that case we use
     mlx_vlm.generate with no image, which works for text-only prompts too.
     """
-    if _extract_model_has_vision:
+    # Check both the flag and the processor type at runtime (self-heal for models
+    # loaded before the vision-detection code existed)
+    _processor_type = type(_extract_processor).__name__
+    _is_vlm = _extract_model_has_vision or (
+        hasattr(_extract_processor, 'image_processor') or
+        'VL' in _processor_type or
+        'Vision' in _processor_type or
+        'vlm' in _processor_type.lower()
+    )
+    if _is_vlm:
         # Model loaded via mlx_vlm — use vlm generate with no image
         from mlx_vlm import generate as vlm_generate
         return vlm_generate(
@@ -1976,10 +1985,25 @@ async def _handle_vision(payload: dict) -> AssistResponse:
 
     # If the extraction model was loaded as text-only (no vision weights),
     # it cannot process images — return None so the caller falls back gracefully.
+    # Self-heal: if the flag is False but the processor is actually a VLM processor
+    # (loaded before the vision-detection code existed), correct the flag at runtime.
     if not _extract_model_has_vision:
-        elapsed_ms = int((time.monotonic() - t0) * 1000)
-        logger.debug("[_handle_vision] extraction model is text-only, cannot process images")
-        return AssistResponse(result=None, elapsed_ms=elapsed_ms, output_tokens=0)
+        global _extract_model_has_vision
+        # Check if the processor has vision capabilities at runtime
+        _processor_type = type(_extract_processor).__name__
+        _has_vision_runtime = (
+            hasattr(_extract_processor, 'image_processor') or
+            'VL' in _processor_type or
+            'Vision' in _processor_type or
+            'vlm' in _processor_type.lower()
+        )
+        if _has_vision_runtime:
+            logger.info(f"[_handle_vision] self-healing: processor type '{_processor_type}' has vision — correcting _extract_model_has_vision flag")
+            _extract_model_has_vision = True
+        else:
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            logger.debug("[_handle_vision] extraction model is text-only, cannot process images")
+            return AssistResponse(result=None, elapsed_ms=elapsed_ms, output_tokens=0)
 
     try:
         from mlx_vlm import generate as vlm_generate
