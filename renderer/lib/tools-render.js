@@ -37,7 +37,7 @@ function _renderToolParams(input) {
 function renderToolUse(name, input, status='running') {
   const id = 'tool-' + Date.now() + '-' + Math.random().toString(36).slice(2,6)
 
-  const icons = { read_file:'📖', read_files:'📚', write_file:'✏️', edit_file:'✏️', bash:'⚡', search:'🔍', list_dir:'📁',
+  const icons = { read_file:'📖', read_files:'📚', write_file:'✏️', edit_file:'✏️', edit_files:'✏️', bash:'⚡', search:'🔍', list_dir:'📁',
     browser_navigate:'🌐', browser_screenshot:'📸', browser_click:'👆', browser_type:'⌨️',
     browser_get_text:'📄', browser_get_html:'🧾', browser_evaluate:'⚙️', browser_wait_for:'⏳',
     browser_select_option:'☑️', browser_close:'🚪', vision_analyze:'👁️',

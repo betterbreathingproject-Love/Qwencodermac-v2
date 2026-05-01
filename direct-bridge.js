@@ -403,6 +403,32 @@ const TOOL_DEFS = [
   {
     type: 'function',
     function: {
+      name: 'edit_files',
+      description: 'Apply multiple edits across one or more files in a single call. Much faster than calling edit_file repeatedly. Each edit is a find-and-replace operation. Edits are applied in order.',
+      parameters: {
+        type: 'object',
+        properties: {
+          edits: {
+            type: 'array',
+            description: 'Array of edit operations to apply',
+            items: {
+              type: 'object',
+              properties: {
+                path: { type: 'string', description: 'File path to edit' },
+                old_string: { type: 'string', description: 'Exact string to find and replace' },
+                new_string: { type: 'string', description: 'Replacement string' },
+              },
+              required: ['path', 'old_string', 'new_string'],
+            },
+          },
+        },
+        required: ['edits'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'list_dir',
       description: 'List files and directories at the given path. Returns names with / suffix for directories. When called on the project root ("."), returns a full recursive file tree — use this to get a complete picture of what files exist before searching.',
       parameters: {
@@ -1626,6 +1652,68 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         if (notify && notify._sessionId) undoRecord(notify._sessionId, p, content, _editedContent, 'edit_file')
         fs.writeFileSync(p, _editedContent, 'utf-8')
         return { result: `Edited ${args.path}` }
+      }
+      case 'edit_files': {
+        if (!Array.isArray(args.edits) || args.edits.length === 0) {
+          return { error: 'edits must be a non-empty array of edit operations' }
+        }
+        // Cap at 20 edits per call
+        const edits = args.edits.slice(0, 20)
+        const results = []
+        let successCount = 0
+        let errorCount = 0
+        for (let i = 0; i < edits.length; i++) {
+          const edit = edits[i]
+          if (!edit.path || typeof edit.old_string !== 'string' || typeof edit.new_string !== 'string') {
+            results.push(`Edit ${i + 1}: ❌ Missing required fields (path, old_string, new_string)`)
+            errorCount++
+            continue
+          }
+          const v = validatePath(edit.path)
+          if (v.error) {
+            results.push(`Edit ${i + 1} (${edit.path}): ❌ ${v.error}`)
+            errorCount++
+            continue
+          }
+          const ep = v.resolved
+          if (!fs.existsSync(ep)) {
+            results.push(`Edit ${i + 1} (${edit.path}): ❌ File not found`)
+            errorCount++
+            continue
+          }
+          // Guard: reject truncation artifacts
+          const _TRUNC_MARKERS = ['[TRUNCATED — original length', '... [truncated', '\n\n[compressed:', 'call read_file again with start_line=']
+          let hasArtifact = false
+          for (const marker of _TRUNC_MARKERS) {
+            if (edit.new_string.includes(marker)) { hasArtifact = true; break }
+          }
+          if (hasArtifact) {
+            results.push(`Edit ${i + 1} (${edit.path}): ❌ new_string contains truncation artifact`)
+            errorCount++
+            continue
+          }
+          const fileContent = fs.readFileSync(ep, 'utf-8')
+          if (!fileContent.includes(edit.old_string)) {
+            results.push(`Edit ${i + 1} (${edit.path}): ❌ old_string not found`)
+            errorCount++
+            continue
+          }
+          const matchCount = fileContent.split(edit.old_string).length - 1
+          if (matchCount > 1) {
+            results.push(`Edit ${i + 1} (${edit.path}): ❌ old_string found ${matchCount} times — make it more specific`)
+            errorCount++
+            continue
+          }
+          const newContent = fileContent.replace(edit.old_string, edit.new_string)
+          if (notify && notify._sessionId) undoRecord(notify._sessionId, ep, fileContent, newContent, 'edit_files')
+          fs.writeFileSync(ep, newContent, 'utf-8')
+          results.push(`Edit ${i + 1} (${edit.path}): ✅ Applied`)
+          successCount++
+        }
+        if (args.edits.length > 20) {
+          results.push(`\n[Note: only first 20 of ${args.edits.length} edits were applied]`)
+        }
+        return { result: `${successCount} edits applied, ${errorCount} failed:\n${results.join('\n')}` }
       }
       case 'list_dir': {
         const listPath = (args && args.path != null) ? args.path : '.'
@@ -4516,6 +4604,7 @@ The project file tree is included at the end of this prompt — read it before c
 - read_file: use this to read source files — NOT bash/cat. read_file handles large files correctly with line ranges and avoids output limits. Never use cat, head, or tail to read source files. For files under 500 lines, read the entire file at once (omit start_line/end_line). For larger files, read in chunks of 500+ lines — never page through a file 200 lines at a time.
 - read_files: use this when you need to read 2 or more files. Pass an array of paths and get all contents in one call. Much faster than calling read_file multiple times.
 - edit_file: ALWAYS re-read the file with read_file in the same turn before editing. Compressed history may have stale content.
+- edit_files: use this when you need to make edits across multiple files in one step. Pass an array of {path, old_string, new_string} objects. Much faster than calling edit_file repeatedly.
 - write_file: keep each call under 300 lines. For larger files, write the first chunk then use bash with heredoc to append.
 - bash: prefer single focused commands. Check exit codes in the output. For installs and builds (npm install, pip install, swift build, xcodebuild), the timeout is 5 minutes — use them directly. Always add non-interactive flags to suppress prompts: npm init -y, pip install --no-input, brew install --no-interaction.
 - search_files: use regex patterns. Narrow with path/include filters to avoid noise.

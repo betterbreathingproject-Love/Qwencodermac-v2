@@ -267,8 +267,8 @@ agentPool.registerType({ name: 'tester', systemPrompt: '', allowedTools: [
   'xcode_get_coverage_report', 'xcode_get_file_coverage',
   'xcode_get_bundle_id', 'xcode_get_app_path', 'xcode_record_video',
 ] })
-agentPool.registerType({ name: 'implementation', systemPrompt: '', allowedTools: ['read_file', 'read_files', 'write_file', 'edit_file', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch'], timeout: 1800000 }) // 30 min
-agentPool.registerType({ name: 'general', systemPrompt: '', allowedTools: ['read_file', 'read_files', 'write_file', 'edit_file', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch'], timeout: 1800000 }) // 30 min
+agentPool.registerType({ name: 'implementation', systemPrompt: '', allowedTools: ['read_file', 'read_files', 'write_file', 'edit_file', 'edit_files', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch'], timeout: 1800000 }) // 30 min
+agentPool.registerType({ name: 'general', systemPrompt: '', allowedTools: ['read_file', 'read_files', 'write_file', 'edit_file', 'edit_files', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch'], timeout: 1800000 }) // 30 min
 
 // ── shared accessors for IPC modules ──────────────────────────────────────────
 const ctx = {
@@ -561,7 +561,7 @@ ipcMain.handle('agent-role-generate', async (_, { name, description, existingPro
     })
   }
 
-  const allTools = ['read_file', 'read_files', 'write_file', 'edit_file', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch', 'browser_navigate', 'browser_screenshot', 'browser_click', 'browser_type', 'browser_get_text', 'browser_evaluate', 'browser_wait_for', 'browser_close']
+  const allTools = ['read_file', 'read_files', 'write_file', 'edit_file', 'edit_files', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch', 'browser_navigate', 'browser_screenshot', 'browser_click', 'browser_type', 'browser_get_text', 'browser_evaluate', 'browser_wait_for', 'browser_close']
   const prompt = `You are helping configure a specialized AI coding agent role.
 
 Role name: ${name}
