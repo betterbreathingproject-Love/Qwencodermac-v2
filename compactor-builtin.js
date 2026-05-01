@@ -317,7 +317,12 @@ function compressText(text, contentType = 'auto') {
   if (!text) return { compressed: text, stats: { compressed: false, original_tokens: 0, compressed_tokens: 0, reduction_pct: 0 } }
 
   const originalTokens = estimateTokens(text)
-  const maxTokens = 4000 // target compressed size
+  // Target 15% of context window for compressed tool output.
+  // With 84K context, that's ~12,600 tokens (~50K chars) — enough to hold
+  // most source files without aggressive truncation. The old 4K target was
+  // too aggressive and caused the model to re-read files it already had.
+  const config = require('./config')
+  const maxTokens = Math.max(4000, Math.floor(config.CONTEXT_WINDOW * 0.15))
   const maxChars = maxTokens * 4
 
   // Apply type-specific compression first

@@ -1039,10 +1039,16 @@ function estimateMessagesTokens(messages) {
   let total = 0
   for (const msg of messages) {
     total += estimateTokens(msg.content || '')
-    // Tool calls in assistant messages
+    // Tool calls in assistant messages — arguments may be objects (post-parse)
+    // or strings (pre-parse). Handle both.
     if (msg.tool_calls) {
       for (const tc of msg.tool_calls) {
-        total += estimateTokens(tc.function?.arguments || '')
+        const args = tc.function?.arguments
+        if (typeof args === 'string') {
+          total += estimateTokens(args)
+        } else if (args && typeof args === 'object') {
+          total += estimateTokens(JSON.stringify(args))
+        }
         total += estimateTokens(tc.function?.name || '')
       }
     }
@@ -2411,6 +2417,43 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       let _archivedCount = 0
       let _archiveStatus = 'skipped'
 
+      // ── Proactive context hygiene ──────────────────────────────────────────
+      // Before checking compaction, prune low-value messages that accumulate
+      // over long sessions. This keeps the context lean so compaction triggers
+      // less often, preserving more useful content for the model.
+      if (turn > 0 && turn % 5 === 0 && messages.length > 12) {
+        const keepRecent = 8  // always keep the last N messages intact
+        const cutoff = messages.length - keepRecent
+        let pruned = 0
+        for (let pi = 1; pi < cutoff; pi++) {  // skip messages[0] (system prompt)
+          const m = messages[pi]
+          if (!m || !m.content) continue
+
+          // Prune stale system nudges (STATUS, BLOCKED, REJECTED, planning nudges)
+          // These are injected by the agent loop and become stale after a few turns.
+          if (m.role === 'system' && /^(STATUS:|BLOCKED:|REJECTED:|WARNING:|NOTICE:|You described what|You are STUCK|STOP\.)/.test(m.content)) {
+            messages.splice(pi, 1)
+            pi--
+            pruned++
+            continue
+          }
+
+          // Prune short write_file/edit_file confirmations from old turns.
+          // "Wrote 500 chars to file.js" and "Edited file.js" are useful for
+          // one turn but waste tokens after that — the file is on disk.
+          if (m.role === 'tool' && m.content.length < 200 &&
+              /^(Wrote \d+ chars to |Edited |Updated todo list|Todo list edited)/.test(m.content)) {
+            messages.splice(pi, 1)
+            pi--
+            pruned++
+            continue
+          }
+        }
+        if (pruned > 0) {
+          this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Context hygiene: pruned ${pruned} stale messages (~${pruned * 50} tokens saved)` })
+        }
+      }
+
       // Compress context if it's getting too large — trigger compaction early
       // (at the compaction threshold) to give the compactor room to work before
       // hitting the hard maxInputTokens ceiling.
@@ -2551,6 +2594,14 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
             projectId: path.basename(cwd),
           })
           if (memResult && memResult.results && memResult.results.length > 0) {
+            // Remove any previous [Memory Context] injection to avoid accumulation.
+            // Each turn gets a fresh retrieval — stale ones waste context space.
+            for (let mi = messages.length - 1; mi >= 0; mi--) {
+              if (messages[mi].role === 'system' && messages[mi].content &&
+                  messages[mi].content.startsWith('[Memory Context]')) {
+                messages.splice(mi, 1)
+              }
+            }
             // Build memory context string
             const memLines = memResult.results.map(r => `[${r.source}] ${r.content}`).join('\n')
             const memContextMsg = {
