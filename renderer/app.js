@@ -1133,7 +1133,10 @@ async function saveChatSnapshot() {
   if (!out) return
   // Don't snapshot the empty "Let's build" picker
   if (out.querySelector('.build-picker')) return
-  const snapshot = out.innerHTML
+  // Clone the output so we can strip open thinking blocks without mutating the live DOM
+  const clone = out.cloneNode(true)
+  clone.querySelectorAll('details.msg-thinking').forEach(el => el.removeAttribute('open'))
+  const snapshot = clone.innerHTML
   if (snapshot) {
     await window.app.saveSessionSnapshot(activeProjectId, activeSessionId, snapshot)
   }
@@ -1151,6 +1154,9 @@ async function restoreChatFromSnapshot() {
   if (snapshot) {
     const out = document.getElementById('agentOutput')
     out.innerHTML = snapshot
+    // Always collapse thinking blocks on restore — they can be huge and
+    // the user can expand them manually if needed.
+    out.querySelectorAll('details.msg-thinking').forEach(el => el.removeAttribute('open'))
     scrollOutput()
   } else {
     restoreChat()
