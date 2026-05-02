@@ -2605,9 +2605,14 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
             })
           }
         } catch (err) {
-          this.send('qwen-event', { type: 'text-delta', text: `Error: ${err.message}` })
+          if (!this._aborted) {
+            this.send('qwen-event', { type: 'text-delta', text: `Error: ${err.message}` })
+          }
         } finally {
-          this.send('qwen-event', { type: 'session-end' })
+          // Only send session-end here if not aborted — interrupt() already sent it
+          if (!this._aborted) {
+            this.send('qwen-event', { type: 'session-end' })
+          }
           this._running = false
           this._currentReq = null
         }

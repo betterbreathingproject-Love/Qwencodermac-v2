@@ -1342,7 +1342,7 @@ async function sendAgentMode(prompt, opts = {}) {
   isGenerating = true
   const btn = document.getElementById('sendBtn')
   btn.disabled=false; btn.innerHTML='<span class="spinner"></span>Stop'; btn.className='btn-send btn-stop'
-  btn.onclick = () => { window.app.qwenInterrupt(); finishGeneration() }
+  btn.onclick = () => { window.app.qwenInterrupt() }
 
   const out = document.getElementById('agentOutput')
   if(out.querySelector('.agent-welcome') || out.querySelector('.build-picker')) out.innerHTML = ''
