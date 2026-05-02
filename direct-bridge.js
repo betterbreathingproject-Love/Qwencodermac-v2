@@ -4311,7 +4311,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         // that never materialises). Skip the redundant write and confirm it
         // already succeeded — this breaks the no-op write loop without
         // executing the write again (which would reset mtime and confuse LSP).
-        if (fnName === 'write_file' && !isError && fnArgs.path && typeof fnArgs.content === 'string') {
+        if (fnName === 'write_file' && fnArgs.path && typeof fnArgs.content === 'string') {
           const _wKey = fnArgs.path
           const _wHash = require('node:crypto').createHash('sha1').update(fnArgs.content).digest('hex').slice(0, 16)
           const _wPrev = _writeHistory.get(_wKey)
