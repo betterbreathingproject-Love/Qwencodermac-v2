@@ -394,15 +394,20 @@
       <div class="step-line"></div>
       <div class="step-item" id="step-nav-2">
         <div class="step-dot">3</div>
-        <span>Calibrate</span>
+        <span>Deps</span>
       </div>
       <div class="step-line"></div>
       <div class="step-item" id="step-nav-3">
         <div class="step-dot">4</div>
-        <span>Calibrate</span>
+        <span>Permissions</span>
       </div>
       <div class="step-line"></div>
       <div class="step-item" id="step-nav-4">
+        <div class="step-dot">5</div>
+        <span>Calibrate</span>
+      </div>
+      <div class="step-line"></div>
+      <div class="step-item" id="step-nav-5">
         <div class="step-dot">✓</div>
         <span>Ready</span>
       </div>
@@ -517,8 +522,23 @@
       </div>
     </div>
 
-    <!-- ── PANEL 2: CALIBRATE ── -->
+    <!-- ── PANEL 3: PERMISSIONS ── -->
     <div class="panel" id="panel-3">
+      <div class="section-title">macOS Permissions</div>
+      <div class="section-sub">Some agent tools need system-level access. Grant what you need — you can change these any time in Settings.</div>
+
+      <div id="wizardPermList" style="display:flex;flex-direction:column;gap:10px;"></div>
+
+      <div class="alert alert-info" style="margin-top:20px;">
+        <span>ℹ️</span>
+        <div>
+          <strong>You can skip this step.</strong> Permissions can be granted later from the Settings panel (⚙️). The app works without them — only the specific tools that need them will be unavailable.
+        </div>
+      </div>
+    </div>
+
+    <!-- ── PANEL 4: CALIBRATE ── -->
+    <div class="panel" id="panel-4">
       <div class="section-title">Calibrating Your Mac</div>
       <div class="section-sub">We run a quick benchmark to tune token budgets and timeouts for your exact hardware.</div>
 
@@ -550,8 +570,8 @@
       </div>
     </div>
 
-    <!-- ── PANEL 3: DONE ── -->
-    <div class="panel" id="panel-4">
+    <!-- ── PANEL 5: DONE ── -->
+    <div class="panel" id="panel-5">
       <div class="done-hero">
         <span class="done-icon">🚀</span>
         <h1>You're all set!</h1>
@@ -585,7 +605,7 @@ let setupInfo = null          // from setup-get-info
 let selectedTierIdx = 0       // which tier is shown
 let calibDone = false
 let calibSkipped = false
-const TOTAL_STEPS = 5
+const TOTAL_STEPS = 6
 
 // ── IPC bridge (Electron preload exposes window.setup) ─────────────────────
 const ipc = window.setup || {
@@ -603,6 +623,8 @@ const ipc = window.setup || {
   isComplete: () => Promise.resolve({ complete: false }),
   calibStatus:() => Promise.resolve({ status: 'unavailable', profile: null }),
   onCalibComplete: (cb) => {},
+  checkPermissions: () => Promise.resolve({}),
+  openSystemPrefs:  (id) => Promise.resolve({ ok: true }),
 }
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
@@ -651,10 +673,15 @@ function showPanel(idx) {
     updateModelsFooterHint()
   } else if (idx === 3) {
     nextBtn.textContent = 'Continue →'
+    nextBtn.disabled = false
+    footerHint.textContent = ''
+    startPermissionsCheck()
+  } else if (idx === 4) {
+    nextBtn.textContent = 'Continue →'
     nextBtn.disabled = true
     footerHint.textContent = ''
     startCalibrationWatch()
-  } else if (idx === 4) {
+  } else if (idx === 5) {
     nextBtn.textContent = 'Launch QwenCoder →'
     footerHint.textContent = ''
     buildDoneSummary()
@@ -962,7 +989,121 @@ async function rescanModels() {
   }
 }
 
-// ── Step 2: Calibration ────────────────────────────────────────────────────
+// ── Step 3: Permissions ────────────────────────────────────────────────────
+
+const WIZARD_PERM_META = [
+  {
+    id: 'accessibility',
+    icon: '🖱️',
+    label: 'Accessibility',
+    description: 'Lets agents move the mouse and simulate keyboard input for desktop automation.',
+    required: false,
+    usedBy: 'desktop_mouse_move, desktop_mouse_click, desktop_keyboard_type, desktop_keyboard_press',
+  },
+  {
+    id: 'screenRecording',
+    icon: '🖥️',
+    label: 'Screen Recording',
+    description: 'Lets agents capture screenshots of your desktop so they can see what\'s on screen.',
+    required: false,
+    usedBy: 'desktop_screenshot',
+  },
+  {
+    id: 'microphone',
+    icon: '🎙️',
+    label: 'Microphone',
+    description: 'Required for voice input. Not used in the current release — grant when you\'re ready.',
+    required: false,
+    usedBy: 'Voice input (future)',
+  },
+  {
+    id: 'camera',
+    icon: '📷',
+    label: 'Camera',
+    description: 'Required for webcam-based vision analysis. Not used in the current release.',
+    required: false,
+    usedBy: 'Webcam vision (future)',
+  },
+  {
+    id: 'fullDiskAccess',
+    icon: '💾',
+    label: 'Full Disk Access',
+    description: 'Allows reading and writing files outside your home folder — useful for system-wide projects.',
+    required: false,
+    usedBy: 'read_file, write_file (for paths outside ~/)',
+  },
+]
+
+const WIZARD_PERM_STATUS = {
+  'granted':        { text: 'Granted',    color: '#34d399' },
+  'denied':         { text: 'Denied',     color: '#f87171' },
+  'not-determined': { text: 'Not set',    color: '#fb923c' },
+  'restricted':     { text: 'Restricted', color: '#f87171' },
+  'unknown':        { text: 'Unknown',    color: '#7a7a9a' },
+}
+
+async function startPermissionsCheck() {
+  const list = document.getElementById('wizardPermList')
+  if (!list) return
+
+  // Render skeleton rows immediately
+  list.innerHTML = ''
+  WIZARD_PERM_META.forEach(perm => {
+    const row = _buildPermRow(perm, 'unknown')
+    list.appendChild(row)
+  })
+
+  // Fetch real statuses
+  let statuses = {}
+  try {
+    statuses = await ipc.checkPermissions()
+  } catch (_) {}
+
+  // Re-render with real statuses
+  list.innerHTML = ''
+  WIZARD_PERM_META.forEach(perm => {
+    const row = _buildPermRow(perm, statuses[perm.id] || 'unknown')
+    list.appendChild(row)
+  })
+}
+
+function _buildPermRow(perm, statusKey) {
+  const { text: statusText, color: statusColor } = WIZARD_PERM_STATUS[statusKey] || WIZARD_PERM_STATUS['unknown']
+  const isGranted = statusKey === 'granted'
+
+  const row = document.createElement('div')
+  row.style.cssText = `
+    display:flex; align-items:flex-start; gap:14px;
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:12px; padding:16px 18px;
+    transition:border-color .15s;
+  `
+  if (isGranted) row.style.borderColor = 'rgba(52,211,153,0.25)'
+
+  row.innerHTML = `
+    <span style="font-size:24px;flex-shrink:0;margin-top:2px;">${perm.icon}</span>
+    <div style="flex:1;min-width:0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;">
+        <span style="font-size:14px;font-weight:700;color:#e8e8f0;">${perm.label}</span>
+        <span style="font-size:11px;font-weight:600;color:${statusColor};flex-shrink:0;
+          background:${statusColor}18;padding:2px 8px;border-radius:6px;">${statusText}</span>
+      </div>
+      <div style="font-size:13px;color:#7a7a9a;line-height:1.5;margin-bottom:6px;">${perm.description}</div>
+      <div style="font-size:11px;color:#5a5a7a;">Used by: <code style="color:#4fc3f7;font-size:10px;">${perm.usedBy}</code></div>
+    </div>
+    ${!isGranted ? `
+      <button class="btn btn-sm btn-lmstudio" style="flex-shrink:0;margin-top:2px;font-size:11px;"
+        onclick="ipc.openSystemPrefs('${perm.id}').catch(()=>{})">
+        Open Settings →
+      </button>
+    ` : `
+      <span style="font-size:18px;flex-shrink:0;margin-top:2px;">✅</span>
+    `}
+  `
+  return row
+}
+
+// ── Step 4: Calibration ────────────────────────────────────────────────────
 let calibWatchInterval = null
 
 async function startCalibrationWatch() {

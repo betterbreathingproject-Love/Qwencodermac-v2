@@ -731,6 +731,107 @@ async function saveAutoLoadSetting(enabled) {
   await window.app.saveAppSettings({ autoLoadOnStartup: enabled })
 }
 
+// ── macOS permissions ─────────────────────────────────────────────────────────
+
+// Permission metadata: id, label, description, required, usedBy
+const PERMISSION_META = [
+  {
+    id: 'accessibility',
+    icon: '🖱️',
+    label: 'Accessibility',
+    description: 'Lets agents control the mouse and keyboard for desktop automation tasks.',
+    required: false,
+    usedBy: 'Desktop automation (mouse_click, keyboard_type, keyboard_press)',
+  },
+  {
+    id: 'screenRecording',
+    icon: '🖥️',
+    label: 'Screen Recording',
+    description: 'Lets agents capture screenshots of your desktop to see what\'s on screen.',
+    required: false,
+    usedBy: 'Desktop automation (desktop_screenshot)',
+  },
+  {
+    id: 'microphone',
+    icon: '🎙️',
+    label: 'Microphone',
+    description: 'Required for voice input features (future). Not used in the current release.',
+    required: false,
+    usedBy: 'Voice input (not yet active)',
+  },
+  {
+    id: 'camera',
+    icon: '📷',
+    label: 'Camera',
+    description: 'Required for webcam-based vision analysis (future). Not used in the current release.',
+    required: false,
+    usedBy: 'Webcam vision (not yet active)',
+  },
+  {
+    id: 'fullDiskAccess',
+    icon: '💾',
+    label: 'Full Disk Access',
+    description: 'Allows reading files outside your home folder. Useful when working on projects in protected locations.',
+    required: false,
+    usedBy: 'File read/write tools (read_file, write_file)',
+  },
+]
+
+const PERM_STATUS_LABEL = {
+  'granted':        { text: 'Granted',       color: 'var(--green)' },
+  'denied':         { text: 'Denied',        color: 'var(--red)' },
+  'not-determined': { text: 'Not set',       color: 'var(--orange)' },
+  'restricted':     { text: 'Restricted',    color: 'var(--red)' },
+  'unknown':        { text: 'Unknown',       color: 'var(--muted)' },
+}
+
+async function loadPermissionsSettings() {
+  const list = document.getElementById('permissionsList')
+  if (!list) return
+
+  // Show loading state
+  list.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 0;">Checking…</div>'
+
+  let statuses = {}
+  try {
+    statuses = await window.setup.checkPermissions()
+  } catch (_) {}
+
+  list.innerHTML = ''
+  PERMISSION_META.forEach(perm => {
+    const raw = statuses[perm.id] || 'unknown'
+    const { text: statusText, color: statusColor } = PERM_STATUS_LABEL[raw] || PERM_STATUS_LABEL['unknown']
+    const isGranted = raw === 'granted'
+
+    const row = document.createElement('div')
+    row.style.cssText = `
+      display:flex; align-items:flex-start; gap:10px;
+      padding:8px 10px; border-radius:8px; margin-bottom:4px;
+      background:var(--surface); border:1px solid var(--border);
+      cursor:pointer; transition:border-color .15s;
+    `
+    row.title = `Open System Settings → ${perm.label}`
+    row.innerHTML = `
+      <span style="font-size:16px;flex-shrink:0;margin-top:1px;">${perm.icon}</span>
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+          <span style="font-size:12px;font-weight:600;color:var(--text);">${perm.label}</span>
+          <span style="font-size:10px;font-weight:600;color:${statusColor};flex-shrink:0;">${statusText}</span>
+        </div>
+        <div style="font-size:10px;color:var(--muted);line-height:1.4;margin-top:2px;">${perm.description}</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:2px;opacity:0.7;">Used by: ${perm.usedBy}</div>
+      </div>
+      ${!isGranted ? `<span style="font-size:10px;color:var(--accent2);flex-shrink:0;margin-top:2px;">Open →</span>` : ''}
+    `
+    row.addEventListener('mouseenter', () => { row.style.borderColor = 'rgba(255,255,255,0.15)' })
+    row.addEventListener('mouseleave', () => { row.style.borderColor = 'var(--border)' })
+    row.addEventListener('click', () => {
+      window.setup.openSystemPrefs(perm.id).catch(() => {})
+    })
+    list.appendChild(row)
+  })
+}
+
 // ── files ─────────────────────────────────────────────────────────────────────
 async function openProject() {
   const p = await window.app.openFolder()
@@ -7062,6 +7163,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (setupBtn) {
     setupBtn.addEventListener('click', () => {
       loadModelsDirSetting()
+      loadPermissionsSettings()
     })
   }
 })()

@@ -134,6 +134,16 @@
           </div>
         </div>
 
+        <div class="sp-header" style="margin-top:4px"><span class="section-label">PERMISSIONS</span></div>
+        <div class="setup-compact" id="permissionsSettings">
+          <div style="font-size:11px;color:var(--muted);line-height:1.5;padding:2px 0 6px;">
+            macOS requires explicit permission for certain agent capabilities. Click a row to open System Settings.
+          </div>
+          <!-- populated by loadPermissionsSettings() -->
+          <div id="permissionsList"></div>
+          <button class="btn-sm" onclick="loadPermissionsSettings()" style="margin-top:6px;font-size:11px;">↻ Refresh</button>
+        </div>
+
         <div class="sp-header" style="margin-top:4px"><span class="section-label">API KEYS</span></div>
         <div class="setup-compact" id="apiKeySettings">
           <div class="sc-field">

@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('setup', {
   offInstallLog:  ()     => ipcRenderer.removeAllListeners('setup-install-log'),
   onCalibComplete:  (cb) => ipcRenderer.on('calibration-complete', (_, d) => cb(d)),
   offCalibComplete: ()   => ipcRenderer.removeAllListeners('calibration-complete'),
+  checkPermissions:   ()       => ipcRenderer.invoke('setup-check-permissions'),
+  openSystemPrefs:    (permId) => ipcRenderer.invoke('setup-open-system-prefs', permId),
 })
 
 contextBridge.exposeInMainWorld('app', {
