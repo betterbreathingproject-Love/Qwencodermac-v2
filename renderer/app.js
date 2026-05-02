@@ -4279,7 +4279,7 @@ async function generateInlineSpecPhase(phase) {
   out.insertAdjacentHTML('beforeend', `<div class="msg-block spec-phase-block" id="${specRespId}">
     <div class="msg-system" id="${specRespId}-status">📐 Generating ${phaseLabel} for "${esc(currentSpecName)}"...</div>
     <div id="${specRespId}-fast"></div>
-    <details class="msg-thinking" id="${specRespId}-think" style="display:none" open>
+    <details class="msg-thinking" id="${specRespId}-think" style="display:none">
       <summary>🧠 Thinking</summary>
       <div class="msg-thinking-body" id="${specRespId}-think-body"></div>
     </details>
@@ -5099,7 +5099,7 @@ async function generateSpecPhase(phase) {
   out.insertAdjacentHTML('beforeend', `<div class="msg-block spec-phase-block" id="${specRespId}">
     <div class="msg-system" id="${specRespId}-status">📐 Generating ${phaseLabel} for "${esc(currentSpecName)}"...</div>
     <div id="${specRespId}-fast"></div>
-    <details class="msg-thinking" id="${specRespId}-think" style="display:none" open>
+    <details class="msg-thinking" id="${specRespId}-think" style="display:none">
       <summary>🧠 Thinking</summary>
       <div class="msg-thinking-body" id="${specRespId}-think-body"></div>
     </details>

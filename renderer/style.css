@@ -193,12 +193,12 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 
 /* message blocks */
 .msg-block { margin-bottom: 8px; }
-.msg-thinking { background: rgba(250,204,21,0.04); border: 1px solid rgba(250,204,21,0.1); border-radius: var(--radius); overflow: hidden; margin-bottom: 8px; }
-.msg-thinking summary { padding: 6px 10px; cursor: pointer; font-size: 11px; font-weight: 500; color: #a3a300; list-style: none; display: flex; align-items: center; gap: 5px; user-select: none; }
+.msg-thinking { border: 1px solid rgba(250,204,21,0.12); border-radius: 8px; overflow: hidden; margin-bottom: 10px; background: rgba(250,204,21,0.02); }
+.msg-thinking summary { padding: 8px 14px; cursor: pointer; font-size: 11px; font-weight: 500; color: #c8b530; list-style: none; display: flex; align-items: center; gap: 6px; user-select: none; background: rgba(250,204,21,0.03); }
 .msg-thinking summary::-webkit-details-marker { display: none; }
-.msg-thinking summary::before { content: '▶'; font-size: 8px; transition: transform 0.15s; }
+.msg-thinking summary::before { content: '▶'; font-size: 8px; transition: transform 0.15s; color: #8a7a10; }
 .msg-thinking[open] summary::before { transform: rotate(90deg); }
-.msg-thinking-body { padding: 8px 10px; font-size: 11px; color: #8a8a00; font-family: 'SF Mono', monospace; white-space: pre-wrap; line-height: 1.5; max-height: 200px; overflow-y: auto; border-top: 1px solid rgba(250,204,21,0.08); }
+.msg-thinking-body { padding: 8px 12px 10px; font-size: 11px; color: #9a9a40; font-family: 'SF Mono', monospace; white-space: pre-wrap; line-height: 1.5; max-height: 160px; overflow-y: auto; border-top: 1px solid rgba(250,204,21,0.06); background: rgba(0,0,0,0.1); }
 
 .msg-tool { background: rgba(96,165,250,0.05); border: 1px solid rgba(96,165,250,0.12); border-radius: var(--radius); padding: 8px 10px; margin-bottom: 6px; font-size: 11px; }
 .msg-tool-name { font-weight: 600; color: var(--blue); margin-bottom: 3px; display: flex; align-items: center; gap: 5px; }
@@ -301,13 +301,8 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .msg-user { padding: 8px 12px; background: rgba(124,106,247,0.06); border: 1px solid rgba(124,106,247,0.12); border-radius: var(--radius); margin-bottom: 6px; font-size: 13px; color: var(--text); word-wrap: break-word; overflow-wrap: break-word; max-width: 100%; }
 .msg-user-label { font-size: 10px; font-weight: 600; color: var(--accent2); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
 
-/* ── improved thinking ─────────────────────────────────────────────────────── */
-.msg-thinking { border: 1px solid rgba(250,204,21,0.08); border-radius: var(--radius); overflow: hidden; margin-bottom: 10px; background: rgba(250,204,21,0.02); }
-.msg-thinking summary { padding: 7px 12px; cursor: pointer; font-size: 11px; font-weight: 500; color: #b8a520; list-style: none; display: flex; align-items: center; gap: 6px; user-select: none; }
-.msg-thinking summary::-webkit-details-marker { display: none; }
-.msg-thinking summary::before { content: '▶'; font-size: 8px; transition: transform 0.15s; color: #8a7a10; }
-.msg-thinking[open] summary::before { transform: rotate(90deg); }
-.msg-thinking-body { padding: 8px 12px 10px; font-size: 11px; color: #9a9a40; font-family: 'SF Mono', monospace; white-space: pre-wrap; line-height: 1.5; max-height: 250px; overflow-y: auto; border-top: 1px solid rgba(250,204,21,0.06); }
+/* ── improved thinking section ─────────────────────────────────────────────── */
+/* (canonical definition is near the top of this file) */
 
 /* ── response block ────────────────────────────────────────────────────────── */
 .msg-block { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.03); }
@@ -822,9 +817,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .tool-preview-body .cursor { color: var(--yellow); animation: blink 1s step-end infinite; }
 
 /* ── improved thinking section ─────────────────────────────────────────────── */
-.msg-thinking { border: 1px solid rgba(250,204,21,0.12); border-radius: 8px; overflow: hidden; margin-bottom: 10px; background: rgba(250,204,21,0.02); }
-.msg-thinking summary { padding: 8px 14px; cursor: pointer; font-size: 12px; font-weight: 500; color: #c8b530; list-style: none; display: flex; align-items: center; gap: 6px; user-select: none; background: rgba(250,204,21,0.03); }
-.msg-thinking-body { padding: 10px 14px; font-size: 11px; color: #a0a050; font-family: 'SF Mono', monospace; white-space: pre-wrap; line-height: 1.6; max-height: 300px; overflow-y: auto; border-top: 1px solid rgba(250,204,21,0.08); background: rgba(0,0,0,0.1); }
+/* (canonical definition is near the top of this file) */
 
 /* ── improved code block scrolling ─────────────────────────────────────────── */
 .code-block pre { max-height: 400px; overflow-y: auto; }
