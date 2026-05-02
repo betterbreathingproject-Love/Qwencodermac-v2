@@ -5520,9 +5520,10 @@ function updateAgentStatsBar(opts = {}) {
   // ── Total Context chip with usage bar ──────────────────────────────────────
   const totalTokens = (inputTokens || 0) + (outputTokens || 0)
   if (totalTokens > 0) {
-    // Determine context window from calibration profile or fallback to 84K default
-    const ctxWindow = (_calibrationProfile && _calibrationProfile.metrics && _calibrationProfile.metrics.context_window)
-      ? _calibrationProfile.metrics.context_window
+    // Determine effective context budget from calibration profile or fallback
+    // Use maxInputTokens (the calibrated budget) not raw context_window
+    const ctxWindow = (_calibrationProfile && _calibrationProfile.maxInputTokens)
+      ? _calibrationProfile.maxInputTokens
       : 84000
     const ctxPct = Math.min(100, Math.round((totalTokens / ctxWindow) * 100))
     const ctxCls = ctxPct >= 85 ? 'ctx-danger' : ctxPct >= 60 ? 'ctx-warn' : 'ctx-ok'
