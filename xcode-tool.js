@@ -911,6 +911,13 @@ async function setupXcodeProject(cwd) {
       }, null, 2))
     } catch { /* non-fatal */ }
 
+    // Kill any stale xcodebuildmcp session — it may have iOS defaults from a
+    // previous run. Restarting ensures the next iOS project gets a clean slate.
+    if (_client) {
+      _client.stop()
+      _client = null
+    }
+
     // Check if the project has targets — a missing target means project.pbxproj
     // needs to be regenerated with generate_xcode_project before building.
     let hasTargets = true
