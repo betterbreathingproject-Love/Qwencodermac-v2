@@ -215,6 +215,20 @@ contextBridge.exposeInMainWorld('app', {
   miniappStop:       ()     => ipcRenderer.invoke('miniapp-stop'),
   miniappStatus:     ()     => ipcRenderer.invoke('miniapp-status'),
 
+  // terminal
+  terminalCreate:    (opts) => ipcRenderer.invoke('terminal-create', opts),
+  terminalWrite:     (id, data) => ipcRenderer.invoke('terminal-write', { id, data }),
+  terminalResize:    (id, cols, rows) => ipcRenderer.invoke('terminal-resize', { id, cols, rows }),
+  terminalClose:     (id)   => ipcRenderer.invoke('terminal-close', { id }),
+  terminalCloseAll:  ()     => ipcRenderer.invoke('terminal-close-all'),
+  terminalList:      ()     => ipcRenderer.invoke('terminal-list'),
+  terminalRunInteractive: (cmd, cwd) => ipcRenderer.invoke('terminal-run-interactive', { command: cmd, cwd }),
+  terminalReadBuffer:(id, lines) => ipcRenderer.invoke('terminal-read-buffer', { id, lines }),
+  onTerminalOutput:  (cb)   => ipcRenderer.on('terminal-output', (_, d) => cb(d)),
+  onTerminalExit:    (cb)   => ipcRenderer.on('terminal-exit', (_, d) => cb(d)),
+  onTerminalFocus:   (cb)   => ipcRenderer.on('terminal-focus', (_, d) => cb(d)),
+  offTerminalEvents: ()     => { for (const c of ['terminal-output','terminal-exit','terminal-focus']) ipcRenderer.removeAllListeners(c) },
+
   // events
   onTaskStatusEvent:(cb)    => ipcRenderer.on('task-status-event', (_, d) => cb(d)),
   onOrchestratorEvent:(cb)  => ipcRenderer.on('orchestrator-agent-event', (_, d) => cb(d)),

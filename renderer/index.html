@@ -430,6 +430,24 @@
               <iframe id="previewCenterFrame" style="display:none" sandbox="allow-scripts allow-same-origin"></iframe>
             </div>
           </div>
+          <!-- ═══ INTERACTIVE TERMINAL PANEL ═══ -->
+          <div class="terminal-resize-handle" id="terminalResizeHandle" title="Drag to resize terminal"></div>
+          <div class="terminal-panel" id="terminalPanel">
+            <div class="terminal-panel-header">
+              <span class="terminal-panel-title">⬛ Terminal</span>
+              <div class="terminal-panel-actions">
+                <button class="btn-sm terminal-btn" id="termNewBtn" onclick="terminalNew()" title="New terminal">+</button>
+                <button class="btn-sm terminal-btn" id="termToggleBtn" onclick="terminalToggle()" title="Toggle terminal">▼</button>
+                <button class="btn-sm terminal-btn" id="termCloseBtn" onclick="terminalCloseActive()" title="Close terminal">✕</button>
+              </div>
+            </div>
+            <div class="terminal-panel-body" id="terminalBody">
+              <div class="terminal-empty" id="terminalEmpty">
+                <span>No active terminal. Click <b>+</b> or the agent will open one when needed.</span>
+              </div>
+              <div class="terminal-screen" id="terminalScreen" tabindex="0" style="display:none"></div>
+            </div>
+          </div>
         </div>
 
       <!-- EDITOR TAB -->
@@ -787,6 +805,7 @@
 
   <script src="lib/markdown.js"></script>
   <script src="lib/tools-render.js"></script>
+  <script src="terminal-ui.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

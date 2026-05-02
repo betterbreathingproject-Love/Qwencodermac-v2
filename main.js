@@ -16,6 +16,7 @@ const ipcWatcher = require('./main/ipc-watcher')
 const ipcLsp = require('./main/ipc-lsp')
 const ipcCalibration = require('./main/ipc-calibration')
 const ipcSetup = require('./main/ipc-setup')
+const ipcTerminal = require('./main/ipc-terminal')
 const { LspManager } = require('./lsp-manager')
 const { TelegramBot } = require('./telegram-bot')
 const { RecordingManager } = require('./recording-manager')
@@ -305,6 +306,7 @@ ipcTasks.register(ipcMain, ctx)
 ipcWatcher.register(ipcMain, ctx)
 ipcLsp.register(ipcMain, ctx)
 ipcCalibration.register(ipcMain, { getCalibrationProfile: ipcServer.getCalibrationProfile, setCalibrationProfile: ipcServer.setCalibrationProfile, isCalibrating: ipcServer.isCalibrating })
+ipcTerminal.register(ipcMain, ctx)
 
 // ── Setup: launch main window from setup wizard ───────────────────────────────
 ipcMain.handle('setup-launch-main', async () => {

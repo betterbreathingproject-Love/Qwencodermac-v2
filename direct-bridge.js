@@ -1396,6 +1396,69 @@ function detectContentType(toolName, content) {
   return map[toolName] || 'auto'
 }
 
+// ── Route interactive commands to the terminal panel ──────────────────────────
+// Used when bash tool detects a command that needs user input (sudo, ssh, etc.)
+let _ptyModule = null
+try { _ptyModule = require('node-pty') } catch { /* node-pty not available */ }
+
+async function _routeToInteractiveTerminal(command, cwd, notify) {
+  if (!_ptyModule) return null
+  // Use the ipc-terminal module's handler via a direct approach:
+  // Send a terminal-focus event to the renderer and create a PTY session
+  try {
+    const { BrowserWindow } = require('electron')
+    const wins = BrowserWindow.getAllWindows()
+    const mainWin = wins.find(w => !w.isDestroyed())
+    if (!mainWin) return null
+
+    // Create a PTY session for this command
+    const os = require('os')
+    const termCwd = cwd || os.homedir()
+    const shell = process.env.SHELL || '/bin/zsh'
+    const env = { ...process.env }
+    const extra = ['/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin', '/usr/bin', '/bin']
+    const current = env.PATH || ''
+    const missing = extra.filter(d => !current.includes(d))
+    if (missing.length > 0) env.PATH = missing.join(':') + ':' + current
+
+    const proc = _ptyModule.spawn(shell, [], {
+      name: 'xterm-256color',
+      cols: 120,
+      rows: 24,
+      cwd: termCwd,
+      env,
+    })
+
+    const id = 'term-interactive-' + Date.now()
+
+    proc.onData((data) => {
+      if (mainWin && !mainWin.isDestroyed()) {
+        mainWin.webContents.send('terminal-output', { id, data })
+      }
+    })
+
+    proc.onExit(({ exitCode, signal }) => {
+      if (mainWin && !mainWin.isDestroyed()) {
+        mainWin.webContents.send('terminal-exit', { id, exitCode, signal })
+      }
+    })
+
+    // Send the command
+    proc.write(command + '\n')
+
+    // Notify renderer to show the terminal
+    mainWin.webContents.send('terminal-focus', { id, command })
+
+    return {
+      id,
+      message: `Command sent to interactive terminal (${id}). The user can see the terminal panel at the bottom of the Preview tab and provide any required input (passwords, confirmations, etc.).`,
+    }
+  } catch (err) {
+    console.warn('[direct-bridge] terminal routing failed:', err.message)
+    return null
+  }
+}
+
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
 async function executeTool(name, args, cwd, browserInstance, lspManager, inputRequester, notify) {
@@ -1804,7 +1867,7 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
 
         // Detect sudo commands that will hang waiting for a password prompt.
         // Try sudo -n first (non-interactive dry-run) — if it fails with "a password is required",
-        // the real command would hang too. Fail fast with a clear message instead of timing out.
+        // route the command to the interactive terminal panel so the user can type the password.
         // Allow through: sudo -n (already non-interactive), sudo -S (reads from stdin — we don't pipe one).
         const sudoInteractiveMatch = args.command.trim().match(/(?:^|[;&|]\s*)sudo(?!\s+-[a-zA-Z]*n)(?!\s+-S)\s+/)
         if (sudoInteractiveMatch) {
@@ -1816,7 +1879,16 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
           } catch (_sudoErr) {
             const msg = (_sudoErr.stderr || '').toString()
             if (msg.includes('password is required') || msg.includes('a password is required') || _sudoErr.status === 1) {
-              return { error: `This sudo command requires a password and will hang in this environment:\n  ${args.command.trim()}\n\nPlease run it manually in your terminal, then retry the task.` }
+              // Route to interactive terminal instead of failing
+              try {
+                const _termResult = await _routeToInteractiveTerminal(args.command, cwd, notify)
+                if (_termResult && _termResult.id) {
+                  return { result: _termResult.message }
+                }
+              } catch (_termErr) {
+                // Terminal routing failed — fall back to the old error message
+              }
+              return { error: `This sudo command requires a password and will hang in this environment:\n  ${args.command.trim()}\n\nThe command has been sent to the interactive terminal panel at the bottom of the Preview tab. Please enter your password there.` }
             }
             // Other error (e.g. sudo not found) — let it through and fail naturally
           }

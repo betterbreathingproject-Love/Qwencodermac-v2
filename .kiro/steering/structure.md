@@ -14,11 +14,13 @@ qwencoder-mac-studio/
 │   ├── ipc-tasks.js           # Task graph IPC
 │   ├── ipc-watcher.js         # File watcher IPC
 │   ├── ipc-lsp.js             # LSP diagnostics IPC
-│   └── ipc-calibration.js     # Calibration IPC
+│   ├── ipc-calibration.js     # Calibration IPC
+│   └── ipc-terminal.js        # Interactive terminal (node-pty) IPC
 │
 ├── renderer/                  # Renderer process — vanilla JS, no framework
 │   ├── index.html
 │   ├── app.js                 # Main renderer logic (direct DOM manipulation)
+│   ├── terminal-ui.js         # Interactive terminal panel UI (connects to node-pty via IPC)
 │   ├── style.css
 │   └── lib/                   # Renderer utility modules
 │
@@ -73,6 +75,8 @@ qwencoder-mac-studio/
 - `main.js` creates `DirectBridge` and `AgentPool`, registers all IPC modules via `register(ipcMain, ctx)`.
 - `AgentPool` dispatches tasks to agents created by the `agentFactory` in `main.js`.
 - `DirectBridge` builds system prompts (with role overlays from `ROLE_OVERLAYS`) and runs the tool loop.
+- `DirectBridge` routes interactive commands (sudo, ssh) to the terminal panel via `_routeToInteractiveTerminal()`.
+- `ipc-terminal.js` manages node-pty sessions; `terminal-ui.js` renders output and captures keyboard input.
 - `Orchestrator` drives DAG execution by calling `agentPool.dispatch()` for each node.
 - `steering-loader.js` reads `.maccoder/steering/*.md` and injects content into agent system prompts.
 - Optional modules (`memory-client.js`, `assist-client.js`) are loaded with `try/require` — absence is non-fatal.
