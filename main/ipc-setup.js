@@ -333,26 +333,49 @@ function selectTier(ramGb) {
 // ── IPC registration ──────────────────────────────────────────────────────────
 function register(ipcMain) {
   // Get hardware info + recommended models + installed status
+  // Wrapped in a 5s timeout so a slow sysctl/filesystem scan never blocks the wizard.
   ipcMain.handle('setup-get-info', async () => {
-    const hw = await getHardwareInfo()
-    const tier = selectTier(hw.ramGb)
-    const modelsDir = getModelsDir()
-    const { installed, installedFolders } = scanInstalledModels(modelsDir)
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('setup-get-info timed out')), 5000)
+    )
+    const work = (async () => {
+      const hw = await getHardwareInfo()
+      const tier = selectTier(hw.ramGb)
+      const modelsDir = getModelsDir()
+      const { installed, installedFolders } = scanInstalledModels(modelsDir)
 
-    // Check installed: exact org/model match OR folder-name-only match
-    function isInstalled(model) {
-      return installed.has(model.dirName) ||
-             installedFolders.has(model.modelFolderName || model.dirName.split('/')[1])
-    }
+      function isInstalled(model) {
+        return installed.has(model.dirName) ||
+               installedFolders.has(model.modelFolderName || model.dirName.split('/')[1])
+      }
 
-    return {
-      hardware: hw,
-      tier,
-      allTiers: MODEL_TIERS,
-      primaryInstalled: isInstalled(tier.primary),
-      fastInstalled: isInstalled(tier.fast),
-      lmStudioInstalled: fs.existsSync('/Applications/LM Studio.app'),
-      modelsDir,
+      return {
+        hardware: hw,
+        tier,
+        allTiers: MODEL_TIERS,
+        primaryInstalled: isInstalled(tier.primary),
+        fastInstalled: isInstalled(tier.fast),
+        lmStudioInstalled: fs.existsSync('/Applications/LM Studio.app'),
+        modelsDir,
+      }
+    })()
+
+    try {
+      return await Promise.race([work, timeout])
+    } catch (err) {
+      // Return a safe fallback so the wizard can still open
+      console.error('[setup-get-info] error or timeout:', err.message)
+      const ramGb = Math.round(require('os').totalmem() / (1024 ** 3))
+      const tier = selectTier(ramGb)
+      return {
+        hardware: { ramGb, chip: 'Apple Silicon' },
+        tier,
+        allTiers: MODEL_TIERS,
+        primaryInstalled: false,
+        fastInstalled: false,
+        lmStudioInstalled: false,
+        modelsDir: getModelsDir(),
+      }
     }
   })
 

@@ -800,7 +800,7 @@ async function startDepsCheck() {
 
   const binariesOk = binaries.every(b => b.present && b.executable)
   if (missingSet.size === 0 && binariesOk) {
-    subtitle.textContent = '✅ All dependencies installed — you're good to go.'
+    subtitle.textContent = '✅ All dependencies installed — you\'re good to go.'
     nextBtn.disabled = false
     footerHint.innerHTML = '<span style="color:var(--green);">✓ All packages present</span>'
     return
@@ -1323,6 +1323,13 @@ async function _runBackgroundDeps() {
 }
 
 async function init() {
+  // Hard timeout — overlay always clears within 6s even if IPC hangs
+  const overlayTimeout = setTimeout(() => {
+    loadingOverlay.style.display = 'none'
+    wizard.style.display = 'flex'
+    showPanel(0)
+  }, 6000)
+
   // Kick off background dep install immediately — don't wait for it
   _bgInstallPromise = _runBackgroundDeps()
 
@@ -1354,6 +1361,7 @@ async function init() {
   } catch (e) {
     console.error('setup-get-info failed:', e)
   } finally {
+    clearTimeout(overlayTimeout)
     loadingOverlay.style.display = 'none'
     wizard.style.display = 'flex'
     showPanel(0)
