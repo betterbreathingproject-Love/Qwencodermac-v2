@@ -1400,6 +1400,7 @@ async function sendAgentMode(prompt, opts = {}) {
   let _bootstrapShown = false  // track whether bootstrap todos have been shown
   let inputTokens = 0, outputTokens = 0
   let serverTps = null // real tk/s from server, used when available
+  _TksEstimator.reset() // reset sliding-window estimator for new run
   let allTextSegments = [] // accumulates text across all turns (text→tool→text→...)
   _lastCompactionStats = null // reset so stale stats don't persist across runs
   window._rawCount = 0
@@ -1601,7 +1602,7 @@ async function sendAgentMode(prompt, opts = {}) {
           document.getElementById(respId+'-think-body').textContent = thinkContent + '▌'
         }
         scheduleRender()
-        { const tks = serverTps || _calcTks(tokenCount, startTime)
+        { const tks = serverTps
           setActivity(`✍️ Generating — ${outputTokens || tokenCount} tokens${tks ? ' · ' + tks + ' tk/s' : ''} <span class="activity-dot">●</span>`)
           updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: outputTokens || tokenCount, tks, toolCount: _agentToolCount, activity: 'Writing response...' })
         }
@@ -1640,7 +1641,7 @@ async function sendAgentMode(prompt, opts = {}) {
         { const sizeInfo = isWriteTool && args.length > 100 ? ` · ${(args.length / 1024).toFixed(1)}KB` : ''
           setActivity(`⚡ ${esc(activityLabel)}${sizeInfo} <span class="activity-dot">●</span>`)
         }
-        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: outputTokens || tokenCount, tks: serverTps || _calcTks(tokenCount, startTime), toolCount: _agentToolCount, activity: activityLabel })
+        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: outputTokens || tokenCount, tks: serverTps, toolCount: _agentToolCount, activity: activityLabel })
 
         // Update or create the streaming tool preview block
         const previewId = respId + '-tool-preview'
@@ -2173,7 +2174,7 @@ async function sendAgentMode(prompt, opts = {}) {
                 const textEl = document.getElementById(orchTaskBlockId + '-text')
                 if (textEl && displayText) textEl.innerHTML = renderMd(displayText, true) + '<span class="cursor">▌</span>'
                 tokenCount++
-                { const tks = serverTps || _calcTks(tokenCount, _orchStartTime)
+                { const tks = serverTps || _TksEstimator.rate()
                   const actEl = document.getElementById(orchTaskBlockId + '-activity')
                   if (actEl) { actEl.innerHTML = `✍️ Generating — ${tokenCount} tokens${tks ? ' · ' + tks + ' tk/s' : ''} <span class="activity-dot">●</span>`; actEl.classList.remove('hidden') }
                   setOrchActivity(`✍️ Task ${orchTaskCount}: generating — ${tokenCount} tokens${tks ? ' · ' + tks + ' tk/s' : ''} <span class="activity-dot">●</span>`)
@@ -2268,7 +2269,7 @@ async function sendAgentMode(prompt, opts = {}) {
                   outputTokens = sev.usage.completion_tokens || outputTokens
                   const genTps = sev.x_stats?.generation_tps
                   const promptTps = sev.x_stats?.prompt_tps
-                  if (genTps) serverTps = genTps
+                  if (genTps) { serverTps = genTps; _TksEstimator.setServer(genTps) }
                   updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks: genTps, promptTps, peakMemory: sev.x_stats?.peak_memory_gb, toolCount: _agentToolCount, agentType: _currentAgentType })
                 }
                 break
@@ -2479,8 +2480,7 @@ async function sendAgentMode(prompt, opts = {}) {
           }
           scheduleRender()
           tokenCount++ // each SSE chunk ≈ 1 token
-          const tks = serverTps || _calcTks(tokenCount, startTime)
-          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: outputTokens || tokenCount, tks, toolCount: _agentToolCount, activity: 'Writing response...' })
+          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: outputTokens || tokenCount, tks: serverTps, toolCount: _agentToolCount, activity: 'Writing response...' })
         }
         // Handle OpenAI-compatible tool_calls streaming deltas
         if (sev.choices?.[0]?.delta?.tool_calls) {
@@ -2545,8 +2545,7 @@ async function sendAgentMode(prompt, opts = {}) {
           }
           scheduleRender()
           tokenCount++ // each content_block_delta ≈ 1 token
-          const tks2 = serverTps || _calcTks(tokenCount, startTime)
-          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: outputTokens || tokenCount, tks: tks2, toolCount: _agentToolCount, activity: 'Writing response...' })
+          updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens: outputTokens || tokenCount, tks: serverTps, toolCount: _agentToolCount, activity: 'Writing response...' })
         } else if (sev.type === 'content_block_delta' && sev.delta?.thinking) {
           stopPromptProgress()
           lastThinking += sev.delta.thinking
@@ -2558,7 +2557,7 @@ async function sendAgentMode(prompt, opts = {}) {
           outputTokens = sev.usage.completion_tokens || outputTokens || tokenCount
           const genTps = sev.x_stats?.generation_tps
           const promptTps = sev.x_stats?.prompt_tps
-          if (genTps) serverTps = genTps // lock in the server's real tps
+          if (genTps) { serverTps = genTps; _TksEstimator.setServer(genTps) } // lock in the server's real tps
           updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks: genTps, promptTps, peakMemory: sev.x_stats?.peak_memory_gb, toolCount: _agentToolCount })
         }
         break
@@ -4107,6 +4106,7 @@ async function _streamSpecPhase(phase, specRespId) {
     let inputTokens = 0
     let outputTokens = 0
     let serverTps = null
+    _TksEstimator.reset()
     let startTime = null
 
     // Debounced markdown rendering
@@ -4135,13 +4135,13 @@ async function _streamSpecPhase(phase, specRespId) {
           // Update activity line and status header
           const actEl = document.getElementById(specRespId + '-activity')
           if (actEl) {
-            const tks = serverTps || _calcTks(tokenCount, startTime)
+            const tks = serverTps || _TksEstimator.rate()
             actEl.innerHTML = `✍️ Generating ${phaseLabel} — ${outputTokens} tokens${tks ? ' · ' + tks + ' tk/s' : ''} <span class="activity-dot">●</span>`
             actEl.classList.remove('hidden')
           }
           const statusEl2 = document.getElementById(specRespId + '-status')
           if (statusEl2) {
-            const tks = serverTps || _calcTks(tokenCount, startTime)
+            const tks = serverTps || _TksEstimator.rate()
             statusEl2.textContent = `📐 Generating ${phaseLabel}${tks ? ' · ' + tks + ' tk/s' : ''} — ${outputTokens} tokens`
           }
           scrollOutput()
@@ -4175,8 +4175,7 @@ async function _streamSpecPhase(phase, specRespId) {
         accumulated += delta
         tokenCount++
         outputTokens = tokenCount
-        const tks = serverTps || _calcTks(tokenCount, startTime)
-        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks, activity: `Spec ${phaseLabel}: generating...` })
+        updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks: serverTps, activity: `Spec ${phaseLabel}: generating...` })
         scheduleRender()
       }
     })
@@ -4185,7 +4184,7 @@ async function _streamSpecPhase(phase, specRespId) {
       if (_specInterrupted) return
       inputTokens = stats.prompt_tokens || inputTokens
       outputTokens = stats.completion_tokens || outputTokens || tokenCount
-      if (stats.generation_tps) serverTps = stats.generation_tps
+      if (stats.generation_tps) { serverTps = stats.generation_tps; _TksEstimator.setServer(stats.generation_tps) }
       const promptTps = stats.prompt_tps || null
       const peakMemory = stats.peak_memory_gb || null
       updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks: serverTps, promptTps, peakMemory, activity: `Spec ${phaseLabel}: generating...` })
@@ -4420,6 +4419,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
 
   // Local state for stats — mirrors what sendAgentMode has as closures
   let inputTokens = 0, outputTokens = 0, tokenCount = 0, serverTps = null
+  _TksEstimator.reset()
   let _agentToolCount = 0
   let _orchStartTime = Date.now()
   _agentStartTimestamp = Date.now()
@@ -4546,7 +4546,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         const textEl = document.getElementById(orchTaskBlockId + '-text')
         if (textEl && displayText) textEl.innerHTML = renderMd(displayText, true) + '<span class="cursor">▌</span>'
         tokenCount++
-        { const tks = serverTps || _calcTks(tokenCount, _orchStartTime)
+        { const tks = serverTps || _TksEstimator.rate()
           const actEl = document.getElementById(orchTaskBlockId + '-activity')
           if (actEl) { actEl.innerHTML = `✍️ Generating — ${tokenCount} tokens${tks ? ' · ' + tks + ' tk/s' : ''} <span class="activity-dot">●</span>`; actEl.classList.remove('hidden') }
           setOrchActivity(`✍️ Task ${orchTaskCount}: generating — ${tokenCount} tokens${tks ? ' · ' + tks + ' tk/s' : ''} <span class="activity-dot">●</span>`)
@@ -4729,7 +4729,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
           outputTokens = sev.usage.completion_tokens || outputTokens
           const genTps = sev.x_stats?.generation_tps
           const promptTps = sev.x_stats?.prompt_tps
-          if (genTps) serverTps = genTps
+          if (genTps) { serverTps = genTps; _TksEstimator.setServer(genTps) }
           updateAgentStatsBar({ state: 'generating', inputTokens, outputTokens, tks: genTps, promptTps, peakMemory: sev.x_stats?.peak_memory_gb, toolCount: _agentToolCount, agentType: _currentAgentType })
         }
         break
@@ -5456,32 +5456,105 @@ function selectSlashCommand(command) {
 // Initialize autocomplete on DOM ready
 document.addEventListener('DOMContentLoaded', initSlashAutocomplete)
 
-// ── helper: calculate tokens per second ────────────────────────────────────────
-function _calcTks(tokens, startTime) {
-  if (!startTime) return '—'
-  const elapsed = (Date.now() - startTime) / 1000
-  return elapsed > 0 ? (tokens / elapsed).toFixed(1) : '—'
+// ── Sliding-window tk/s estimator ────────────────────────────────────────────
+// Tracks only actual generation timestamps in a rolling window so pauses
+// (tool calls, prompt-eval waits) don't drag the rate down.
+const _TksEstimator = {
+  _window: 3000,   // ms — rolling window size
+  _times: [],      // ring buffer of token arrival timestamps
+  _serverSample: null, // last authoritative server-reported tps
+  _serverTs: 0,        // when that sample arrived
+
+  reset() {
+    this._times = []
+    this._serverSample = null
+    this._serverTs = 0
+  },
+
+  // Call on every generated token (or chunk)
+  tick() {
+    const now = Date.now()
+    this._times.push(now)
+    // Evict entries older than the window
+    const cutoff = now - this._window
+    let i = 0
+    while (i < this._times.length && this._times[i] < cutoff) i++
+    if (i > 0) this._times = this._times.slice(i)
+  },
+
+  // Lock in a server-reported tps value (authoritative)
+  setServer(tps) {
+    if (tps && tps > 0) {
+      this._serverSample = tps
+      this._serverTs = Date.now()
+    }
+  },
+
+  // Returns display string like "42.3" or null when not enough data
+  rate() {
+    // Server sample is authoritative for 5 s after it arrives
+    if (this._serverSample && (Date.now() - this._serverTs) < 5000) {
+      return this._serverSample.toFixed(1)
+    }
+    // Need at least 2 timestamps to compute a rate
+    if (this._times.length < 2) return null
+    const span = (this._times[this._times.length - 1] - this._times[0]) / 1000
+    if (span <= 0) return null
+    return ((this._times.length - 1) / span).toFixed(1)
+  },
 }
 
 // ── unified agent stats bar (above text input) ───────────────────────────────
-let _agentStartTimestamp = null // tracks when the current agent run started
+let _agentStartTimestamp = null  // when the current agent run started
+let _statsElapsedTimer = null    // rAF loop id for the elapsed chip
+
+// Tick the elapsed chip every second without rebuilding the whole bar
+function _tickElapsedChip() {
+  if (!_agentStartTimestamp) return
+  const el = document.getElementById('statChipElapsed')
+  if (el) el.textContent = _formatElapsed(Date.now() - _agentStartTimestamp)
+  _statsElapsedTimer = setTimeout(_tickElapsedChip, 1000)
+}
+
+function _stopElapsedTicker() {
+  if (_statsElapsedTimer) { clearTimeout(_statsElapsedTimer); _statsElapsedTimer = null }
+}
 
 function updateAgentStatsBar(opts = {}) {
   const bar = document.getElementById('agentStats')
   if (!bar) return
 
-  const { state, inputTokens, outputTokens, tks, promptTps, peakMemory, toolName, progress, activity, toolCount, agentType } = opts
+  const { state, inputTokens, outputTokens, tks, promptTps, peakMemory, toolName,
+          progress, activity, toolCount, agentType } = opts
 
-  // Always show the stats bar when agent is active
+  // Hide when truly idle
   if (state === 'idle' && !inputTokens && !outputTokens) {
     bar.style.display = 'none'
     _agentStartTimestamp = null
+    _stopElapsedTicker()
+    _TksEstimator.reset()
     return
   }
   bar.style.display = 'flex'
 
-  // Track when agent started
-  if (state === 'initializing') _agentStartTimestamp = Date.now()
+  // Track when agent started and kick off elapsed ticker
+  if (state === 'initializing') {
+    _agentStartTimestamp = Date.now()
+    _stopElapsedTicker()
+    _tickElapsedChip()
+  }
+
+  // Feed the estimator: tick on every generating update, lock in server value when present
+  if (state === 'generating') {
+    if (tks && typeof tks === 'number') {
+      _TksEstimator.setServer(tks)
+    } else {
+      _TksEstimator.tick()
+    }
+  }
+
+  // Resolve display tps: prefer server-locked value, fall back to sliding window
+  const resolvedTks = (tks && typeof tks === 'number') ? tks.toFixed(1) : _TksEstimator.rate()
 
   // State indicator chip
   const stateMap = {
@@ -5495,86 +5568,154 @@ function updateAgentStatsBar(opts = {}) {
   }
   const s = stateMap[state] || stateMap.done
 
-  let html = ''
-
-  // Model chip (always show when active)
+  // ── In-place update: patch only chips that exist, rebuild only on structure change ──
+  // We track a "shape key" — if the set of visible chips changes we do a full rebuild,
+  // otherwise we just update the text nodes to avoid layout thrash and flicker.
   const modelName = loadedModelId ? _formatModelName(loadedModelId) : null
-  if (modelName) {
-    html += `<div class="stat-chip model-chip"><span class="stat-label">Model</span><span class="stat-val">${modelName}</span></div>`
-  }
-
-  html += `<div class="stat-chip state-chip ${s.cls}"><span class="stat-label">Status</span><span class="stat-val">${s.icon} ${s.text}</span></div>`
-
-  // Sub-agent chip (shown when an agent type is active)
   const effectiveAgentType = agentType || _currentAgentType
-  if (effectiveAgentType && effectiveAgentType !== 'general' && state !== 'done') {
-    html += `<div class="stat-chip agent-type-chip"><span class="stat-label">Agent</span><span class="stat-val">🤖 ${effectiveAgentType}</span></div>`
-  }
-
-  // Progress chip (shown during prompt eval or when progress is provided)
-  if (progress != null) {
-    const pct = progress < 0 ? '...' : Math.round(progress) + '%'
-    const fillClass = progress < 0 ? 'indeterminate' : ''
-    const fillWidth = progress < 0 ? '' : `width:${Math.min(100, progress)}%`
-    html += `<div class="stat-chip progress-chip"><span class="stat-label">Prompt</span><span class="stat-val">${pct}</span><div class="progress-mini"><div class="progress-mini-fill ${fillClass}" style="${fillWidth}"></div></div></div>`
-  }
-
-  // Input tokens
-  html += `<div class="stat-chip"><span class="stat-label">Input</span><span class="stat-val">${inputTokens || 0} tok${promptTps != null ? ' · ' + promptTps + ' tk/s' : ''}</span></div>`
-
-  // Output tokens
-  const tksDisplay = tks != null && tks !== '—' ? ' · ' + tks + ' tk/s' : ''
-  html += `<div class="stat-chip accent"><span class="stat-label">Output</span><span class="stat-val">${outputTokens || 0} tok${tksDisplay}</span></div>`
-
-  // ── Total Context chip with usage bar ──────────────────────────────────────
+  const showAgent = !!(effectiveAgentType && effectiveAgentType !== 'general' && state !== 'done')
+  const showProgress = progress != null
   const totalTokens = (inputTokens || 0) + (outputTokens || 0)
-  if (totalTokens > 0) {
-    // Determine effective context budget from calibration profile or fallback
-    // Use maxInputTokens (the calibrated budget) not raw context_window
-    const ctxWindow = (_calibrationProfile && _calibrationProfile.maxInputTokens)
-      ? _calibrationProfile.maxInputTokens
-      : 84000
-    const ctxPct = Math.min(100, Math.round((totalTokens / ctxWindow) * 100))
-    const ctxCls = ctxPct >= 85 ? 'ctx-danger' : ctxPct >= 60 ? 'ctx-warn' : 'ctx-ok'
-    const ctxTooltip = `${totalTokens.toLocaleString()} / ${ctxWindow.toLocaleString()} tokens (${ctxPct}% used)`
-    html += `<div class="stat-chip context-chip ${ctxCls}" title="${ctxTooltip}"><span class="stat-label">Context</span><span class="stat-val">${_formatTokenCount(totalTokens)} / ${_formatTokenCount(ctxWindow)}</span><div class="progress-mini"><div class="progress-mini-fill" style="width:${ctxPct}%"></div></div></div>`
-  }
+  const showContext = totalTokens > 0
+  const showTools = !!(toolCount != null && toolCount > 0)
+  const showMemory = peakMemory != null
+  const showElapsed = !!_agentStartTimestamp
+  const showCompaction = !!(
+    _lastCompactionStats && _lastCompactionStats.reduction_pct
+  )
 
-  // Tool count if available
-  if (toolCount != null && toolCount > 0) {
-    html += `<div class="stat-chip"><span class="stat-label">Tools</span><span class="stat-val">🔧 ${toolCount}</span></div>`
-  }
+  const shapeKey = [
+    modelName ? 1 : 0, showAgent ? 1 : 0, showProgress ? 1 : 0,
+    showContext ? 1 : 0, showTools ? 1 : 0, showMemory ? 1 : 0,
+    showElapsed ? 1 : 0, showCompaction ? 1 : 0,
+    state === 'tool' ? toolName : '',  // tool name changes chip text
+  ].join(',')
 
-  // Peak memory if available
-  if (peakMemory != null) {
-    html += `<div class="stat-chip"><span class="stat-label">Peak VRAM</span><span class="stat-val">${peakMemory} GB</span></div>`
-  }
+  const prevShape = bar.dataset.shapeKey
 
-  // Elapsed time chip
-  if (_agentStartTimestamp) {
-    const elapsed = Date.now() - _agentStartTimestamp
-    html += `<div class="stat-chip"><span class="stat-label">Elapsed</span><span class="stat-val">${_formatElapsed(elapsed)}</span></div>`
-  }
+  if (prevShape !== shapeKey) {
+    // Full rebuild — structure changed
+    bar.dataset.shapeKey = shapeKey
+    let html = ''
 
-  // Compaction stats chip
-  if (_lastCompactionStats && _lastCompactionStats.reduction_pct) {
-    const pct = Math.round(_lastCompactionStats.reduction_pct)
-    const engine = _lastCompactionStats.engine || 'builtin'
-    const engineCls = engine === 'python' ? 'compaction-python' : 'compaction-builtin'
-    const engineIcon = engine === 'python' ? '🐍' : '⚡'
-    const origTok = _lastCompactionStats.original_tokens || '?'
-    const compTok = _lastCompactionStats.compressed_tokens || '?'
-    const stages = (_lastCompactionStats.stages_applied && _lastCompactionStats.stages_applied.length) ? _lastCompactionStats.stages_applied.join(', ') : 'N/A'
-    const tooltip = `Original: ${origTok} tokens\nCompressed: ${compTok} tokens\nReduction: ${pct}%\nEngine: ${engine}\nStages: ${stages}`
-    html += `<div class="stat-chip ${engineCls}" title="${tooltip}"><span class="stat-label">Compaction</span><span class="stat-val">${engineIcon} ${pct}% ↓</span></div>`
-  }
+    if (modelName) {
+      html += `<div class="stat-chip model-chip"><span class="stat-label">Model</span><span class="stat-val">${modelName}</span></div>`
+    }
 
-  // Activity log (right-aligned)
-  if (activity) {
-    html += `<div class="agent-activity-log"><span class="activity-step active">${activity}</span></div>`
-  }
+    html += `<div class="stat-chip state-chip ${s.cls}" id="statChipState"><span class="stat-label">Status</span><span class="stat-val">${s.icon} ${s.text}</span></div>`
 
-  bar.innerHTML = html
+    if (showAgent) {
+      html += `<div class="stat-chip agent-type-chip"><span class="stat-label">Agent</span><span class="stat-val">🤖 ${effectiveAgentType}</span></div>`
+    }
+
+    if (showProgress) {
+      const pct = progress < 0 ? '...' : Math.round(progress) + '%'
+      const fillClass = progress < 0 ? 'indeterminate' : ''
+      const fillWidth = progress < 0 ? '' : `width:${Math.min(100, progress)}%`
+      html += `<div class="stat-chip progress-chip"><span class="stat-label">Prompt</span><span class="stat-val" id="statChipProgressVal">${pct}</span><div class="progress-mini"><div class="progress-mini-fill ${fillClass}" id="statChipProgressFill" style="${fillWidth}"></div></div></div>`
+    }
+
+    const tksDisplay = resolvedTks ? ' · ' + resolvedTks + ' tk/s' : ''
+    html += `<div class="stat-chip"><span class="stat-label">Input</span><span class="stat-val" id="statChipInput">${inputTokens || 0} tok${promptTps != null ? ' · ' + promptTps + ' tk/s' : ''}</span></div>`
+    html += `<div class="stat-chip accent"><span class="stat-label">Output</span><span class="stat-val" id="statChipOutput">${outputTokens || 0} tok${tksDisplay}</span></div>`
+
+    if (showContext) {
+      const ctxWindow = (_calibrationProfile && _calibrationProfile.maxInputTokens)
+        ? _calibrationProfile.maxInputTokens : 84000
+      const ctxPct = Math.min(100, Math.round((totalTokens / ctxWindow) * 100))
+      const ctxCls = ctxPct >= 85 ? 'ctx-danger' : ctxPct >= 60 ? 'ctx-warn' : 'ctx-ok'
+      const ctxTooltip = `${totalTokens.toLocaleString()} / ${ctxWindow.toLocaleString()} tokens (${ctxPct}% used)`
+      html += `<div class="stat-chip context-chip ${ctxCls}" id="statChipCtx" title="${ctxTooltip}"><span class="stat-label">Context</span><span class="stat-val" id="statChipCtxVal">${_formatTokenCount(totalTokens)} / ${_formatTokenCount(ctxWindow)}</span><div class="progress-mini"><div class="progress-mini-fill" id="statChipCtxFill" style="width:${ctxPct}%"></div></div></div>`
+    }
+
+    if (showTools) {
+      html += `<div class="stat-chip"><span class="stat-label">Tools</span><span class="stat-val" id="statChipTools">🔧 ${toolCount}</span></div>`
+    }
+
+    if (showMemory) {
+      html += `<div class="stat-chip"><span class="stat-label">Peak VRAM</span><span class="stat-val" id="statChipMemory">${peakMemory} GB</span></div>`
+    }
+
+    if (showElapsed) {
+      const elapsed = Date.now() - _agentStartTimestamp
+      html += `<div class="stat-chip"><span class="stat-label">Elapsed</span><span class="stat-val" id="statChipElapsed">${_formatElapsed(elapsed)}</span></div>`
+    }
+
+    if (showCompaction) {
+      const pct = Math.round(_lastCompactionStats.reduction_pct)
+      const engine = _lastCompactionStats.engine || 'builtin'
+      const engineCls = engine === 'python' ? 'compaction-python' : 'compaction-builtin'
+      const engineIcon = engine === 'python' ? '🐍' : '⚡'
+      const origTok = _lastCompactionStats.original_tokens || '?'
+      const compTok = _lastCompactionStats.compressed_tokens || '?'
+      const stages = (_lastCompactionStats.stages_applied && _lastCompactionStats.stages_applied.length)
+        ? _lastCompactionStats.stages_applied.join(', ') : 'N/A'
+      const tooltip = `Original: ${origTok} tokens\nCompressed: ${compTok} tokens\nReduction: ${pct}%\nEngine: ${engine}\nStages: ${stages}`
+      html += `<div class="stat-chip ${engineCls}" title="${tooltip}"><span class="stat-label">Compaction</span><span class="stat-val">${engineIcon} ${pct}% ↓</span></div>`
+    }
+
+    if (activity) {
+      html += `<div class="agent-activity-log" id="statChipActivity"><span class="activity-step active">${activity}</span></div>`
+    }
+
+    bar.innerHTML = html
+  } else {
+    // In-place patch — only update text nodes, no layout recalc
+    const stateEl = document.getElementById('statChipState')
+    if (stateEl) {
+      stateEl.className = `stat-chip state-chip ${s.cls}`
+      const v = stateEl.querySelector('.stat-val')
+      if (v) v.textContent = `${s.icon} ${s.text}`
+    }
+
+    if (showProgress) {
+      const pv = document.getElementById('statChipProgressVal')
+      const pf = document.getElementById('statChipProgressFill')
+      if (pv) pv.textContent = progress < 0 ? '...' : Math.round(progress) + '%'
+      if (pf) {
+        pf.className = `progress-mini-fill${progress < 0 ? ' indeterminate' : ''}`
+        pf.style.width = progress < 0 ? '' : Math.min(100, progress) + '%'
+      }
+    }
+
+    const inputEl = document.getElementById('statChipInput')
+    if (inputEl) inputEl.textContent = `${inputTokens || 0} tok${promptTps != null ? ' · ' + promptTps + ' tk/s' : ''}`
+
+    const outputEl = document.getElementById('statChipOutput')
+    if (outputEl) {
+      const tksDisplay = resolvedTks ? ' · ' + resolvedTks + ' tk/s' : ''
+      outputEl.textContent = `${outputTokens || 0} tok${tksDisplay}`
+    }
+
+    if (showContext) {
+      const ctxWindow = (_calibrationProfile && _calibrationProfile.maxInputTokens)
+        ? _calibrationProfile.maxInputTokens : 84000
+      const ctxPct = Math.min(100, Math.round((totalTokens / ctxWindow) * 100))
+      const ctxCls = ctxPct >= 85 ? 'ctx-danger' : ctxPct >= 60 ? 'ctx-warn' : 'ctx-ok'
+      const ctxChip = document.getElementById('statChipCtx')
+      if (ctxChip) {
+        ctxChip.className = `stat-chip context-chip ${ctxCls}`
+        ctxChip.title = `${totalTokens.toLocaleString()} / ${ctxWindow.toLocaleString()} tokens (${ctxPct}% used)`
+      }
+      const ctxVal = document.getElementById('statChipCtxVal')
+      if (ctxVal) ctxVal.textContent = `${_formatTokenCount(totalTokens)} / ${_formatTokenCount(ctxWindow)}`
+      const ctxFill = document.getElementById('statChipCtxFill')
+      if (ctxFill) ctxFill.style.width = ctxPct + '%'
+    }
+
+    if (showTools) {
+      const toolsEl = document.getElementById('statChipTools')
+      if (toolsEl) toolsEl.textContent = `🔧 ${toolCount}`
+    }
+
+    if (showMemory) {
+      const memEl = document.getElementById('statChipMemory')
+      if (memEl) memEl.textContent = `${peakMemory} GB`
+    }
+
+    const actEl = document.getElementById('statChipActivity')
+    if (actEl && activity) actEl.innerHTML = `<span class="activity-step active">${activity}</span>`
+  }
 }
 
 // Format token count for compact display (e.g. 84000 → "84K")
