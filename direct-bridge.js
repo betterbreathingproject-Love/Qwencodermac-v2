@@ -3469,7 +3469,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       // The model sometimes generates text like "[Response interrupted by ...]"
       // or "[Summarized by ...]" by mimicking injected annotations it sees in context.
       // These confuse users — strip them. Real interruptions are handled by abort.
-      const HALLUCINATED_ANNOTATIONS = /\[Response interrupted[^\]]*\]|\[Summarized by[^\]]*\]|\[TRIMMED[^\]]*\]|\[compressed:[^\]]*\]/g
+      const HALLUCINATED_ANNOTATIONS = /\[Response [^\]]*\]|\[Summarized by[^\]]*\]|\[TRIMMED[^\]]*\]|\[compressed:[^\]]*\]/g
       let text = rawText ? rawText.replace(HALLUCINATED_ANNOTATIONS, '').trim() : rawText
 
       // ── Client-side thinking extraction ─────────────────────────────────
@@ -3560,7 +3560,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           this.send('qwen-event', { type: 'system', subtype: 'debug', data: '⚠️ Model generated only hallucinated annotations — injecting continuation nudge' })
           messages.push({
             role: 'system',
-            content: 'IMPORTANT: Do NOT generate text like "[Response interrupted by ...]" or "[Summarized by ...]" — these are system markers, not part of your output. Your last response was stripped entirely because it contained only these markers. Continue your work: call the appropriate tool (write_file, edit_file, bash, etc.) to make progress on the task.',
+            content: 'IMPORTANT: Do NOT generate text like "[Response interrupted by ...]", "[Response trimmed for context space]", or "[Summarized by ...]" — these are system markers, not part of your output. Your last response was stripped entirely because it contained only these markers. Continue your work: call the appropriate tool (write_file, edit_file, bash, etc.) to make progress on the task.',
           })
           continue
         }
@@ -3597,7 +3597,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           this.send('qwen-event', { type: 'system', subtype: 'debug', data: '⚠️ Model generated only hallucinated annotations (with usage) — injecting continuation nudge' })
           messages.push({
             role: 'system',
-            content: 'IMPORTANT: Do NOT generate text like "[Response interrupted by ...]" or "[Summarized by ...]" — these are system markers, not part of your output. Your last response was stripped entirely because it contained only these markers. Continue your work: call the appropriate tool (write_file, edit_file, bash, etc.) to make progress on the task.',
+            content: 'IMPORTANT: Do NOT generate text like "[Response interrupted by ...]", "[Response trimmed for context space]", or "[Summarized by ...]" — these are system markers, not part of your output. Your last response was stripped entirely because it contained only these markers. Continue your work: call the appropriate tool (write_file, edit_file, bash, etc.) to make progress on the task.',
           })
           continue
         }
@@ -5543,7 +5543,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
               // Strip hallucinated system annotations in real-time so they never
               // appear in the UI. The model sometimes generates these by mimicking
               // injected markers it sees in context (e.g. "[Response interrupted by ...]").
-              const STREAM_ANNOTATION_RE = /\[Response interrupted[^\]]*\]|\[Summarized by[^\]]*\]|\[TRIMMED[^\]]*\]|\[compressed:[^\]]*\]/g
+              const STREAM_ANNOTATION_RE = /\[Response [^\]]*\]|\[Summarized by[^\]]*\]|\[TRIMMED[^\]]*\]|\[compressed:[^\]]*\]/g
               const displayText = accumulated.replace(STREAM_ANNOTATION_RE, '').trim()
               this.send('qwen-event', { type: 'text-delta', text: displayText })
             }
@@ -5788,7 +5788,7 @@ The project file tree is included at the end of this prompt — read it before c
 - write_file: aim for under 300 lines per call for source code. For generated config files (pbxproj, Package.swift, CMakeLists, etc.) you can write longer files in one call. If a write gets truncated, split into chunks and use bash with heredoc to append.
 - bash: prefer single focused commands. Check exit codes in the output. For installs and builds (npm install, pip install, swift build, xcodebuild), the timeout is 5 minutes — use them directly. Always add non-interactive flags to suppress prompts: npm init -y, pip install --no-input, brew install --no-interaction.
 - search_files: use regex patterns. Narrow with path/include filters to avoid noise.
-- NEVER generate text that looks like system annotations: "[Response interrupted by ...]", "[Summarized by ...]", or any text in square brackets that mimics system-injected markers. These are NOT part of your output format. If you generate them, they will be stripped and your response will be treated as empty — causing the loop to stall. Always use a tool call to continue your work.
+- NEVER generate text that looks like system annotations: "[Response interrupted by ...]", "[Response trimmed for context space]", "[Summarized by ...]", or any text in square brackets that mimics system-injected markers. These are NOT part of your output format. If you generate them, they will be stripped and your response will be treated as empty — causing the loop to stall. Always use a tool call to continue your work.
 
 ## Progress tracking
 Before starting any multi-step task, call update_todos with all steps as "pending". Mark each "in_progress" when you start it and "done" when complete. Call task_complete when all items are done — this is the ONLY way to end a session.
