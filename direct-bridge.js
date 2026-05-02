@@ -430,11 +430,12 @@ const TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'list_dir',
-      description: 'List files and directories at the given path. Returns names with / suffix for directories. When called on the project root ("."), returns a full recursive file tree — use this to get a complete picture of what files exist before searching.',
+      description: 'List files and directories at the given path. Returns names with / suffix for directories. When called on the project root ("."), returns a full recursive file tree — use this to get a complete picture of what files exist before searching. For subdirectories, returns a recursive tree to depth 2 by default — set depth=0 for flat listing or depth=3+ for deeper trees.',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string', description: 'Directory path to list' },
+          depth: { type: 'number', description: 'Recursion depth (default: 2 for subdirs, 3 for root). Set 0 for flat listing.' },
         },
         required: ['path'],
       },
@@ -1862,14 +1863,23 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
           // agent gets complete spatial awareness on demand without needing to
           // call list_dir repeatedly on each subdirectory.
           const isProjectRoot = p === cwd || p === path.resolve(cwd, '.')
+          const requestedDepth = (args && args.depth != null) ? args.depth : null
           if (isProjectRoot) {
-            const tree = buildFileTree(p, 3)
+            const tree = buildFileTree(p, requestedDepth ?? 3)
             const treeResult = tree || (entries.length > 0 ? entries.join('\n') : '(empty directory)')
             // Append a clear note so the agent doesn't prepend the folder name to paths.
             // The tree header shows e.g. "photo ranker/" but that's just a label — all
             // tool paths must be relative to this root (e.g. "PhotoRanker/Models/Photo.swift").
             const rootName = path.basename(p)
             return { result: `${treeResult}\n\nNOTE: You are at the project root. Use paths relative to here — do NOT include "${rootName}/" as a prefix. Example: "PhotoRanker/Models/Photo.swift", not "${rootName}/PhotoRanker/Models/Photo.swift".` }
+          }
+
+          // For subdirectories, return a recursive tree (depth 2 by default)
+          // so the agent doesn't need to call list_dir on each child directory.
+          const subDepth = requestedDepth ?? 2
+          if (subDepth > 0) {
+            const tree = buildFileTree(p, subDepth)
+            if (tree) return { result: tree }
           }
 
           return { result: entries.length > 0 ? entries.join('\n') : '(empty directory)' }

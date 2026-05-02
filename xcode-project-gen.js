@@ -237,7 +237,10 @@ function generateXcodeProject(opts = {}) {
   // PBXFileReference
   out += '/* Begin PBXFileReference section */\n'
   for (const fr of fileRefs) {
-    out += `\t\t${fr.uuid} /* ${fr.name} */ = {isa = PBXFileReference; lastKnownFileType = ${fr.lastKnownFileType}; path = "${fr.path}"; sourceTree = "<group>"; };\n`
+    // Use just the filename for path — the parent PBXGroup already provides
+    // the directory path. Using the full relative path here causes Xcode to
+    // double up: group.path + fileRef.path = "Models/Models/Cluster.swift".
+    out += `\t\t${fr.uuid} /* ${fr.name} */ = {isa = PBXFileReference; lastKnownFileType = ${fr.lastKnownFileType}; path = "${fr.name}"; sourceTree = "<group>"; };\n`
   }
   // Product reference
   out += `\t\t${productRefUUID} /* ${productName}${productExt} */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "${productName}${productExt}"; sourceTree = BUILT_PRODUCTS_DIR; };\n`
