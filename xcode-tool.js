@@ -802,7 +802,7 @@ async function setupXcodeProject(cwd) {
 
   // 3. List schemes and detect platform
   let scheme = null
-  let platform = 'iOS'  // default
+  let platform = null  // null until positively detected — never assume iOS
   try {
     const schemesOut = execSync(
       `xcodebuild ${projectArg} -list 2>/dev/null`,
@@ -817,7 +817,7 @@ async function setupXcodeProject(cwd) {
         || schemes[0]
     }
 
-    // Detect platform from build settings
+    // Detect platform from xcodebuild -showBuildSettings (most reliable when targets exist)
     if (scheme) {
       try {
         const settingsOut = execSync(
@@ -829,15 +829,12 @@ async function setupXcodeProject(cwd) {
         } else if (/iphoneos|iphonesimulator/i.test(settingsOut)) {
           platform = 'iOS'
         }
-      } catch { /* use default */ }
+        // if settingsOut is empty (no targets), platform stays null → falls through to pbxproj
+      } catch { /* showBuildSettings failed — fall through to pbxproj detection */ }
     }
 
-    // ── Fallback platform detection when xcodebuild -showBuildSettings fails ──
-    // This happens when the scheme has no targets configured (empty scheme).
-    // Strategy (in order):
-    //   1. Read project.pbxproj for SDKROOT / SUPPORTED_PLATFORMS / deployment targets
-    //   2. Grep Swift source files for macOS-only vs iOS-only API markers
-    //   3. Default to macOS if MACOSX_DEPLOYMENT_TARGET is present (safer than iOS default)
+    // ── Fallback: read project.pbxproj directly ──────────────────────────────
+    // Runs when showBuildSettings fails (no targets) OR returns ambiguous output.
     if (!platform) {
       try {
         const pbxprojPath = path.join(projectPath || workspacePath, 'project.pbxproj')
@@ -848,14 +845,14 @@ async function setupXcodeProject(cwd) {
                    /SUPPORTED_PLATFORMS\s*=\s*(iphoneos|iphonesimulator)\b/i.test(pbx)) {
           platform = 'iOS'
         } else if (/MACOSX_DEPLOYMENT_TARGET/.test(pbx) && !/IPHONEOS_DEPLOYMENT_TARGET/.test(pbx)) {
-          platform = 'macOS'  // only macOS deployment target present
+          platform = 'macOS'  // only macOS deployment target — definitely macOS
         } else if (/IPHONEOS_DEPLOYMENT_TARGET/.test(pbx) && !/MACOSX_DEPLOYMENT_TARGET/.test(pbx)) {
-          platform = 'iOS'    // only iOS deployment target present
+          platform = 'iOS'    // only iOS deployment target — definitely iOS
         }
       } catch { /* pbxproj unreadable */ }
     }
 
-    // Grep Swift files for macOS-only vs iOS-only API markers
+    // ── Fallback: grep Swift source files for platform-specific APIs ─────────
     if (!platform) {
       try {
         const projSourceDir = path.dirname(projectPath || workspacePath)
@@ -875,15 +872,16 @@ async function setupXcodeProject(cwd) {
       } catch { /* grep failed */ }
     }
 
-    // Final fallback: if MACOSX_DEPLOYMENT_TARGET was in pbxproj, prefer macOS over iOS default
-    // (iOS projects almost always have IPHONEOS_DEPLOYMENT_TARGET explicitly set)
+    // ── Absolute last resort ─────────────────────────────────────────────────
+    // Prefer macOS over iOS when truly ambiguous — iOS projects almost always
+    // have IPHONEOS_DEPLOYMENT_TARGET explicitly set in the pbxproj.
     if (!platform) {
       try {
         const pbxprojPath = path.join(projectPath || workspacePath, 'project.pbxproj')
         const pbx = fs.readFileSync(pbxprojPath, 'utf-8')
         platform = /MACOSX_DEPLOYMENT_TARGET/.test(pbx) ? 'macOS' : 'iOS'
       } catch {
-        platform = 'iOS'  // absolute last resort
+        platform = 'iOS'
       }
     }
   } catch (e) {
