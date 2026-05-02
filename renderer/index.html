@@ -442,7 +442,6 @@
                 <button class="btn-sm terminal-btn" id="termClearBtn" onclick="terminalClearAgent()" title="Clear agent log">⌫</button>
                 <button class="btn-sm terminal-btn" id="termNewBtn" onclick="terminalNew()" title="New shell">+</button>
                 <button class="btn-sm terminal-btn" id="termToggleBtn" onclick="terminalToggle()" title="Toggle terminal">▼</button>
-                <button class="btn-sm terminal-btn" id="termCloseBtn" onclick="terminalCloseActive()" title="Close shell" style="display:none">✕</button>
               </div>
             </div>
             <div class="terminal-panel-body" id="terminalBody">
@@ -455,10 +454,12 @@
               </div>
               <!-- Shell tab -->
               <div class="terminal-shell-pane" id="terminalShellPane" style="display:none">
-                <div class="terminal-empty" id="terminalEmpty">
-                  <span>No active terminal. Click <b>+</b> or the agent will open one when needed.</span>
+                <div class="shell-session-strip" id="shellTabStrip"></div>
+                <div class="shell-screens" id="shellScreens">
+                  <div class="terminal-empty" id="terminalEmpty">
+                    <span>No active terminal. Click <b>+</b> or the agent will open one when needed.</span>
+                  </div>
                 </div>
-                <div class="terminal-screen" id="terminalScreen" tabindex="0" style="display:none"></div>
               </div>
             </div>
           </div>

@@ -1786,6 +1786,70 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   flex-direction: column;
 }
 
+/* Shell session tab strip */
+.shell-session-strip {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  height: 26px;
+  background: rgba(0,0,0,0.25);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.shell-session-strip::-webkit-scrollbar { display: none; }
+.shell-session-strip:empty { display: none; }
+
+.shell-session-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px 0 10px;
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-right: 1px solid rgba(255,255,255,0.04);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.1s, color 0.1s;
+}
+.shell-session-tab:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+.shell-session-tab.active {
+  background: rgba(124,106,247,0.08);
+  color: var(--text);
+  border-bottom: 2px solid var(--accent);
+}
+.shell-session-tab.dead { opacity: 0.45; }
+.shell-session-tab.has-output .sst-title::after {
+  content: '●';
+  font-size: 6px;
+  color: var(--accent2);
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.sst-title { pointer-events: none; }
+.sst-close {
+  font-size: 10px;
+  opacity: 0;
+  padding: 1px 2px;
+  border-radius: 3px;
+  transition: opacity 0.1s, background 0.1s;
+  pointer-events: all;
+}
+.shell-session-tab:hover .sst-close { opacity: 0.6; }
+.shell-session-tab.active .sst-close { opacity: 0.5; }
+.sst-close:hover { opacity: 1 !important; background: rgba(244,71,71,0.25); color: #f44747; }
+
+/* Shell screens container */
+.shell-screens {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
 .terminal-agent-empty {
   display: flex;
   align-items: center;
