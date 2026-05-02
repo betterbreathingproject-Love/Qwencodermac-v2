@@ -68,19 +68,35 @@ function terminalSwitchTab(tab) {
 
 /** Create a new PTY session and show the shell tab. */
 async function terminalNew() {
+  // Close any existing session first
+  if (_termSessionId) {
+    try { await window.app.terminalClose(_termSessionId) } catch (_) {}
+    _termSessionId = null
+    _termBuffer = ''
+  }
+
   const cwd = window._currentProjectDir || undefined
-  const result = await window.app.terminalCreate({ cwd })
-  if (result.error) {
-    console.warn('[terminal-ui] create failed:', result.error)
+  let result
+  try {
+    result = await window.app.terminalCreate({ cwd })
+  } catch (err) {
+    console.warn('[terminal-ui] terminalCreate threw:', err)
     return
   }
+  if (!result || result.error) {
+    console.warn('[terminal-ui] create failed:', result?.error)
+    return
+  }
+
   _termSessionId = result.id
   _termBuffer = ''
-  _termShowScreen()
+
+  // Make sure shell pane is visible before showing the screen
   terminalSwitchTab('shell')
-  _termFocusScreen()
+  _termShowScreen()
   if (_termCollapsed) terminalToggle()
-  // Show close button now that a session exists
+  _termFocusScreen()
+
   const closeBtn = document.getElementById('termCloseBtn')
   if (closeBtn) closeBtn.style.display = ''
 }

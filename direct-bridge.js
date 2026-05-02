@@ -2753,6 +2753,22 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
     const _TOOL_REPEAT_THRESHOLD = 3  // same call N times = stuck
     let _consecutiveSingleReads = 0  // Track single read_file turns for batching nudge
 
+    // ── A-B-A-B alternating loop detection ───────────────────────────────────
+    // Tracks the last 6 tool names. When two tools alternate perfectly (A-B-A-B-A-B
+    // or A-B-A-B with 3+ full cycles), the agent is cycling between two tools
+    // that each feed an incomplete result to the other — neither makes progress.
+    // Distinct from the identical-call detector: the calls are different each time
+    // but the pair repeats. Window of 6 catches 3 full A-B cycles.
+    const _recentToolNames = []  // last N tool names (no args — pattern only)
+    const _ABAB_WINDOW = 6
+
+    // ── No-op write guard ─────────────────────────────────────────────────────
+    // Tracks write_file calls by path → content hash. When the agent writes the
+    // same content to the same file 2+ times, it's not making progress — it
+    // thinks it hasn't committed the write yet. Intercept and confirm the write
+    // already happened instead of executing again.
+    const _writeHistory = new Map()  // path → { hash, count, turn }
+
     // ── Read-file loop detection ─────────────────────────────────────────────
     // Tracks read_file calls per path with file modification times. When the
     // agent re-reads a file it already fully read and the file hasn't changed
@@ -3000,6 +3016,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         // re-read files it wants to edit. Without this, the loop detection
         // blocks re-reads of files whose content is no longer in context.
         _readFileHistory.clear()
+        _writeHistory.clear()  // also reset write dedup — content may have changed
       }
 
       // ── Memory: emit memory-archive event after compaction ────────────────
@@ -4033,6 +4050,33 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           } catch (_) {}
         }
 
+        // ── No-op write guard ────────────────────────────────────────────────
+        // When the agent writes the same content to the same path twice, it
+        // thinks the write didn't happen (e.g. waiting for a downstream effect
+        // that never materialises). Skip the redundant write and confirm it
+        // already succeeded — this breaks the no-op write loop without
+        // executing the write again (which would reset mtime and confuse LSP).
+        if (fnName === 'write_file' && !isError && fnArgs.path && typeof fnArgs.content === 'string') {
+          const _wKey = fnArgs.path
+          const _wHash = require('node:crypto').createHash('sha1').update(fnArgs.content).digest('hex').slice(0, 16)
+          const _wPrev = _writeHistory.get(_wKey)
+          if (_wPrev && _wPrev.hash === _wHash) {
+            _wPrev.count++
+            _writeHistory.set(_wKey, _wPrev)
+            this.send('qwen-event', {
+              type: 'system', subtype: 'warning',
+              data: `⚠️ No-op write detected: "${_wKey}" already has this exact content (written on turn ${_wPrev.turn}). Skipping duplicate write.`,
+            })
+            // Replace the tool result already pushed to messages with a confirmation
+            const lastToolMsg = messages[messages.length - 1]
+            if (lastToolMsg && lastToolMsg.role === 'tool' && lastToolMsg.tool_call_id === tc.id) {
+              lastToolMsg.content = `File "${_wKey}" already contains this exact content (written on turn ${_wPrev.turn}). No changes needed — the write already happened. Move on to the next step.`
+            }
+          } else {
+            _writeHistory.set(_wKey, { hash: _wHash, count: 1, turn })
+          }
+        }
+
         // ── Read-file loop interception ──────────────────────────────────────
         // If the agent is re-reading a file it already fully read in this session,
         // and it's NOT using line ranges (which would indicate intentional paging),
@@ -4767,6 +4811,37 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         const _sigCount = _recentToolCalls.filter(r => r.sig === _tcSig).length
         const _sigErrorCount = _recentToolCalls.filter(r => r.sig === _tcSig && r.isError).length
 
+        // ── A-B-A-B alternating loop detection ───────────────────────────
+        // Track tool names (no args) in a short window. When two distinct tools
+        // alternate perfectly for 3+ full cycles (A-B-A-B-A-B), neither is
+        // making progress — each feeds an incomplete result to the other.
+        // This is distinct from the identical-call detector: the signatures
+        // differ each time but the pair repeats.
+        _recentToolNames.push(fnName)
+        if (_recentToolNames.length > _ABAB_WINDOW) _recentToolNames.shift()
+        if (_recentToolNames.length === _ABAB_WINDOW) {
+          const [a0, b0, a1, b1, a2, b2] = _recentToolNames
+          const isABAB = a0 !== b0 && a0 === a1 && a1 === a2 && b0 === b1 && b1 === b2
+          if (isABAB) {
+            this.send('qwen-event', {
+              type: 'system', subtype: 'warning',
+              data: `⚠️ A-B-A-B loop detected: agent is alternating between "${a0}" and "${b0}" without making progress. Breaking the cycle.`,
+            })
+            _recentToolNames.length = 0
+            _recentToolCalls.length = 0
+            messages.push({
+              role: 'system',
+              content: `STOP. You are stuck in an alternating loop: you keep calling "${a0}" and "${b0}" in sequence without making progress. Neither tool is giving you enough to move forward.\n\n` +
+                `You MUST break this cycle. Options:\n` +
+                `- If you are gathering context: you have enough — stop reading and start writing/editing\n` +
+                `- If a file path is wrong: use list_dir(".") to get the full project tree\n` +
+                `- If you need a specific pattern: use search_files instead of reading whole files\n` +
+                `- If you are truly stuck: call ask_user to get guidance from the user\n` +
+                `Do NOT call "${a0}" or "${b0}" again until you have taken a different action first.`,
+            })
+          }
+        }
+
         if (_sigCount >= _TOOL_REPEAT_THRESHOLD) {
           // Same tool call repeated 3+ times — agent is looping
           const allErrors = _sigErrorCount >= _TOOL_REPEAT_THRESHOLD
@@ -4777,6 +4852,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
 
           // Clear the repetition window so we don't re-trigger immediately
           _recentToolCalls.length = 0
+          _recentToolNames.length = 0
 
           if (allErrors) {
             // All attempts failed — tell the agent to try something completely different
@@ -4823,6 +4899,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           // Clear read history so the agent can re-read files if it genuinely
           // needs content that was trimmed during compaction
           _readFileHistory.clear()
+          _writeHistory.clear()
           consecutiveReadsWithoutWrite = 0
         }
 
