@@ -4930,14 +4930,12 @@ ${autoEdit ? '\nAuto-edit mode: proceed with all changes without asking for conf
     if (this._activeReq) {
       try { this._activeReq.destroy() } catch {}
       this._activeReq = null
+      // Wait for the server to finish its current inference and release Metal
+      // resources before returning. This prevents the next agent from hitting
+      // the server while the old inference thread is still running.
+      try { await _callAdminAbort() } catch {}
     }
     this.send('qwen-event', { type: 'session-end' })
-
-    // Tell the server to stop inference and wait until the semaphore is free.
-    // This prevents the next run() from hitting the server while the inference
-    // thread is still running Metal cleanup — which causes a crash.
-    // Fire-and-forget with a short timeout; run() also has a _running guard.
-    _callAdminAbort().catch(() => {})
   }
 
   async close() {

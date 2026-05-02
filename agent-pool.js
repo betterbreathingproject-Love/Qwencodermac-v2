@@ -399,11 +399,12 @@ class AgentPool extends EventEmitter {
    * Signals each task's AbortController and calls interrupt() on the agent.
    * Used by Orchestrator.abort() to stop all in-flight dispatches immediately.
    */
-  cancelAll() {
+  async cancelAll() {
+    const interruptPromises = []
     for (const [, entry] of this._runningTasks) {
       try { entry.abortController.abort() } catch (_) {}
       if (entry.agent && typeof entry.agent.interrupt === 'function') {
-        try { entry.agent.interrupt() } catch (_) {}
+        try { interruptPromises.push(entry.agent.interrupt()) } catch (_) {}
       }
     }
     // Also drain the wait queue so queued dispatches don't start
@@ -411,6 +412,14 @@ class AgentPool extends EventEmitter {
       try { waiter.resolve() } catch (_) {}
     }
     this._waitQueue.length = 0
+    // Wait for all agents to finish their interrupt (server cleanup)
+    // with a timeout so we don't hang forever if an agent is stuck
+    if (interruptPromises.length > 0) {
+      await Promise.race([
+        Promise.allSettled(interruptPromises),
+        new Promise(r => setTimeout(r, 10000)),
+      ])
+    }
   }
 
   // --- Background Dispatch ---

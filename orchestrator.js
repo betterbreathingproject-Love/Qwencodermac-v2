@@ -888,9 +888,9 @@ class Orchestrator extends EventEmitter {
 
   async abort() {
     this._setState('aborted');
-    // Cancel all in-flight agent dispatches immediately
+    // Cancel all in-flight agent dispatches and wait for server cleanup
     if (this._agentPool && typeof this._agentPool.cancelAll === 'function') {
-      this._agentPool.cancelAll();
+      await this._agentPool.cancelAll();
     }
   }
 
