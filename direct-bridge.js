@@ -2838,8 +2838,32 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       // is aware of existing errors before it starts working
       if (this._lspManager?.getStatus().status === 'ready') {
         try {
-          const entryFiles = detectEntryPoints(workDir)
-          const diagSummary = await this._lspManager.getProjectDiagnosticsSummary(entryFiles)
+          // For Swift/Xcode projects, scan .swift files directly — detectEntryPoints
+          // returns JS/Python files which sourcekit-lsp doesn't handle.
+          // For other projects, use the standard entry point detection.
+          let diagFiles = detectEntryPoints(workDir)
+          const hasXcodeProject = (() => {
+            try {
+              return fs.readdirSync(workDir).some(e => e.endsWith('.xcodeproj') || e.endsWith('.xcworkspace'))
+            } catch { return false }
+          })()
+          if (hasXcodeProject) {
+            // Collect up to 20 Swift files from the project, prioritising entry points
+            // (App.swift, ContentView.swift, main.swift) then other files
+            try {
+              const { execSync } = require('child_process')
+              const swiftFiles = execSync(
+                `find "${workDir}" -name "*.swift" -not -path "*/DerivedData/*" -not -path "*/.build/*" 2>/dev/null | head -40`,
+                { timeout: 5000, encoding: 'utf-8' }
+              ).trim().split('\n').filter(Boolean)
+              // Prioritise entry-point-like files
+              const priority = swiftFiles.filter(f => /App\.swift$|ContentView\.swift$|main\.swift$/i.test(f))
+              const rest = swiftFiles.filter(f => !priority.includes(f))
+              diagFiles = [...priority, ...rest].slice(0, 20)
+            } catch { /* fall back to default */ }
+          }
+
+          const diagSummary = await this._lspManager.getProjectDiagnosticsSummary(diagFiles)
           if (diagSummary.totalErrors > 0) {
             const diagLines = []
             for (const f of diagSummary.files) {
@@ -2851,7 +2875,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
             if (diagLines.length > 0) {
               messages.push({
                 role: 'system',
-                content: `[LSP] The project currently has ${diagSummary.totalErrors} error(s) detected by the language server:\n${diagLines.slice(0, 30).join('\n')}\n\nKeep these in mind — fix them if relevant to the user's request, or avoid making them worse.`,
+                content: `[LSP] The project currently has ${diagSummary.totalErrors} error(s) detected by the language server:\n${diagLines.slice(0, 30).join('\n')}\n\nFix these errors — they will prevent the app from building.`,
               })
               this.send('qwen-event', { type: 'lsp-activity', action: 'session-diagnostics', count: diagSummary.totalErrors })
             }
@@ -2914,6 +2938,11 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
     const _TOOL_REPEAT_WINDOW = 8  // look at last N tool calls
     const _TOOL_REPEAT_THRESHOLD = 3  // same call N times = stuck
     let _consecutiveSingleReads = 0  // Track single read_file turns for batching nudge
+
+    // ── Missing-type search detection ─────────────────────────────────────────
+    // When search_files returns no results for the same query twice, the type
+    // likely doesn't exist yet. Inject a hint to create it rather than search again.
+    const _emptySearchHistory = new Map()  // query → count of empty results
 
     // ── A-B-A-B alternating loop detection ───────────────────────────────────
     // Tracks the last 6 tool names. When two tools alternate perfectly (A-B-A-B-A-B
@@ -4891,6 +4920,47 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
               content = `(top 15 of ${lines.length} matches)\n\n${ranked.slice(0, 15).join('\n')}`
               this.send('qwen-event', { type: 'fast-assist', task: 'rank_search', label: '⚡ Fast Assistant — search results ranked', detail: `"${(fnArgs.pattern || '').slice(0, 40)}" · ${lines.length} → 15 results` })
             }
+          }
+        }
+
+        // ── Missing-type detection ────────────────────────────────────────────
+        // When search_files returns no results for the same type/symbol query
+        // twice in a row, the type almost certainly doesn't exist yet.
+        // Inject a targeted hint to create it rather than search again.
+        if ((fnName === 'search_files' || fnName === 'grep_search') && !isError) {
+          const pattern = fnArgs.pattern || fnArgs.query || ''
+          const isEmpty = !content || content.trim() === '' ||
+            /no matches found|0 results|nothing found/i.test(content) ||
+            content.split('\n').filter(l => l.trim() && !l.startsWith('Searching')).length === 0
+
+          if (isEmpty && pattern) {
+            // Normalize the pattern to a canonical key (strip regex anchors/pipes for display)
+            const displayPattern = pattern.replace(/[\\^$[\]{}*+?]/g, '').replace(/\|/g, ' / ').slice(0, 60)
+            const prevCount = _emptySearchHistory.get(pattern) || 0
+            _emptySearchHistory.set(pattern, prevCount + 1)
+
+            if (prevCount >= 1) {
+              // Second empty result for the same query — the type doesn't exist
+              const isTypeSearch = /^(struct|class|enum|protocol|func|interface|def|function|const|type)\s+\w+/.test(pattern) ||
+                /^(struct|class|enum|protocol)\s*\|/.test(pattern) ||
+                /\bstruct\b|\bclass\b|\benum\b|\bprotocol\b/.test(pattern)
+
+              const hint = isTypeSearch
+                ? `MISSING TYPE: "${displayPattern}" does not exist in the codebase — you have searched for it ${prevCount + 1} times with no results.\n\n` +
+                  `Do NOT search again. The type needs to be CREATED. Use write_file to create a new Swift file with this type definition.\n` +
+                  `Example: write_file({"path": "MyApp/TypeName.swift", "content": "import SwiftUI\\n\\nstruct TypeName: View { ... }"})`
+                : `"${displayPattern}" was not found after ${prevCount + 1} searches. It does not exist in the codebase.\n` +
+                  `Stop searching for it. Either create it with write_file, or adjust your approach.`
+
+              messages.push({ role: 'system', content: hint })
+              this.send('qwen-event', {
+                type: 'system', subtype: 'warning',
+                data: `⚠️ Missing type detected: "${displayPattern}" not found after ${prevCount + 1} searches — injecting create hint`,
+              })
+            }
+          } else if (!isEmpty && pattern) {
+            // Found results — clear the empty history for this pattern
+            _emptySearchHistory.delete(pattern)
           }
         }
 
