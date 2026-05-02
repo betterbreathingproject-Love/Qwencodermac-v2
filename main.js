@@ -230,7 +230,7 @@ const agentPool = new AgentPool({
             cwd,
             permissionMode: 'auto-edit',
             systemPromptOverride: systemOverride,
-            samplingParams: { temperature: 0.6, top_p: 0.9, repetition_penalty: 1.05 },
+            samplingParams: { temperature: 0.3, top_p: 0.9, repetition_penalty: 1.05 },
           })
           console.log('[agent-factory] Task completed:', task.id)
           await bridge.close().catch(() => {})

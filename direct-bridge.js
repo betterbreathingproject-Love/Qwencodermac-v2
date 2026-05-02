@@ -2251,6 +2251,15 @@ class DirectBridge {
     this._running = true
     this._aborted = false
     this._samplingParams = samplingParams || {}
+    // Apply role-specific sampling defaults if not explicitly set
+    // Implementation role: lower temperature for more deterministic tool selection
+    // The model at temp 0.6 tends to "explore" (read more files) instead of committing to write
+    if (!this._samplingParams.temperature) {
+      const role = this._agentRole || 'general'
+      if (role === 'implementation' || role === 'general') {
+        this._samplingParams.temperature = 0.3
+      }
+    }
 
     // Set up browser instance with video recording enabled
     const recordingDir = path.join(os.tmpdir(), 'qwencoder-recordings')
