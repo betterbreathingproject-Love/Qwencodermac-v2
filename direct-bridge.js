@@ -2204,6 +2204,7 @@ class DirectBridge {
     // After write_file/edit_file, diagnostics are fetched asynchronously and
     // injected as a system message on the next turn instead of blocking.
     this._pendingDiagnostics = null  // Promise<{path, diagnostics}> | null
+    this._coalescedToolCallIds = new Set()  // Track auto-coalesced read_file IDs
   }
 
   setLspManager(lspManager) {
@@ -2686,6 +2687,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
     const _recentToolCalls = []  // { sig, isError, turn }
     const _TOOL_REPEAT_WINDOW = 8  // look at last N tool calls
     const _TOOL_REPEAT_THRESHOLD = 3  // same call N times = stuck
+    let _consecutiveSingleReads = 0  // Track single read_file turns for batching nudge
 
     // ── Read-file loop detection ─────────────────────────────────────────────
     // Tracks read_file calls per path with file modification times. When the
@@ -3492,6 +3494,100 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       }
       messages.push(assistantMsg)
 
+      // ── Performance: auto-coalesce multiple read_file into read_files ───
+      // When the model returns 2+ read_file calls in one turn, merge them
+      // into a single read_files call. This saves N-1 tool result round-trips
+      // and is much faster than processing each read_file sequentially.
+      if (toolCalls.length >= 2) {
+        const readFileCalls = toolCalls.filter(tc => tc.function.name === 'read_file')
+        if (readFileCalls.length >= 2) {
+          // Check that all are simple reads (no line ranges — those need individual handling)
+          const simpleReads = readFileCalls.filter(tc => {
+            try {
+              const a = JSON.parse(tc.function.arguments)
+              return a.path && a.start_line == null && a.end_line == null
+            } catch { return false }
+          })
+          if (simpleReads.length >= 2) {
+            const paths = simpleReads.map(tc => {
+              try { return JSON.parse(tc.function.arguments).path } catch { return null }
+            }).filter(Boolean)
+
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `⚡ Auto-coalescing ${simpleReads.length} read_file calls into read_files(${paths.length} files)` })
+
+            // Execute the batch read
+            const batchResult = await executeTool(
+              'read_files', { paths }, cwd,
+              this._browserInstance, this._lspManager, this._inputRequester,
+              { send: this.send.bind(this), _sessionId }
+            )
+
+            // Feed back results for each original tool call
+            const batchContent = batchResult.error || batchResult.result || ''
+            for (const tc of simpleReads) {
+              let tcPath
+              try { tcPath = JSON.parse(tc.function.arguments).path } catch { tcPath = '?' }
+              // Extract this file's section from the batch result
+              const fileHeader = `── ${tcPath} `
+              const headerIdx = batchContent.indexOf(fileHeader)
+              let fileContent
+              if (headerIdx >= 0) {
+                // Find the next file header or end of string
+                const nextHeader = batchContent.indexOf('\n\n── ', headerIdx + fileHeader.length)
+                fileContent = nextHeader >= 0
+                  ? batchContent.slice(headerIdx, nextHeader)
+                  : batchContent.slice(headerIdx)
+              } else {
+                // Couldn't extract — give the full batch result to the first call,
+                // and a reference note to the rest
+                fileContent = batchResult.error
+                  ? `Error reading ${tcPath}: ${batchResult.error}`
+                  : `(included in batch read above)`
+              }
+
+              this.send('qwen-event', {
+                type: 'tool-result',
+                tool_use_id: tc.id,
+                content: fileContent.slice(0, 200) + (fileContent.length > 200 ? '...' : ''),
+                is_error: !!batchResult.error,
+              })
+              messages.push({ role: 'tool', tool_call_id: tc.id, content: fileContent })
+
+              // Update read history
+              if (!batchResult.error) {
+                const lines = fileContent.split('\n')
+                try {
+                  const resolvedPath = path.resolve(cwd, tcPath.trim())
+                  const mtime = fs.existsSync(resolvedPath) ? fs.statSync(resolvedPath).mtimeMs : null
+                  _readFileHistory.set(tcPath, { count: 1, lastTurn: turn, fullRead: true, totalLines: lines.length, mtime })
+                } catch { /* ignore */ }
+              }
+            }
+
+            // Track coalesced IDs so the normal processing loop skips them
+            const coalescedIds = new Set(simpleReads.map(tc => tc.id))
+            if (!this._coalescedToolCallIds) this._coalescedToolCallIds = new Set()
+            for (const id of coalescedIds) this._coalescedToolCallIds.add(id)
+          }
+        }
+      }
+
+      // ── Performance: nudge consecutive single read_file turns ───────────
+      // If the model keeps making one read_file per turn (not batching),
+      // inject a reminder after 3 consecutive single-read turns.
+      if (toolCalls.length === 1 && toolCalls[0].function.name === 'read_file') {
+        _consecutiveSingleReads = (_consecutiveSingleReads || 0) + 1
+        if (_consecutiveSingleReads >= 3) {
+          messages.push({
+            role: 'system',
+            content: 'PERFORMANCE: You are reading files one at a time. Use read_files({"paths": ["file1", "file2", ...]}) to batch multiple reads into a single call. This is 5-10x faster.',
+          })
+          _consecutiveSingleReads = 0
+        }
+      } else {
+        _consecutiveSingleReads = 0
+      }
+
       // ── Performance: parallel pre-fetch for read-only tools ─────────────
       // When the model returns multiple read-only tool calls (read_file,
       // search_files, list_dir, web_search), execute the actual I/O in
@@ -3523,6 +3619,12 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       // Execute each tool call
       for (const tc of toolCalls) {
         if (this._aborted) return
+
+        // Skip tool calls that were already handled by auto-coalescing
+        if (this._coalescedToolCallIds && this._coalescedToolCallIds.has(tc.id)) {
+          this._coalescedToolCallIds.delete(tc.id)
+          continue
+        }
 
         const fnName = tc.function.name
 
@@ -5082,7 +5184,7 @@ The project file tree is included at the end of this prompt — read it before c
 ## Tool call rules
 - ALWAYS use tools to read, write, and execute. Never output code or file contents as plain text — the user cannot use it.
 - read_file: use this to read source files — NOT bash/cat. read_file handles large files correctly with line ranges and avoids output limits. Never use cat, head, or tail to read source files. For files under 500 lines, read the entire file at once (omit start_line/end_line). For larger files, read in chunks of 500+ lines — never page through a file 200 lines at a time.
-- read_files: use this when you need to read 2 or more files. Pass an array of paths and get all contents in one call. Much faster than calling read_file multiple times.
+- read_files: PREFERRED over read_file when you need 2+ files. Pass all paths in one call — this is 5-10x faster than separate read_file calls. ALWAYS batch your reads: if you know you need multiple files, use read_files({"paths": ["file1.swift", "file2.swift", ...]}) instead of calling read_file on each one separately. Maximum 20 files per call.
 - edit_file: ALWAYS re-read the file with read_file in the same turn before editing. Compressed history may have stale content.
 - edit_files: use this when you need to make edits across multiple files in one step. Pass an array of {path, old_string, new_string} objects. Much faster than calling edit_file repeatedly.
 - write_file: keep each call under 300 lines. For larger files, write the first chunk then use bash with heredoc to append.
