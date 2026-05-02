@@ -2663,6 +2663,12 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
     let _lastTodos = null  // Track the latest todo list for completion checking
     let _bootstrapDone = false  // Track whether todo bootstrap has fired
     let _textOnlyTurns = 0  // Track consecutive text-only responses for safety valve
+    // ── Unproductive turn tracking ────────────────────────────────────────
+    // A turn is "productive" if it writes/edits a file, runs a successful bash
+    // command, or completes a task. If the agent goes N turns without any
+    // productive action, it's spinning and should be stopped.
+    let _unproductiveTurns = 0
+    const _MAX_UNPRODUCTIVE_TURNS = 12  // abort after this many wasted turns
     // After a compaction pass, skip memory re-injection for a few turns so we
     // don't immediately re-inflate the context we just compressed.
     let _postCompactionCooldown = 0
@@ -4516,6 +4522,45 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       consecutivePlanningNudges = 0
       lastTextResponses = []
       _textOnlyTurns = 0  // Reset — model is using tools again
+
+      // ── Unproductive turn tracking ─────────────────────────────────────
+      // Check if this turn produced any "productive" action (file write/edit,
+      // successful bash, task_complete). If not, increment the waste counter.
+      const _turnToolNames = toolCalls.map(tc => {
+        try { return tc.function.name } catch { return '' }
+      })
+      const _turnHadWrite = _turnToolNames.some(n => ['write_file', 'edit_file', 'edit_files'].includes(n))
+      const _turnHadBash = _turnToolNames.includes('bash')
+      const _turnHadTodo = _turnToolNames.some(n => ['update_todos', 'edit_todos', 'task_complete'].includes(n))
+      // A bash call counts as productive only if it succeeded (not an error)
+      const _turnBashSucceeded = _turnHadBash && messages.slice(-toolCalls.length * 2)
+        .some(m => m.role === 'tool' && m.content && !m.content.startsWith('Use read_file') && !m.content.includes('Command failed') && !m.content.includes('Command blocked'))
+
+      if (_turnHadWrite || _turnBashSucceeded || _turnHadTodo) {
+        _unproductiveTurns = 0  // Reset — agent did something useful
+      } else {
+        _unproductiveTurns++
+      }
+
+      if (_unproductiveTurns >= _MAX_UNPRODUCTIVE_TURNS) {
+        this.send('qwen-event', {
+          type: 'system', subtype: 'warning',
+          data: `⚠️ The agent has gone ${_unproductiveTurns} turns without writing any files or running successful commands. Auto-stopping to save resources. You can:\n• Send a more specific instruction\n• Start a new session\n• Break the task into smaller steps`,
+        })
+        this.send('qwen-event', {
+          type: 'result',
+          subtype: 'warning',
+          is_error: false,
+          result: `Auto-stopped after ${_unproductiveTurns} unproductive turns. The agent was not making progress — it kept reading/searching without writing any code or running successful commands. Send a follow-up message to continue.`,
+        })
+        return
+      } else if (_unproductiveTurns >= 8 && _unproductiveTurns % 4 === 0) {
+        // Warn at 8 turns, then every 4 turns after
+        messages.push({
+          role: 'system',
+          content: `WARNING: You have gone ${_unproductiveTurns} turns without writing any files or running successful commands. You are wasting turns. Either:\n1. Start writing code with write_file/edit_file\n2. Run a bash command that actually works\n3. Call ask_user if you need help\n4. Call task_complete if you are done\nYou will be auto-stopped at ${_MAX_UNPRODUCTIVE_TURNS} unproductive turns.`,
+        })
+      }
 
       // Enforce todo list: block progress until todos are created.
       // After the first tool turn, if no todos exist, keep injecting the reminder
