@@ -47,6 +47,7 @@
       "assist-client.js",
       "playwright-tool.js",
       "web-tools.js",
+      "desktop-tool.js",
       "vision-tool.js",
       "ast-search.js",
       "search-worker.js",
@@ -104,6 +105,8 @@
     "node-pty": "^1.1.0",
     "openai": "^4.0.0",
     "playwright": "^1.59.1",
+    "robotjs": "^0.6.0",
+    "screenshot-desktop": "^1.15.0",
     "sharp": "^0.34.5",
     "ws": "^8.20.0",
     "xcodebuildmcp": "2.3.2"

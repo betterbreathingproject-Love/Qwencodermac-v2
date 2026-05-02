@@ -17,6 +17,7 @@ const os = require('node:os')
 const { execSync, spawn } = require('child_process')
 const { createPlaywrightInstance, BROWSER_TOOL_DEFS } = require('./playwright-tool')
 const { WEB_TOOL_DEFS, executeWebTool } = require('./web-tools')
+const { DESKTOP_TOOL_DEFS, executeDesktopTool } = require('./desktop-tool')
 const { getApiKeys } = require('./projects')
 const compactor = require('./compactor')
 const config = require('./config')
@@ -607,6 +608,7 @@ const TOOL_DEFS = [
   },
   ...BROWSER_TOOL_DEFS,
   ...WEB_TOOL_DEFS,
+  ...DESKTOP_TOOL_DEFS,
   // Xcode tools — only included when xcodebuildmcp is installed
   ...(xcodeTool ? xcodeTool.XCODE_TOOL_DEFS : []),
 ]
@@ -1492,6 +1494,11 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
   if (name === 'web_search' || name === 'web_fetch') {
     const apiKeys = getApiKeys()
     return executeWebTool(name, args, { brave: apiKeys.brave })
+  }
+
+  // Route desktop_* tools to the desktop automation module
+  if (name.startsWith('desktop_')) {
+    return executeDesktopTool(name, args)
   }
 
   // Route browser_* tools to the playwright instance
