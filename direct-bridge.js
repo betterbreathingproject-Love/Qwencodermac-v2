@@ -1139,13 +1139,15 @@ function trimMessages(messages, maxInputTokens) {
 
   // Phase 0: Truncate the largest messages first (regardless of position).
   // This handles short conversations where a single tool result dominates.
-  // Sort by content length descending, truncate the biggest ones until under budget.
+  // IMPORTANT: Never truncate the last 2 tool results — the agent is actively using them.
   const charBudgetPerToken = 4
   const targetChars = Math.floor(maxInputTokens * charBudgetPerToken)
   for (let pass = 0; pass < 3 && current > maxInputTokens; pass++) {
-    // Find the largest non-system message
+    // Find the largest non-system, non-recent message
+    // Protect the last 4 messages from phase-0 truncation
+    const protectedFrom = Math.max(0, messages.length - 4)
     let maxIdx = -1, maxLen = 0
-    for (let i = 0; i < messages.length; i++) {
+    for (let i = 0; i < protectedFrom; i++) {
       const m = messages[i]
       if (m.role === 'system') continue
       const len = (m.content || '').length
@@ -1153,12 +1155,11 @@ function trimMessages(messages, maxInputTokens) {
     }
     if (maxIdx === -1 || maxLen <= 4000) break
     // Truncate to a proportional share of the budget.
-    // Floor scales with target: aggressive targets get a lower floor (min 500 chars).
     const allowedChars = Math.max(500, Math.floor(targetChars / Math.max(messages.length, 1)))
     if (maxLen > allowedChars) {
       const oldLen = messages[maxIdx].content.length
       messages[maxIdx].content = messages[maxIdx].content.slice(0, allowedChars) +
-        '\n\n[TRIMMED for context space — do NOT re-read this file. The content above is sufficient. Use search_files if you need to find specific patterns.]'
+        '\n\n[Earlier content trimmed — use search_files to find specific patterns if needed.]'
       current -= Math.ceil((oldLen - messages[maxIdx].content.length) / charBudgetPerToken)
     }
   }
@@ -1167,10 +1168,9 @@ function trimMessages(messages, maxInputTokens) {
   if (messages.length <= 4) return messages
 
   // Phase 1: Truncate large tool result messages in the middle
-  // Keep first 2 and last 4 messages intact
-  // Preserve navigational tool results (list_dir, search) — they're structural
+  // Keep first 2 and last 6 messages intact (increased from 4 to protect recent work)
   const safeStart = 2
-  const safeEnd = messages.length - 4
+  const safeEnd = messages.length - 6
   const NAV_TOOL_NAMES = ['list_dir', 'search_files', 'grep_search', 'lsp_get_symbols', 'lsp_get_references']
   for (let i = safeStart; i < safeEnd && current > maxInputTokens; i++) {
     const msg = messages[i]
@@ -1180,12 +1180,11 @@ function trimMessages(messages, maxInputTokens) {
       const isNavResult = prevMsg && prevMsg.role === 'assistant' && prevMsg.tool_calls &&
         prevMsg.tool_calls.some(tc => NAV_TOOL_NAMES.includes(tc.function?.name))
       // Nav tool results get a higher floor; scale the regular floor with target budget
-      // so aggressive trims (low maxInputTokens) can actually reach their target.
       const scaledFloor = Math.max(300, Math.floor(maxInputTokens * 4 / Math.max(messages.length, 1)))
       const minKeep = isNavResult ? Math.max(scaledFloor, 2000) : scaledFloor
       if (msg.content.length > minKeep) {
         const oldLen = msg.content.length
-        msg.content = msg.content.slice(0, minKeep) + '\n\n[TRIMMED for context space — do NOT re-read this content.]'
+        msg.content = msg.content.slice(0, minKeep) + '\n\n[Earlier content trimmed.]'
         current -= Math.ceil((oldLen - msg.content.length) / 4)
       }
     }
@@ -3340,10 +3339,11 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
             messages.length = 0
             messages.push(...trimmed)
             // If still over budget, aggressively truncate the largest messages
+            // Protect the last 6 messages — those are what the agent is actively using
             if (estimateMessagesTokens(messages) > targetTokens) {
-              // Sort indices by content length descending, truncate biggest first
+              const protectedFrom = Math.max(0, messages.length - 6)
               const indexed = messages.map((m, idx) => ({ idx, len: (m.content || '').length, role: m.role }))
-                .filter(e => e.role !== 'system' && e.len > 1000)
+                .filter(e => e.role !== 'system' && e.len > 1000 && e.idx < protectedFrom)
                 .sort((a, b) => b.len - a.len)
               const maxTotalChars = Math.floor(targetTokens * 4)
               let currentChars = messages.reduce((sum, m) => sum + (m.content || '').length, 0)
@@ -3353,7 +3353,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
                 const allowedChars = Math.max(800, Math.floor(maxTotalChars / messages.length))
                 if (m.content.length > allowedChars) {
                   const oldLen = m.content.length
-                  m.content = m.content.slice(0, allowedChars) + '\n\n[TRIMMED for context space — do NOT re-read this file. The content above is sufficient.]'
+                  m.content = m.content.slice(0, allowedChars) + '\n\n[Earlier content trimmed.]'
                   currentChars -= (oldLen - m.content.length)
                 }
               }
@@ -5339,12 +5339,13 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Prompt too large (~${estimatedTokens} tokens), trimming to ${preSendLimit} before sending` })
         const trimmed = trimMessages(messages, preSendLimit)
         // If trimMessages didn't reduce enough (large content in recent messages),
-        // aggressively truncate the largest messages first
+        // aggressively truncate the largest messages first.
+        // Protect the last 6 messages — those are what the agent is actively using.
         if (estimateMessagesTokens(trimmed) > preSendLimit) {
           const maxTotalChars = Math.floor(preSendLimit * 4)
-          // Sort by content length descending, truncate biggest first
+          const protectedFrom = Math.max(0, trimmed.length - 6)
           const indexed = trimmed.map((m, idx) => ({ idx, len: (m.content || '').length, role: m.role }))
-            .filter(e => e.role !== 'system' && e.len > 1500)
+            .filter(e => e.role !== 'system' && e.len > 1500 && e.idx < protectedFrom)
             .sort((a, b) => b.len - a.len)
           let currentChars = trimmed.reduce((sum, m) => sum + (m.content || '').length, 0)
           for (const entry of indexed) {
@@ -5353,7 +5354,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
             const allowedChars = Math.max(1000, Math.floor(maxTotalChars / trimmed.length))
             if (m.content.length > allowedChars) {
               const oldLen = m.content.length
-              m.content = m.content.slice(0, allowedChars) + '\n\n[TRIMMED for context space — do NOT re-read this file. The content above is sufficient.]'
+              m.content = m.content.slice(0, allowedChars) + '\n\n[Earlier content trimmed.]'
               currentChars -= (oldLen - m.content.length)
             }
           }
