@@ -5742,14 +5742,30 @@ ${autoEdit ? '\nAuto-edit mode: proceed with all changes without asking for conf
 
   async interrupt() {
     this._aborted = true
+
+    // Destroy agent-loop streaming request
     if (this._activeReq) {
       try { this._activeReq.destroy() } catch {}
       this._activeReq = null
-      // Wait for the server to finish its current inference and release Metal
-      // resources before returning. This prevents the next agent from hitting
-      // the server while the old inference thread is still running.
-      try { await _callAdminAbort() } catch {}
     }
+
+    // Destroy chat-mode request (separate ref — not covered by _activeReq)
+    if (this._currentReq) {
+      try { this._currentReq.destroy() } catch {}
+      this._currentReq = null
+    }
+
+    // Reset per-run state so the next run() starts clean
+    this._pendingInjections = []
+    this._pendingDiagnostics = null
+    this._coalescedToolCallIds = new Set()
+    this._sseErrorPending = false
+
+    // Signal the MLX server to abort its current inference and release Metal
+    // resources before the next agent starts. Always call this regardless of
+    // which request type was active.
+    try { await _callAdminAbort() } catch {}
+
     this.send('qwen-event', { type: 'session-end' })
   }
 
