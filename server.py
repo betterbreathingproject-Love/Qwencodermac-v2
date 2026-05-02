@@ -698,6 +698,25 @@ def strip_thinking(text: str) -> str:
     return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
 
 
+def extract_thinking(text: str) -> tuple[str | None, str]:
+    """Separate <think>...</think> content from the rest of the response.
+
+    Returns (reasoning_content, remaining_text).
+    reasoning_content is None if no thinking block was found.
+    """
+    match = re.search(r'<think>(.*?)</think>', text, flags=re.DOTALL)
+    if match:
+        reasoning = match.group(1).strip()
+        remaining = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+        return (reasoning if reasoning else None), remaining
+    # Handle unclosed think block (model hit max_tokens mid-think)
+    unclosed = re.search(r'<think>(.*)', text, flags=re.DOTALL)
+    if unclosed:
+        reasoning = unclosed.group(1).strip()
+        return (reasoning if reasoning else None), ''
+    return None, text
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 def extract_text_and_images(messages: list[Message]):
     """Return (last_user_text, [image_paths]) from a message list."""
@@ -1750,6 +1769,17 @@ async def chat_completions(req: ChatRequest):
                              "<tool_", "<tool_c", "<tool_ca",
                              "<tool_cal", "<tool_call")
 
+            # ── Thinking token tracking for streaming ─────────────────────────
+            # Buffer thinking content separately so it's not sent as content
+            # deltas but preserved as reasoning_content in the final response.
+            _in_thinking = False
+            _thinking_buf = ""
+            _thinking_done = False  # True once </think> is seen
+            _THINK_OPEN = "<think>"
+            _THINK_CLOSE = "</think>"
+            _PARTIAL_THINK_TAGS = ("<", "<t", "<th", "<thi", "<thin", "<think")
+            _PARTIAL_THINK_CLOSE = ("</", "</t", "</th", "</thi", "</thin", "</think")
+
             # Race condition fix: _cancelled must be set whenever the generator
             # exits for ANY reason — including GeneratorExit from client disconnect.
             # Without this, the inference thread keeps running Metal ops while the
@@ -1760,6 +1790,52 @@ async def chat_completions(req: ChatRequest):
                     if kind == "token":
                         accumulated += data
                         full_text_parts.append(data)
+
+                        # ── Thinking token buffering ──────────────────────────
+                        # Intercept <think>...</think> blocks: buffer them as
+                        # reasoning_content instead of streaming as content deltas.
+                        if not _thinking_done and not _in_tool_call:
+                            # Detect <think> open
+                            if not _in_thinking:
+                                think_open_pos = accumulated.find(_THINK_OPEN)
+                                if think_open_pos != -1:
+                                    _in_thinking = True
+                                    # Send any content before <think> as a delta
+                                    pre_think = accumulated[_content_sent_len:think_open_pos]
+                                    if pre_think:
+                                        chunk_data = {
+                                            "id": cid, "object": "chat.completion.chunk",
+                                            "created": created, "model": _model_id,
+                                            "choices": [{"index": 0, "delta": {"content": pre_think}, "finish_reason": None}],
+                                        }
+                                        yield f"data: {json.dumps(chunk_data)}\n\n"
+                                    _thinking_buf = accumulated[think_open_pos + len(_THINK_OPEN):]
+                                    _content_sent_len = len(accumulated)
+                                    continue
+                                else:
+                                    # Check for partial <think tag at end — hold back
+                                    tail = accumulated[-8:] if len(accumulated) >= 8 else accumulated
+                                    if any(tail.endswith(pt) for pt in _PARTIAL_THINK_TAGS):
+                                        continue
+
+                            # Inside thinking block — buffer and check for </think>
+                            if _in_thinking:
+                                _thinking_buf = accumulated[accumulated.find(_THINK_OPEN) + len(_THINK_OPEN):]
+                                think_close_pos = _thinking_buf.find(_THINK_CLOSE)
+                                if think_close_pos != -1:
+                                    _thinking_buf = _thinking_buf[:think_close_pos].strip()
+                                    _in_thinking = False
+                                    _thinking_done = True
+                                    # Reset content tracking to after </think>
+                                    full_close = accumulated.find(_THINK_CLOSE)
+                                    _content_sent_len = full_close + len(_THINK_CLOSE) if full_close != -1 else len(accumulated)
+                                else:
+                                    # Check for partial </think at end — keep buffering
+                                    tail = _thinking_buf[-9:] if len(_thinking_buf) >= 9 else _thinking_buf
+                                    if any(tail.endswith(pt) for pt in _PARTIAL_THINK_CLOSE):
+                                        pass  # keep buffering
+                                _content_sent_len = len(accumulated)
+                                continue
 
                         if not _in_tool_call:
                             tc_start = accumulated.find(_TOOL_OPEN, _content_sent_len)
@@ -1887,6 +1963,26 @@ async def chat_completions(req: ChatRequest):
                         break
                     elif kind == "done":
                         full_text = "".join(full_text_parts)
+
+                        # Extract reasoning_content from the full text for the
+                        # final response. During streaming we buffered it in
+                        # _thinking_buf, but re-extract from full_text as the
+                        # authoritative source in case of edge cases.
+                        _final_reasoning = _thinking_buf.strip() if _thinking_buf else None
+                        if not _final_reasoning:
+                            _fr, _ = extract_thinking(full_text)
+                            _final_reasoning = _fr
+
+                        # Emit reasoning_content as a dedicated chunk so the
+                        # client can preserve it in conversation history.
+                        if _final_reasoning:
+                            rc_chunk = {
+                                "id": cid, "object": "chat.completion.chunk",
+                                "created": created, "model": _model_id,
+                                "choices": [{"index": 0, "delta": {"reasoning_content": _final_reasoning}, "finish_reason": None}],
+                            }
+                            yield f"data: {json.dumps(rc_chunk)}\n\n"
+
                         if has_tools:
                             tool_calls = parse_tool_calls(full_text)
                             if tool_calls:
@@ -2047,18 +2143,24 @@ async def chat_completions(req: ChatRequest):
     finish_reason = "stop"
     content = response_text
 
+    # Extract thinking/reasoning content separately so it can be preserved
+    # in conversation history. The Jinja template uses reasoning_content to
+    # maintain the model's chain-of-thought across tool loop iterations.
+    reasoning_content, stripped_text = extract_thinking(response_text)
+
     if has_tools:
         tool_calls = parse_tool_calls(response_text)
         if tool_calls:
             finish_reason = "tool_calls"
-            content = strip_thinking(strip_tool_calls(response_text)) or None
+            content = strip_tool_calls(stripped_text) or None
         else:
-            content = strip_thinking(response_text) or response_text
+            content = stripped_text or response_text
     else:
-        # Always strip thinking blocks — Qwen3 models generate <think> even without tools
-        content = strip_thinking(response_text) or response_text
+        content = stripped_text or response_text
 
     message = {"role": "assistant", "content": content}
+    if reasoning_content:
+        message["reasoning_content"] = reasoning_content
     if tool_calls:
         message["tool_calls"] = tool_calls
 

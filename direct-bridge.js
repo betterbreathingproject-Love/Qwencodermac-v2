@@ -2751,6 +2751,17 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
     // This breaks the truncation loop while still letting the agent see its edits.
     const _readFileHistory = new Map()  // path → { count, lastTurn, fullRead, totalLines, mtime }
 
+    // ── Helper: build assistant message with reasoning_content ─────────────
+    // Used by all paths that push assistant messages to the conversation.
+    // Preserves the model's chain-of-thought so the Jinja template can render
+    // it in history, preventing the model from losing its reasoning between
+    // tool loop iterations (which causes re-read loops).
+    function _buildAssistantMsg(content, reasoning) {
+      const msg = { role: 'assistant', content: content || null }
+      if (reasoning) msg.reasoning_content = reasoning
+      return msg
+    }
+
     // ── Memory: session start ─────────────────────────────────────────────────
     const _sessionId = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     if (memoryClient) {
@@ -3223,7 +3234,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         }
       }
 
-      const { text: rawText, toolCalls, usage, finishReason } = completion
+      const { text: rawText, toolCalls, usage, finishReason, reasoningContent } = completion
 
       // Strip hallucinated system annotations from model output.
       // The model sometimes generates text like "[Response interrupted by ...]"
@@ -3231,7 +3242,30 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       // Strip any "[Response interrupted by ...]" pattern — the model should never
       // generate these. Real interruptions are handled by the abort mechanism.
       const HALLUCINATED_ANNOTATIONS = /\[Response interrupted[^\]]*\]/g
-      const text = rawText ? rawText.replace(HALLUCINATED_ANNOTATIONS, '').trim() : rawText
+      let text = rawText ? rawText.replace(HALLUCINATED_ANNOTATIONS, '').trim() : rawText
+
+      // ── Client-side thinking extraction ─────────────────────────────────
+      // If the server didn't separate reasoning_content (e.g. non-streaming
+      // fallback or older server), extract <think>...</think> from the text
+      // and preserve it so the Jinja template can maintain chain-of-thought.
+      let _reasoningContent = reasoningContent || null
+      if (text) {
+        const thinkMatch = text.match(/<think>([\s\S]*?)<\/think>/)
+        if (thinkMatch) {
+          if (!_reasoningContent) {
+            _reasoningContent = thinkMatch[1].trim() || null
+          }
+          text = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+        }
+        // Handle unclosed think block (model hit max_tokens mid-think)
+        const unclosedMatch = text.match(/^<think>([\s\S]*)$/)
+        if (unclosedMatch) {
+          if (!_reasoningContent) {
+            _reasoningContent = unclosedMatch[1].trim() || null
+          }
+          text = ''
+        }
+      }
 
       // Send usage stats
       if (usage) {
@@ -3341,7 +3375,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
             continue
           }
 
-          messages.push({ role: 'assistant', content: text })
+          messages.push(_buildAssistantMsg(text, _reasoningContent))
           messages.push({
             role: 'system',
             content: 'STOP. You were outputting code as text which is not allowed. You MUST use tools instead:\n- Use write_file to create or overwrite files\n- Use edit_file to make surgical edits\n- For files with complex template literals or backticks, use bash with heredoc: bash({command: "cat > file << \'EOF\'\\n...\\nEOF"})\nNever output code blocks in your text response. Use one tool call at a time.',
@@ -3354,7 +3388,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         const codeBlockPattern = /```[\w]*\n[\s\S]{200,}/
         if (text && codeBlockPattern.test(text) && turn < maxTurns - 1) {
           this.send('qwen-event', { type: 'system', subtype: 'debug', data: 'Code block detected in text output — nudging model to use file tools' })
-          messages.push({ role: 'assistant', content: text })
+          messages.push(_buildAssistantMsg(text, _reasoningContent))
           messages.push({
             role: 'system',
             content: 'STOP. You just output a code block as text. The user CANNOT copy-paste from chat. You MUST use write_file or edit_file tools to create/modify files. Take the code you just wrote and call write_file NOW to save it to a file. Do NOT repeat the code as text.',
@@ -3427,7 +3461,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
             continue
           }
 
-          messages.push({ role: 'assistant', content: text })
+          messages.push(_buildAssistantMsg(text, _reasoningContent))
           messages.push({
             role: 'system',
             content: 'You described what you plan to do but did not take action. Use your tools NOW. Call read_file, edit_file, write_file, or bash to actually do the work. Do not just describe — act.',
@@ -3478,7 +3512,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           if (incomplete.length > 0) {
             const remaining = incomplete.map(t => t.content || t.text || t.label || t.title || 'unnamed').join(', ')
             this.send('qwen-event', { type: 'system', subtype: 'debug', data: `${incomplete.length} todo items still incomplete` })
-            messages.push({ role: 'assistant', content: text })
+            messages.push(_buildAssistantMsg(text, _reasoningContent))
             messages.push({
               role: 'system',
               content: `You have ${incomplete.length} incomplete todo items: ${remaining}. Continue working. When ALL items are done, call task_complete with a summary.`,
@@ -3502,7 +3536,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         }
 
         // Nudge the model to use tools or call task_complete
-        messages.push({ role: 'assistant', content: text })
+        messages.push(_buildAssistantMsg(text, _reasoningContent))
         const todoStatus = _lastTodos
           ? `\nYour todo list: ${_lastTodos.filter(t => t.status === 'done' || t.status === 'completed').length}/${_lastTodos.length} complete.`
           : '\nYou have NOT created a todo list yet — call update_todos first.'
@@ -3549,7 +3583,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         }
         if (hasTruncated) {
           // Don't try to execute truncated tool calls — tell the model to break it up
-          messages.push({ role: 'assistant', content: text || 'I was writing a file but hit the output limit.' })
+          messages.push(_buildAssistantMsg(text || 'I was writing a file but hit the output limit.', _reasoningContent))
           messages.push({
             role: 'system',
             content: 'Your write_file tool call was TRUNCATED — the file was NOT written. The output token limit was hit mid-write. Try one of these:\n1. Write the file using bash with heredoc: bash({command: "cat > filepath << \'FILEEOF\'\\n...all content...\\nFILEEOF"})\n2. Or split into two write_file calls — first half, then use bash to append the rest.\nDo this NOW.',
@@ -3561,6 +3595,13 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
 
       // Add assistant message with tool_calls to history
       const assistantMsg = { role: 'assistant', content: text || null }
+      // Preserve reasoning_content so the Jinja template can render the model's
+      // chain-of-thought in conversation history. Without this, the model loses
+      // its reasoning between tool loop iterations and re-derives conclusions
+      // from scratch (manifesting as re-read loops).
+      if (_reasoningContent) {
+        assistantMsg.reasoning_content = _reasoningContent
+      }
       if (toolCalls.length > 0) {
         assistantMsg.tool_calls = toolCalls.map(tc => {
           // Parse arguments from JSON string to object so the Jinja chat template
@@ -4759,7 +4800,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         } else if (WRITE_TOOLS.has(fnName) && !isError) {
           consecutiveReadsWithoutWrite = 0
         }
-        if (consecutiveReadsWithoutWrite >= 4) {
+        if (consecutiveReadsWithoutWrite >= 3) {
           messages.push({
             role: 'system',
             content: `STOP READING. You have made ${consecutiveReadsWithoutWrite} consecutive read/search calls without writing any code. ` +
@@ -4994,7 +5035,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
    */
   async _streamCompletion(messages, cwd, model) {
     return new Promise(async (resolve, reject) => {
-      if (this._aborted) return resolve({ text: '', toolCalls: [], usage: null, finishReason: 'stop' })
+      if (this._aborted) return resolve({ text: '', toolCalls: [], usage: null, finishReason: 'stop', reasoningContent: null })
 
       // ── Performance: cache tool definitions ──────────────────────────────
       // Tool defs only change when agent role or LSP status changes. Caching
@@ -5027,6 +5068,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       let finishReason = null
       let buf = ''
       let _lastToolDeltaTime = 0
+      let reasoningContent = null  // Captured from server's reasoning_content delta
 
       // Client-side prompt size guard: estimate tokens and trim if over budget
       // Use calibrated maxInputTokens + small headroom as the hard cap
@@ -5146,6 +5188,13 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
               this.send('qwen-event', { type: 'text-delta', text: accumulated })
             }
 
+            // Reasoning content — preserve for conversation history continuity.
+            // The server sends this as a dedicated chunk so the model retains
+            // its chain-of-thought across tool loop iterations.
+            if (delta?.reasoning_content) {
+              reasoningContent = delta.reasoning_content
+            }
+
             // Tool calls in delta (streaming tool calls)
             // OpenAI streams tool_calls incrementally: each chunk has an index,
             // and name/arguments are built up across multiple deltas.
@@ -5218,7 +5267,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
               })
             }
           }
-          resolve({ text: accumulated, toolCalls, usage, finishReason })
+          resolve({ text: accumulated, toolCalls, usage, finishReason, reasoningContent })
         })
 
         res.on('error', (err) => {
@@ -5417,6 +5466,13 @@ A small 0.8B model runs in the gaps between your turns. It handles:
 - Validating tool arguments before execution
 
 You don't need to manage any of this — it happens transparently.
+
+## Anti-loop rules
+1. NEVER read the same file twice in one session unless you modified it between reads. If you already read a file and it's still in your context, proceed directly with edit_file.
+2. After reading a file, your NEXT action MUST be edit_file, write_file, or bash — not another read_file on a different file. Read only what you need, then act.
+3. If you have read 3+ files without writing anything, STOP reading and START writing. You have enough context.
+4. Do NOT describe what you plan to do — just do it. Call the tool directly.
+5. When creating new files, call write_file immediately. Do NOT read existing files first unless you need specific content from them.
 ${autoEdit ? '\nAuto-edit mode: proceed with all changes without asking for confirmation.' : ''}`
   }
 
