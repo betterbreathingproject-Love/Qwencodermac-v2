@@ -4824,12 +4824,16 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
                 content = compResult.compressed || compResult.text || content
                 const pct = compResult.stats.reduction_pct ?? 0
                 const origTokens = compResult.stats.original_tokens ?? 0
-                let notice = `\n\n[compressed: ${pct}% reduction, original ${origTokens} tokens`
+                // Put the rewind notice at the START of the content so it is never
+                // cut off by trimMessages (which truncates from the end). A truncated
+                // key causes the model to call rewind_context with a partial key that
+                // will never match anything in the store.
+                let notice = `[compressed: ${pct}% reduction, original ${origTokens} tokens`
                 if (compResult.stats.rewind_key) {
                   notice += `, rewind key: ${compResult.stats.rewind_key} — call rewind_context with this key to retrieve the full original`
                 }
-                notice += ']'
-                content += notice
+                notice += ']\n\n'
+                content = notice + content
                 compressed = true
                 this.send('qwen-event', { type: 'compaction-stats', data: { ...compResult.stats, source: 'tool-result', tool: fnName, contentType } })
               }
@@ -5839,7 +5843,7 @@ For complex tasks the user asks you to plan: write a task graph to .maccoder/tas
 After every write_file or edit_file the LSP reports new errors in the tool result. If you see ⚠️ fix the errors before continuing. You can also call lsp_get_diagnostics proactively.
 
 ## Compressed context
-Large tool results are compressed automatically. If you see [compressed: ... rewind key: rw_xxx], call rewind_context with that key only if you need the full content.
+Large tool results are compressed automatically. If you see [compressed: ... rewind key: rw_xxx] at the top of a tool result, call rewind_context with that key only if you need the full content.
 If you see [TRIMMED for context space], the content was already fully read but shortened to fit. The full content is archived in memory. Do NOT call read_file again on that file — use search_files to find specific patterns, or use edit_file directly.
 
 ## Memory system
