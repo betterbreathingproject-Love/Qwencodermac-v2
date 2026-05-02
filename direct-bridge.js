@@ -569,6 +569,25 @@ const TOOL_DEFS = [
   {
     type: 'function',
     function: {
+      name: 'generate_xcode_project',
+      description: 'Generate an Xcode project.pbxproj file from existing Swift source files. Use this instead of manually writing pbxproj files — it scans the source directory and creates all file references, groups, build phases, and configurations automatically. Also creates missing asset catalog Contents.json files.',
+      parameters: {
+        type: 'object',
+        properties: {
+          product_name: { type: 'string', description: 'The product/app name (e.g. "PhotoRanker"). Defaults to the project directory name.' },
+          source_dir: { type: 'string', description: 'The source directory name relative to the project root (e.g. "PhotoRanker"). Defaults to product_name.' },
+          org_identifier: { type: 'string', description: 'Organization identifier for bundle ID (e.g. "com.example"). Defaults to "com.developer".' },
+          platform: { type: 'string', description: '"macos" or "ios". Defaults to "macos".' },
+          deployment_target: { type: 'string', description: 'Minimum deployment target (e.g. "14.0"). Defaults to "14.0".' },
+          team_id: { type: 'string', description: 'Apple Developer Team ID for code signing. Optional.' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'ask_user',
       description: 'Ask the user a question and wait for their reply. Use when you need clarification or input. Provide suggested options when the answer is likely one of a few choices — the user can click them or type a custom reply.',
       parameters: {
@@ -2129,6 +2148,25 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         }
       }
       default: {
+        // Generate Xcode project — programmatic, no LLM needed
+        if (name === 'generate_xcode_project') {
+          try {
+            const { generateXcodeProject } = require('./xcode-project-gen')
+            const result = generateXcodeProject({
+              projectDir: cwd,
+              productName: args.product_name || path.basename(cwd),
+              orgIdentifier: args.org_identifier || 'com.developer',
+              platform: args.platform || 'macos',
+              deploymentTarget: args.deployment_target || '14.0',
+              sourceDir: args.source_dir || null,
+              teamId: args.team_id || '',
+            })
+            if (result.error) return { error: result.error }
+            return { result: `Generated ${result.path}\n${result.stats.swiftFiles} Swift files, ${result.stats.assetCatalogs} asset catalogs, ${result.stats.groups} groups, ${result.stats.totalFileRefs} file references.` }
+          } catch (err) {
+            return { error: `generate_xcode_project failed: ${err.message}` }
+          }
+        }
         // Route xcode_* tools to XcodeBuildMCP
         if (name.startsWith('xcode_') && xcodeTool) {
           return xcodeTool.executeXcodeTool(name, args, cwd)
