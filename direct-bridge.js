@@ -3438,10 +3438,9 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
 
       // Strip hallucinated system annotations from model output.
       // The model sometimes generates text like "[Response interrupted by ...]"
-      // by mimicking injected annotations it sees in context. These confuse users.
-      // Strip any "[Response interrupted by ...]" pattern — the model should never
-      // generate these. Real interruptions are handled by the abort mechanism.
-      const HALLUCINATED_ANNOTATIONS = /\[Response interrupted[^\]]*\]/g
+      // or "[Summarized by ...]" by mimicking injected annotations it sees in context.
+      // These confuse users — strip them. Real interruptions are handled by abort.
+      const HALLUCINATED_ANNOTATIONS = /\[Response interrupted[^\]]*\]|\[Summarized by[^\]]*\]|\[TRIMMED[^\]]*\]|\[compressed:[^\]]*\]/g
       let text = rawText ? rawText.replace(HALLUCINATED_ANNOTATIONS, '').trim() : rawText
 
       // ── Client-side thinking extraction ─────────────────────────────────
@@ -5445,7 +5444,12 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
             const delta = choice.delta
             if (delta?.content) {
               accumulated += delta.content
-              this.send('qwen-event', { type: 'text-delta', text: accumulated })
+              // Strip hallucinated system annotations in real-time so they never
+              // appear in the UI. The model sometimes generates these by mimicking
+              // injected markers it sees in context (e.g. "[Response interrupted by ...]").
+              const STREAM_ANNOTATION_RE = /\[Response interrupted[^\]]*\]|\[Summarized by[^\]]*\]|\[TRIMMED[^\]]*\]|\[compressed:[^\]]*\]/g
+              const displayText = accumulated.replace(STREAM_ANNOTATION_RE, '').trim()
+              this.send('qwen-event', { type: 'text-delta', text: displayText })
             }
 
             // Reasoning content — preserve for conversation history continuity.
