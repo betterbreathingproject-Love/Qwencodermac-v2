@@ -1599,8 +1599,7 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         const filePaths = args.paths.slice(0, 20)
         const results = []
         let totalChars = 0
-        const _rfProfile = this._getCalibrationProfile?.()
-        const charBudget = _rfProfile?.readFileTruncate ?? config.READ_FILE_TRUNCATE
+        const charBudget = config.READ_FILE_TRUNCATE
         for (const filePath of filePaths) {
           const v = validatePath(filePath)
           if (v.error) {
