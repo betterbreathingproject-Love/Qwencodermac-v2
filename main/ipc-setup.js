@@ -462,11 +462,9 @@ function register(ipcMain) {
   // ── macOS permissions ─────────────────────────────────────────────────────
 
   // Check the status of all relevant macOS permissions.
-  // Uses systemPreferences.getMediaAccessStatus for media, and tccutil/AXIsProcessTrusted
-  // for accessibility and screen recording (which have no direct Electron API).
   ipcMain.handle('setup-check-permissions', async () => {
     const { systemPreferences } = require('electron')
-    return checkPermissions(systemPreferences)
+    return checkPermissionsAsync(systemPreferences)
   })
 
   // Open the relevant macOS System Settings pane for a given permission.
@@ -488,12 +486,11 @@ function register(ipcMain) {
 }
 
 // ── Permission checking ───────────────────────────────────────────────────────
-// Returns an object mapping permId → { status, label, description, required, usedBy }
+// Returns an object mapping permId → status string
 // status: 'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown'
 function checkPermissions(systemPreferences) {
   const results = {}
 
-  // Helper: map Electron media status to our canonical status
   function mediaStatus(raw) {
     if (raw === 'granted') return 'granted'
     if (raw === 'denied') return 'denied'
@@ -501,52 +498,62 @@ function checkPermissions(systemPreferences) {
     return 'not-determined'
   }
 
-  // Microphone — used by future voice input features
+  // Microphone
   try {
-    const raw = systemPreferences.getMediaAccessStatus('microphone')
-    results.microphone = mediaStatus(raw)
+    results.microphone = mediaStatus(systemPreferences.getMediaAccessStatus('microphone'))
   } catch { results.microphone = 'unknown' }
 
-  // Camera — used by vision tools (screenshot of webcam, future features)
+  // Camera
   try {
-    const raw = systemPreferences.getMediaAccessStatus('camera')
-    results.camera = mediaStatus(raw)
+    results.camera = mediaStatus(systemPreferences.getMediaAccessStatus('camera'))
   } catch { results.camera = 'unknown' }
 
-  // Screen Recording — required for desktop_screenshot tool (screenshot-desktop)
-  // Electron doesn't expose a direct API; we check via getMediaAccessStatus('screen')
-  // which is available in Electron 13+.
+  // Screen Recording — getMediaAccessStatus('screen') available in Electron 13+
   try {
-    const raw = systemPreferences.getMediaAccessStatus('screen')
-    results.screenRecording = mediaStatus(raw)
+    results.screenRecording = mediaStatus(systemPreferences.getMediaAccessStatus('screen'))
   } catch { results.screenRecording = 'unknown' }
 
-  // Accessibility — required for desktop_mouse_click, desktop_keyboard_* (robotjs)
-  // AXIsProcessTrusted is the canonical check; we call it via a tiny AppleScript.
-  try {
-    const { execSync } = require('child_process')
-    // osascript returns 'true' if trusted, 'false' otherwise
-    const out = execSync(
-      'osascript -e "tell application \\"System Events\\" to return (exists process \\"QwenCoder Mac Studio\\")"',
-      { timeout: 3000, encoding: 'utf-8' }
-    ).trim()
-    // A more reliable check: use the AXIsProcessTrusted API via a helper
-    const axOut = execSync(
-      'python3 -c "import ctypes; lib=ctypes.cdll.LoadLibrary(\'/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices\'); lib.AXIsProcessTrusted.restype=ctypes.c_bool; print(lib.AXIsProcessTrusted())"',
-      { timeout: 3000, encoding: 'utf-8' }
-    ).trim()
-    results.accessibility = axOut === 'True' ? 'granted' : 'not-determined'
-  } catch { results.accessibility = 'unknown' }
+  // Accessibility — check via AXIsProcessTrusted using async execFile (non-blocking)
+  // Resolved separately; for the sync path we return 'unknown' and let the async
+  // version in checkPermissionsAsync fill it in.
+  results.accessibility = 'unknown'
 
-  // Full Disk Access — optional, improves file reading across the system
-  // No direct API; we probe by trying to read a TCC-protected path
-  try {
-    const { execSync } = require('child_process')
-    execSync('ls ~/Library/Application\\ Support/com.apple.TCC/ 2>/dev/null', { timeout: 2000 })
-    results.fullDiskAccess = 'granted'
-  } catch { results.fullDiskAccess = 'not-determined' }
+  // Full Disk Access — no direct API; default to unknown for the sync path
+  results.fullDiskAccess = 'unknown'
 
   return results
 }
 
-module.exports = { register, isSetupComplete, markSetupComplete, resetSetup, getHardwareInfo, scanInstalledModels, selectTier, MODEL_TIERS, getModelsDir, saveModelsDir, checkPermissions }
+// Async version — fills in accessibility and fullDiskAccess without blocking the main thread.
+function checkPermissionsAsync(systemPreferences) {
+  return new Promise((resolve) => {
+    const base = checkPermissions(systemPreferences)
+
+    // Run both async checks in parallel with a shared timeout
+    let settled = false
+    const done = () => {
+      if (!settled) { settled = true; resolve(base) }
+    }
+    // 4-second overall timeout — never block the wizard
+    const timer = setTimeout(done, 4000)
+
+    // Accessibility via python3 ctypes (non-blocking)
+    execFile('python3', ['-c',
+      'import ctypes; lib=ctypes.cdll.LoadLibrary("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"); lib.AXIsProcessTrusted.restype=ctypes.c_bool; print(lib.AXIsProcessTrusted())'
+    ], { timeout: 3000 }, (err, stdout) => {
+      if (!err) {
+        base.accessibility = stdout.trim() === 'True' ? 'granted' : 'not-determined'
+      }
+      // Full Disk Access — probe TCC-protected path
+      execFile('ls', [
+        `${require('os').homedir()}/Library/Application Support/com.apple.TCC/`
+      ], { timeout: 2000 }, (err2) => {
+        base.fullDiskAccess = err2 ? 'not-determined' : 'granted'
+        clearTimeout(timer)
+        done()
+      })
+    })
+  })
+}
+
+module.exports = { register, isSetupComplete, markSetupComplete, resetSetup, getHardwareInfo, scanInstalledModels, selectTier, MODEL_TIERS, getModelsDir, saveModelsDir, checkPermissions, checkPermissionsAsync }
