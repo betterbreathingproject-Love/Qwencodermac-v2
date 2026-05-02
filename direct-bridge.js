@@ -2139,7 +2139,8 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
           return { result: rewindResult.content }
         }
         return { error: `Content no longer available for key "${args.key}". The rewind store has expired or evicted this entry. ` +
-          `Do NOT retry with the same key. Instead, use read_file to re-read the file, or use search_files to find the specific content you need.` }
+          `Do NOT retry with the same key and do NOT call read_file — the file content was already in your context. ` +
+          `Use search_files to find specific patterns, or use edit_file directly if you know what changes to make.` }
       }
       case 'ask_user': {
         if (!inputRequester) return { result: '(No input channel available — proceeding without user input)' }
@@ -4340,11 +4341,15 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
                   // Track how many times this file has been blocked
                   prev.blockedCount = (prev.blockedCount || 0) + 1
                   _readFileHistory.set(readKey, prev)
-                  // After 3 blocked attempts, the agent clearly needs the content
-                  // but can't find it. Reset history so the next read goes through.
+                  // After 3 blocked attempts, allow the read through so the agent
+                  // can get the content it needs — but keep the history entry so
+                  // the guard stays active for subsequent reads (don't delete it,
+                  // as that resets the counter and causes an infinite read loop).
                   if (prev.blockedCount >= 3) {
-                    this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Releasing read lock on ${readKey} after ${prev.blockedCount} blocked attempts — agent may need content for editing` })
-                    _readFileHistory.delete(readKey)
+                    this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Releasing read lock on ${readKey} after ${prev.blockedCount} blocked attempts — allowing one read through` })
+                    // Reset blockedCount so the guard re-arms after this read
+                    prev.blockedCount = 0
+                    _readFileHistory.set(readKey, prev)
                     // Fall through to execute the actual read
                   } else {
                     this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Skipped re-read of ${readKey} (unchanged, content still in context, blocked ${prev.blockedCount}x)` })
@@ -4438,18 +4443,27 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
             this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Skipped batch re-read of ${alreadyRead.length} files (all already in context, block #${this._batchRereadBlocks})` })
 
             let interceptContent
-            if (this._batchRereadBlocks >= 2) {
-              // Second+ time being blocked — model is stuck reading instead of writing
-              interceptContent = `STOP READING. You have tried to re-read files ${this._batchRereadBlocks} times — they are ALL still in your context. ` +
+            if (this._batchRereadBlocks >= 3) {
+              // Third+ time being blocked — allow through and reset counter so
+              // the guard re-arms. Permanently blocking causes an infinite loop
+              // where the agent can never get content it needs.
+              this._batchRereadBlocks = 0
+              this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Batch re-read block limit reached — allowing read through, resetting counter` })
+              // Fall through to actually execute the read (don't intercept)
+            } else if (this._batchRereadBlocks >= 2) {
+              // Second time being blocked — model is stuck reading instead of writing
+              interceptContent = `STOP READING. You have tried to re-read these files ${this._batchRereadBlocks} times — they are ALL still in your context. ` +
                 `You MUST write code NOW. Call write_file to create the file you need, or call edit_file to modify an existing file. ` +
                 `Do NOT call read_file or read_files again.`
             } else {
               interceptContent = `All ${alreadyRead.length} files were already read and are still in your context. ` +
                 `Do NOT re-read them. Proceed with write_file (to create new files) or edit_file (to modify existing files).`
             }
+            if (interceptContent) {
             this.send('qwen-event', { type: 'tool-result', tool_use_id: tc.id, content: interceptContent, is_error: false })
             messages.push({ role: 'tool', tool_call_id: tc.id, content: interceptContent })
             continue
+            }
           }
           if (alreadyRead.length > 0 && needsRead.length > 0) {
             // Some already read — rewrite args to only read new files
@@ -5880,6 +5894,7 @@ ${autoEdit ? '\nAuto-edit mode: proceed with all changes without asking for conf
     this._pendingDiagnostics = null
     this._coalescedToolCallIds = new Set()
     this._sseErrorPending = false
+    this._batchRereadBlocks = 0
 
     // Only call admin abort if we actually had an active inference request.
     // Calling it unconditionally risks aborting the *next* run's inference
