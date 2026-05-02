@@ -79,6 +79,16 @@ _last_metal_clear_time: float = 0.0     # throttle cache clears to once per 10s
 _INFERENCE_QUEUE_SIZE = int(os.environ.get("MLX_QUEUE_SIZE", "4"))
 _inference_semaphore: asyncio.Semaphore | None = None  # initialized at startup
 
+# ── Metal GPU lock ────────────────────────────────────────────────────────────
+# The asyncio semaphore serializes coroutines but can't block threads.
+# The main model runs stream_generate in a thread (run_in_executor), while
+# the fast model's _extract_generate is a synchronous blocking call.
+# Without a threading lock, both can hit Metal simultaneously → SIGABRT
+# ("encodeSignalEvent:value: with uncommitted encoder").
+# Every code path that touches Metal (main inference, fast model, prefix
+# cache build) must hold this lock.
+_metal_lock = threading.Lock()
+
 
 def _get_inference_semaphore() -> asyncio.Semaphore:
     """Lazy-init the semaphore on the running event loop."""
@@ -88,6 +98,11 @@ def _get_inference_semaphore() -> asyncio.Semaphore:
         # but the semaphore lets waiters queue without blocking the event loop.
         _inference_semaphore = asyncio.Semaphore(1)
     return _inference_semaphore
+
+
+def get_metal_lock() -> threading.Lock:
+    """Return the global Metal GPU lock. Used by memory-bridge too."""
+    return _metal_lock
 
 
 # ── autotune helpers ──────────────────────────────────────────────────────────
@@ -377,6 +392,18 @@ def _prefix_cache_key(model_id: str, system_prompt: str) -> str:
     return f"{safe_id}-{prompt_hash}.safetensors"
 
 
+def _cleanup_prefix_caches(keep: int = 3):
+    """Keep only the most recent `keep` cache files per model. Deletes the rest."""
+    try:
+        cache_dir = _prefix_cache_dir()
+        files = sorted(cache_dir.glob("*.safetensors"), key=lambda f: f.stat().st_mtime, reverse=True)
+        for f in files[keep:]:
+            f.unlink()
+            print(f"[prefix-cache] Cleaned up old cache: {f.name}", file=sys.stderr)
+    except Exception as e:
+        print(f"[prefix-cache] Cleanup failed: {e}", file=sys.stderr)
+
+
 def _build_prefix_cache(system_prompt: str) -> bool:
     """
     Prefill the system prompt once and save the KV state to disk.
@@ -406,11 +433,12 @@ def _build_prefix_cache(system_prompt: str) -> bool:
         print(f"[prefix-cache] Building system prompt cache ({len(system_prompt)} chars)...", file=sys.stderr)
         t0 = time.perf_counter()
 
-        cache_state = make_prompt_cache(_model)
-        # Prefill the system prompt (generate 1 token to force full prefill)
-        for _ in stream_generate(_model, _processor, system_prompt,
-                                 max_tokens=1, prompt_cache=cache_state):
-            pass
+        with _metal_lock:
+            cache_state = make_prompt_cache(_model)
+            # Prefill the system prompt (generate 1 token to force full prefill)
+            for _ in stream_generate(_model, _processor, system_prompt,
+                                     max_tokens=1, prompt_cache=cache_state):
+                pass
 
         # Count cached tokens from the cache offset
         cached_tokens = 0
@@ -431,6 +459,7 @@ def _build_prefix_cache(system_prompt: str) -> bool:
         _prefix_cache_file = str(cache_path)
         _prefix_cache_prompt = system_prompt
         _prefix_cache_tokens = cached_tokens
+        _cleanup_prefix_caches(keep=3)
         return True
 
     except Exception as e:
@@ -1440,15 +1469,18 @@ async def chat_completions(req: ChatRequest):
             return await _route_vision_request(req)
 
     # ── auto-build prefix cache on first request with a system prompt ─────────
-    # If no cache exists yet and this request has a system prompt, build it now
-    # (synchronously, before inference). Subsequent requests reuse the cached file.
-    # Only for text-only models — VLM path doesn't support prefix caching.
+    # If no cache exists yet and this request has a system prompt, schedule
+    # a background build after this inference completes. The first request
+    # runs without prefix cache (no TTFT benefit); subsequent requests get it.
+    # Building synchronously before inference caused hangs on large-context
+    # models where make_prompt_cache + prefill took 10-30s.
+    _pending_cache_build = None
     if (not _model_is_vision and _prefix_cache_enabled
             and _prefix_cache_file is None and not has_images):
         sys_prompt_text = get_system_prompt(req.messages)
         if sys_prompt_text:
-            print(f"[prefix-cache] Auto-building cache for first request...", file=sys.stderr)
-            _build_prefix_cache(sys_prompt_text)
+            print(f"[prefix-cache] Will build cache after first inference completes...", file=sys.stderr)
+            _pending_cache_build = sys_prompt_text
 
     # Smart cache clearing (autotune optimization):
     # Only clear Metal cache when memory pressure is actually high (>65% active).
@@ -1648,55 +1680,56 @@ async def chat_completions(req: ChatRequest):
             await sem.acquire()
 
             def run_stream():
-                try:
-                    gen = stream_generate(_model, _processor, _prompt_for_inference,
-                                         draft_model=_effective_draft, **kwargs)
-                    last_result = None
-                    for chunk in gen:
+                with _metal_lock:
+                    try:
+                        gen = stream_generate(_model, _processor, _prompt_for_inference,
+                                             draft_model=_effective_draft, **kwargs)
+                        last_result = None
+                        for chunk in gen:
+                            if _cancelled.is_set():
+                                break
+                            text = chunk.text if hasattr(chunk, 'text') else str(chunk)
+                            if text:
+                                loop.call_soon_threadsafe(queue.put_nowait, ("token", text))
+                            last_result = chunk
+                        if not _cancelled.is_set() and last_result and hasattr(last_result, 'prompt_tps'):
+                            loop.call_soon_threadsafe(queue.put_nowait, ("stats", last_result))
+                    except Exception as e:
                         if _cancelled.is_set():
-                            break
-                        text = chunk.text if hasattr(chunk, 'text') else str(chunk)
-                        if text:
-                            loop.call_soon_threadsafe(queue.put_nowait, ("token", text))
-                        last_result = chunk
-                    if not _cancelled.is_set() and last_result and hasattr(last_result, 'prompt_tps'):
-                        loop.call_soon_threadsafe(queue.put_nowait, ("stats", last_result))
-                except Exception as e:
-                    if _cancelled.is_set():
-                        print(f"[server] Inference interrupted (client disconnected): {type(e).__name__}", file=sys.stderr)
-                    else:
-                        import traceback
-                        print(f"[server] ❌ Stream inference error ({type(e).__name__}): {e}", file=sys.stderr)
-                        traceback.print_exc(file=sys.stderr)
-                        try:
-                            import mlx.core as mx
-                            mem_active = mx.metal.get_active_memory() / (1024**3)
-                            mem_peak = mx.metal.get_peak_memory() / (1024**3)
-                            print(f"[server] Metal memory — active: {mem_active:.2f} GB, peak: {mem_peak:.2f} GB", file=sys.stderr)
-                        except Exception:
-                            pass
-                        loop.call_soon_threadsafe(queue.put_nowait, ("error", str(e)))
-                finally:
-                    # Smart post-inference cache clearing — only when memory pressure warrants it
-                    if _should_clear_metal_cache():
-                        try:
-                            import mlx.core as mx
-                            mx.metal.clear_cache()
-                        except Exception:
-                            pass
+                            print(f"[server] Inference interrupted (client disconnected): {type(e).__name__}", file=sys.stderr)
+                        else:
+                            import traceback
+                            print(f"[server] ❌ Stream inference error ({type(e).__name__}): {e}", file=sys.stderr)
+                            traceback.print_exc(file=sys.stderr)
+                            try:
+                                import mlx.core as mx
+                                mem_active = mx.metal.get_active_memory() / (1024**3)
+                                mem_peak = mx.metal.get_peak_memory() / (1024**3)
+                                print(f"[server] Metal memory — active: {mem_active:.2f} GB, peak: {mem_peak:.2f} GB", file=sys.stderr)
+                            except Exception:
+                                pass
+                            loop.call_soon_threadsafe(queue.put_nowait, ("error", str(e)))
+                    finally:
+                        # Smart post-inference cache clearing — only when memory pressure warrants it
+                        if _should_clear_metal_cache():
+                            try:
+                                import mlx.core as mx
+                                mx.metal.clear_cache()
+                            except Exception:
+                                pass
                     # Use try/except on call_soon_threadsafe in case the event loop
                     # was closed before the thread finished (e.g. server shutdown).
-                    try:
-                        loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
-                    except Exception:
-                        pass
-                    # Release semaphore from the thread — guarantees no concurrent
-                    # Metal inference even if the async generator was closed early.
-                    try:
-                        loop.call_soon_threadsafe(sem.release)
-                    except Exception:
-                        # Loop is gone — release directly to unblock any waiting coroutine
-                        sem.release()
+                try:
+                    loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
+                except Exception:
+                    pass
+                # Release semaphore from the thread — guarantees no concurrent
+                # Metal inference even if the async generator was closed early.
+                try:
+                    loop.call_soon_threadsafe(sem.release)
+                except Exception:
+                    # Loop is gone — release directly to unblock any waiting coroutine
+                    sem.release()
 
             loop.run_in_executor(None, run_stream)
 
@@ -1909,7 +1942,20 @@ async def chat_completions(req: ChatRequest):
         except Exception:
             pass
 
-        return StreamingResponse(event_stream(), media_type="text/event-stream")
+        response = StreamingResponse(event_stream(), media_type="text/event-stream")
+
+        # Deferred prefix cache build — runs after the first inference response
+        # is fully sent, so the user isn't blocked waiting for cache allocation.
+        if _pending_cache_build:
+            _deferred_prompt = _pending_cache_build
+            async def _deferred_cache_build():
+                sem = _get_inference_semaphore()
+                async with sem:
+                    await asyncio.get_event_loop().run_in_executor(
+                        None, _build_prefix_cache, _deferred_prompt)
+            asyncio.ensure_future(_deferred_cache_build())
+
+        return response
 
 
     # ── non-streaming ─────────────────────────────────────────────────────────
@@ -1953,17 +1999,18 @@ async def chat_completions(req: ChatRequest):
                     kwargs['prompt_cache'] = _ns_prefix_cache
 
     def _run_generate():
-        if _ns_draft is not None:
-            result = generate(_model, _processor, _ns_prompt, draft_model=_ns_draft, **kwargs)
-        else:
-            result = generate(_model, _processor, _ns_prompt, **kwargs)
-        if images:
-            try:
-                import mlx.core as mx
-                mx.metal.clear_cache()
-            except Exception:
-                pass
-        return result
+        with _metal_lock:
+            if _ns_draft is not None:
+                result = generate(_model, _processor, _ns_prompt, draft_model=_ns_draft, **kwargs)
+            else:
+                result = generate(_model, _processor, _ns_prompt, **kwargs)
+            if images:
+                try:
+                    import mlx.core as mx
+                    mx.metal.clear_cache()
+                except Exception:
+                    pass
+            return result
 
     try:
         sem = _get_inference_semaphore()

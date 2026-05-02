@@ -1398,6 +1398,16 @@ def _get_extraction_semaphore() -> "_asyncio.Semaphore":
             _extraction_semaphore = _asyncio.Semaphore(1)
     return _extraction_semaphore
 
+
+def _get_metal_lock():
+    """Get the global Metal GPU threading lock from server.py."""
+    try:
+        import importlib
+        server = importlib.import_module("server")
+        return server.get_metal_lock()
+    except Exception:
+        return None
+
 # Extraction queue state
 _extraction_queue_depth = 0
 _extraction_processing = False
@@ -2016,7 +2026,12 @@ def _extract_generate(prompt: str, max_tokens: int = 400) -> str:
     When the model was loaded via mlx_vlm (vision-capable), mlx_lm.generate fails because
     the VLM processor (e.g. Qwen3VLProcessor) lacks eos_token_id. In that case we use
     mlx_vlm.generate with no image, which works for text-only prompts too.
+
+    Holds the Metal GPU lock to prevent concurrent Metal operations with the
+    main model's stream_generate (which runs in a separate thread).
     """
+    metal_lock = _get_metal_lock()
+
     # Check both the flag and the processor type at runtime (self-heal for models
     # loaded before the vision-detection code existed)
     _processor_type = type(_extract_processor).__name__
@@ -2029,18 +2044,32 @@ def _extract_generate(prompt: str, max_tokens: int = 400) -> str:
     if _is_vlm:
         # Model loaded via mlx_vlm — use vlm generate with no image
         from mlx_vlm import generate as vlm_generate
-        result = vlm_generate(
-            _extract_model, _extract_processor,
-            prompt=prompt, max_tokens=max_tokens, verbose=False,
-        )
+        if metal_lock:
+            with metal_lock:
+                result = vlm_generate(
+                    _extract_model, _extract_processor,
+                    prompt=prompt, max_tokens=max_tokens, verbose=False,
+                )
+        else:
+            result = vlm_generate(
+                _extract_model, _extract_processor,
+                prompt=prompt, max_tokens=max_tokens, verbose=False,
+            )
         # vlm_generate returns GenerationResult — extract the text string
         return result.text if hasattr(result, 'text') else str(result)
     else:
         import mlx_lm
-        return mlx_lm.generate(
-            _extract_model, _extract_processor,
-            prompt=prompt, max_tokens=max_tokens, verbose=False,
-        )
+        if metal_lock:
+            with metal_lock:
+                return mlx_lm.generate(
+                    _extract_model, _extract_processor,
+                    prompt=prompt, max_tokens=max_tokens, verbose=False,
+                )
+        else:
+            return mlx_lm.generate(
+                _extract_model, _extract_processor,
+                prompt=prompt, max_tokens=max_tokens, verbose=False,
+            )
 
 
 async def _handle_vision(payload: dict) -> AssistResponse:
@@ -2134,14 +2163,26 @@ async def _handle_vision(payload: dict) -> AssistResponse:
             formatted_prompt = vlm_apply_chat_template(
                 _extract_processor, _vlm_config, prompt, num_images=1
             )
-            response = vlm_generate(
-                _extract_model,
-                _extract_processor,
-                prompt=formatted_prompt,
-                image=tmp_path,
-                max_tokens=512,
-                verbose=False,
-            )
+            _vision_metal_lock = _get_metal_lock()
+            if _vision_metal_lock:
+                with _vision_metal_lock:
+                    response = vlm_generate(
+                        _extract_model,
+                        _extract_processor,
+                        prompt=formatted_prompt,
+                        image=tmp_path,
+                        max_tokens=512,
+                        verbose=False,
+                    )
+            else:
+                response = vlm_generate(
+                    _extract_model,
+                    _extract_processor,
+                    prompt=formatted_prompt,
+                    image=tmp_path,
+                    max_tokens=512,
+                    verbose=False,
+                )
         finally:
             try:
                 _os.unlink(tmp_path)
