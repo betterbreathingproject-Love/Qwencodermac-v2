@@ -3551,6 +3551,20 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       // returned an error as a non-SSE response. Retry once with trimmed context,
       // then fail gracefully instead of silently finishing.
       if (!text && (!toolCalls || toolCalls.length === 0) && !usage) {
+        // Special case: the model generated only hallucinated system annotations
+        // (e.g. "[Response interrupted by edit_files]") which were stripped to empty.
+        // rawText is non-empty but text is empty — the model was mimicking an
+        // interruption marker it saw in its context. Inject a nudge to continue
+        // rather than treating this as a server error.
+        if (rawText && rawText.trim().length > 0) {
+          this.send('qwen-event', { type: 'system', subtype: 'debug', data: '⚠️ Model generated only hallucinated annotations — injecting continuation nudge' })
+          messages.push({
+            role: 'system',
+            content: 'IMPORTANT: Do NOT generate text like "[Response interrupted by ...]" or "[Summarized by ...]" — these are system markers, not part of your output. Your last response was stripped entirely because it contained only these markers. Continue your work: call the appropriate tool (write_file, edit_file, bash, etc.) to make progress on the task.',
+          })
+          continue
+        }
+
         if (turn === 0 && messages.length >= 2) {
           // First turn empty — likely oversized prompt from conversation history.
           // Trim the user message if it contains a conversation transcript.
@@ -3577,6 +3591,17 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
 
       // No tool calls — check if we hit the token limit
       if (!toolCalls || toolCalls.length === 0) {
+        // If text is empty after stripping hallucinated annotations (but rawText had content),
+        // inject a nudge to continue rather than falling through to the text-only handler.
+        if (!text && rawText && rawText.trim().length > 0) {
+          this.send('qwen-event', { type: 'system', subtype: 'debug', data: '⚠️ Model generated only hallucinated annotations (with usage) — injecting continuation nudge' })
+          messages.push({
+            role: 'system',
+            content: 'IMPORTANT: Do NOT generate text like "[Response interrupted by ...]" or "[Summarized by ...]" — these are system markers, not part of your output. Your last response was stripped entirely because it contained only these markers. Continue your work: call the appropriate tool (write_file, edit_file, bash, etc.) to make progress on the task.',
+          })
+          continue
+        }
+
         // If the model hit the token limit, it may have been trying to output
         // code as text instead of using write_file. Nudge it to use tools.
         if (finishReason === 'length' && text && text.length > 200) {
@@ -5763,7 +5788,7 @@ The project file tree is included at the end of this prompt — read it before c
 - write_file: aim for under 300 lines per call for source code. For generated config files (pbxproj, Package.swift, CMakeLists, etc.) you can write longer files in one call. If a write gets truncated, split into chunks and use bash with heredoc to append.
 - bash: prefer single focused commands. Check exit codes in the output. For installs and builds (npm install, pip install, swift build, xcodebuild), the timeout is 5 minutes — use them directly. Always add non-interactive flags to suppress prompts: npm init -y, pip install --no-input, brew install --no-interaction.
 - search_files: use regex patterns. Narrow with path/include filters to avoid noise.
-- NEVER generate text that looks like system annotations: "[Response interrupted by ...]", "[Summarized by ...]", or any text in square brackets that mimics system-injected markers. These are NOT part of your output format. If you generate them, they will be stripped.
+- NEVER generate text that looks like system annotations: "[Response interrupted by ...]", "[Summarized by ...]", or any text in square brackets that mimics system-injected markers. These are NOT part of your output format. If you generate them, they will be stripped and your response will be treated as empty — causing the loop to stall. Always use a tool call to continue your work.
 
 ## Progress tracking
 Before starting any multi-step task, call update_todos with all steps as "pending". Mark each "in_progress" when you start it and "done" when complete. Call task_complete when all items are done — this is the ONLY way to end a session.
