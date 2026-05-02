@@ -5848,16 +5848,21 @@ ${autoEdit ? '\nAuto-edit mode: proceed with all changes without asking for conf
   async interrupt() {
     this._aborted = true
 
+    // Track whether we actually had an active request to abort
+    let hadActiveRequest = false
+
     // Destroy agent-loop streaming request
     if (this._activeReq) {
       try { this._activeReq.destroy() } catch {}
       this._activeReq = null
+      hadActiveRequest = true
     }
 
     // Destroy chat-mode request (separate ref — not covered by _activeReq)
     if (this._currentReq) {
       try { this._currentReq.destroy() } catch {}
       this._currentReq = null
+      hadActiveRequest = true
     }
 
     // Reset per-run state so the next run() starts clean
@@ -5866,10 +5871,13 @@ ${autoEdit ? '\nAuto-edit mode: proceed with all changes without asking for conf
     this._coalescedToolCallIds = new Set()
     this._sseErrorPending = false
 
-    // Signal the MLX server to abort its current inference and release Metal
-    // resources before the next agent starts. Always call this regardless of
-    // which request type was active.
-    try { await _callAdminAbort() } catch {}
+    // Only call admin abort if we actually had an active inference request.
+    // Calling it unconditionally risks aborting the *next* run's inference
+    // if the abort HTTP request resolves after the new run has already started
+    // (the request can take up to 9s to resolve).
+    if (hadActiveRequest) {
+      try { await _callAdminAbort() } catch {}
+    }
 
     this.send('qwen-event', { type: 'session-end' })
   }
