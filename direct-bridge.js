@@ -1159,7 +1159,7 @@ function trimMessages(messages, maxInputTokens) {
     if (maxLen > allowedChars) {
       const oldLen = messages[maxIdx].content.length
       messages[maxIdx].content = messages[maxIdx].content.slice(0, allowedChars) +
-        '\n\n[Earlier content trimmed — use search_files to find specific patterns if needed.]'
+        '\n\n[§TRIMMED§ — use search_files to find specific patterns if needed.]'
       current -= Math.ceil((oldLen - messages[maxIdx].content.length) / charBudgetPerToken)
     }
   }
@@ -1184,7 +1184,7 @@ function trimMessages(messages, maxInputTokens) {
       const minKeep = isNavResult ? Math.max(scaledFloor, 2000) : scaledFloor
       if (msg.content.length > minKeep) {
         const oldLen = msg.content.length
-        msg.content = msg.content.slice(0, minKeep) + '\n\n[Earlier content trimmed.]'
+        msg.content = msg.content.slice(0, minKeep) + '\n\n[§TRIMMED§]'
         current -= Math.ceil((oldLen - msg.content.length) / 4)
       }
     }
@@ -3384,7 +3384,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
                 const allowedChars = Math.max(800, Math.floor(maxTotalChars / messages.length))
                 if (m.content.length > allowedChars) {
                   const oldLen = m.content.length
-                  m.content = m.content.slice(0, allowedChars) + '\n\n[Earlier content trimmed.]'
+                  m.content = m.content.slice(0, allowedChars) + '\n\n[§TRIMMED§]'
                   currentChars -= (oldLen - m.content.length)
                 }
               }
@@ -3473,7 +3473,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       // These confuse users — strip them. Real interruptions are handled by abort.
       // IMPORTANT: keep this specific — do NOT use /\[Response [^\]]*\]/ as that
       // would strip legitimate model output like "[Response: ...]".
-      const HALLUCINATED_ANNOTATIONS = /\[Response interrupted[^\]]*\]|\[Response trimmed[^\]]*\]|\[Summarized by[^\]]*\]|\[TRIMMED[^\]]*\]|\[compressed:\s*\d+%[^\]]*\]/g
+      const HALLUCINATED_ANNOTATIONS = /\[Response interrupted[^\]]*\]|\[Response trimmed[^\]]*\]|\[Summarized by[^\]]*\]|\[TRIMMED[^\]]*\]|\[§TRIMMED§[^\]]*\]|\[compressed:\s*\d+%[^\]]*\]/g
       let text = rawText ? rawText.replace(HALLUCINATED_ANNOTATIONS, '').trim() : rawText
 
       // ── Client-side thinking extraction ─────────────────────────────────
@@ -4335,15 +4335,17 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
             // filename. A message counts as "content present" only if it:
             //   1. Is a tool result with substantial content (>500 chars)
             //   2. Contains the filename
-            //   3. Does NOT end with a trimming/compression marker
-            const TRIMMED_MARKERS = ['[TRIMMED for context space', '[TRUNCATED', '[compressed:']
+            //   3. Does NOT start or end with a trimming/compression marker
+            const TRIMMED_MARKERS = ['[TRIMMED for context space', '[TRUNCATED', '[compressed:', '[§TRIMMED§']
             const contentStillInContext = messages.some(m => {
               if (m.role !== 'tool' || !m.content || m.content.length <= 500) return false
               if (!m.content.includes(readKey.split('/').pop())) return false
-              // If the message was trimmed/compressed, the real content is gone
+              // If the message was trimmed/compressed, the real content is gone.
+              // Check both head (compressed notice moved to top) and tail.
+              const head = m.content.slice(0, 200)
               const tail = m.content.slice(-300)
               for (const marker of TRIMMED_MARKERS) {
-                if (tail.includes(marker)) return false
+                if (head.includes(marker) || tail.includes(marker)) return false
               }
               return true
             })
@@ -4391,13 +4393,14 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           const readKey = fnArgs.path
           const prev = _readFileHistory.get(readKey)
           if (prev && prev.fullRead) {
-            const TRIMMED_MARKERS = ['[TRIMMED for context space', '[TRUNCATED', '[compressed:']
+            const TRIMMED_MARKERS = ['[TRIMMED for context space', '[TRUNCATED', '[compressed:', '[§TRIMMED§']
             const contentStillInContext = messages.some(m => {
               if (m.role !== 'tool' || !m.content || m.content.length <= 500) return false
               if (!m.content.includes(readKey.split('/').pop())) return false
+              const head = m.content.slice(0, 200)
               const tail = m.content.slice(-300)
               for (const marker of TRIMMED_MARKERS) {
-                if (tail.includes(marker)) return false
+                if (head.includes(marker) || tail.includes(marker)) return false
               }
               return true
             })
@@ -4426,16 +4429,17 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         if (fnName === 'read_files' && Array.isArray(fnArgs.paths) && fnArgs.paths.length > 0) {
           const alreadyRead = []
           const needsRead = []
-          const TRIMMED_MARKERS = ['[TRIMMED for context space', '[TRUNCATED', '[compressed:']
+          const TRIMMED_MARKERS = ['[TRIMMED for context space', '[TRUNCATED', '[compressed:', '[§TRIMMED§']
           for (const filePath of fnArgs.paths) {
             const prev = _readFileHistory.get(filePath)
             if (prev && prev.fullRead) {
               const contentStillInContext = messages.some(m => {
                 if (m.role !== 'tool' || !m.content || m.content.length <= 500) return false
                 if (!m.content.includes(filePath.split('/').pop())) return false
+                const head = m.content.slice(0, 200)
                 const tail = m.content.slice(-300)
                 for (const marker of TRIMMED_MARKERS) {
-                  if (tail.includes(marker)) return false
+                  if (head.includes(marker) || tail.includes(marker)) return false
                 }
                 return true
               })
@@ -5492,7 +5496,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
             const allowedChars = Math.max(1000, Math.floor(maxTotalChars / trimmed.length))
             if (m.content.length > allowedChars) {
               const oldLen = m.content.length
-              m.content = m.content.slice(0, allowedChars) + '\n\n[Earlier content trimmed.]'
+              m.content = m.content.slice(0, allowedChars) + '\n\n[§TRIMMED§]'
               currentChars -= (oldLen - m.content.length)
             }
           }
@@ -5588,7 +5592,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
               // injected markers it sees in context (e.g. "[Response interrupted by ...]").
               // IMPORTANT: keep this specific — do NOT use /\[Response [^\]]*\]/ as that
               // would strip legitimate model output like "[Response: ...]".
-              const STREAM_ANNOTATION_RE = /\[Response interrupted[^\]]*\]|\[Response trimmed[^\]]*\]|\[Summarized by[^\]]*\]|\[TRIMMED[^\]]*\]|\[compressed:\s*\d+%[^\]]*\]/g
+              const STREAM_ANNOTATION_RE = /\[Response interrupted[^\]]*\]|\[Response trimmed[^\]]*\]|\[Summarized by[^\]]*\]|\[TRIMMED[^\]]*\]|\[§TRIMMED§[^\]]*\]|\[compressed:\s*\d+%[^\]]*\]/g
               const displayText = accumulated.replace(STREAM_ANNOTATION_RE, '').trim()
               this.send('qwen-event', { type: 'text-delta', text: displayText })
             }
