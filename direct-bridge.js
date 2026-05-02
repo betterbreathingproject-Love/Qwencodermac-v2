@@ -3080,6 +3080,26 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         }
       }
 
+      // ── Task-aware tool hints (turn 0 only) ────────────────────────────
+      // Detect specific task patterns and inject hints about specialized tools
+      // that the model might not discover on its own from the tool list.
+      if (turn === 0) {
+        const userPrompt = messages.filter(m => m.role === 'user').pop()?.content || ''
+        const promptLower = typeof userPrompt === 'string' ? userPrompt.toLowerCase() : ''
+
+        // Xcode project generation
+        if (promptLower.includes('pbxproj') || promptLower.includes('xcodeproj') ||
+            (promptLower.includes('xcode') && promptLower.includes('project')) ||
+            (promptLower.includes('missing') && promptLower.includes('project'))) {
+          messages.push({
+            role: 'system',
+            content: 'HINT: You have a generate_xcode_project tool that creates project.pbxproj files automatically from Swift source files. ' +
+              'Call it with the product name and source directory — do NOT manually read files or write pbxproj XML. ' +
+              'Example: generate_xcode_project({"product_name": "MyApp", "source_dir": "MyApp"})',
+          })
+        }
+      }
+
       for (let attempt = 0; attempt < 8; attempt++) {
         if (this._aborted) return
         try {
