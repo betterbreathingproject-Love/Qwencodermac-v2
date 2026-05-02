@@ -183,6 +183,7 @@ const agentPool = new AgentPool({
       allowedTools: agentType?.allowedTools || null,
       lspManager,
       getCalibrationProfile: ipcServer.getCalibrationProfile,
+      inputRequester: qwenBridge?._inputRequester || null,
       routeTask: async (title) => {
         const kwType = agentPool.selectType({ title, description: '' })
         const kwName = kwType?.name || 'general'
