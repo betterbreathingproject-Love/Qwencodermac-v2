@@ -3298,7 +3298,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         // nudge it to take action. Look for planning language without tool calls.
         // On turn 0, allow a brief acknowledgment but still nudge if it contains
         // clear planning language indicating more work is needed.
-        const planningPatterns = /\b(let me|i('ll| will)|let's|i need to|i should|first.*then|i'm going to)\b/i
+        const planningPatterns = /\b(let me|i('ll| will)|let's|i need to|i should|first.*then|i'm going to|got it|on it|generating|creating|working on|i'll start|starting)\b/i
         if (text && text.length > 50 && planningPatterns.test(text) && turn < maxTurns - 1) {
           // On turn 0, only nudge if the text is clearly planning (not just a brief answer)
           if (turn === 0 && text.length < 200 && !text.includes('Let me')) {
@@ -3421,8 +3421,8 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
 
         // After many consecutive text-only turns, allow completion as a safety valve
         _textOnlyTurns = (_textOnlyTurns || 0) + 1
-        if (_textOnlyTurns >= 3) {
-          // Model has given 3 text-only responses in a row — it's probably done
+        if (_textOnlyTurns >= 5) {
+          // Model has given 5 text-only responses in a row — it's probably done
           // or stuck. Let it through rather than looping forever.
           this.send('qwen-event', {
             type: 'result',
@@ -5250,7 +5250,7 @@ The project file tree is included at the end of this prompt — read it before c
 - read_files: PREFERRED over read_file when you need 2+ files. Pass all paths in one call — this is 5-10x faster than separate read_file calls. ALWAYS batch your reads: if you know you need multiple files, use read_files({"paths": ["file1.swift", "file2.swift", ...]}) instead of calling read_file on each one separately. Maximum 20 files per call.
 - edit_file: ALWAYS re-read the file with read_file in the same turn before editing. Compressed history may have stale content.
 - edit_files: PREFERRED over edit_file when editing 2+ different files. Pass an array of {path, old_string, new_string} objects — all edits execute in one call. Much faster than calling edit_file repeatedly. Use this whenever you have edits across multiple files.
-- write_file: keep each call under 300 lines. For larger files, write the first chunk then use bash with heredoc to append.
+- write_file: aim for under 300 lines per call for source code. For generated config files (pbxproj, Package.swift, CMakeLists, etc.) you can write longer files in one call. If a write gets truncated, split into chunks and use bash with heredoc to append.
 - bash: prefer single focused commands. Check exit codes in the output. For installs and builds (npm install, pip install, swift build, xcodebuild), the timeout is 5 minutes — use them directly. Always add non-interactive flags to suppress prompts: npm init -y, pip install --no-input, brew install --no-interaction.
 - search_files: use regex patterns. Narrow with path/include filters to avoid noise.
 - NEVER generate text that looks like system annotations: "[Response interrupted by ...]", "[Summarized by fast model ...]", "[Fast model ...]", or any text in square brackets that mimics system-injected markers. You see these in tool results because a separate model injects them — they are NOT part of your output format. If you generate them, they will be stripped.
