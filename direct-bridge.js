@@ -2301,20 +2301,37 @@ function _detectXcodePlatformHint(cwd) {
     if (!platform) {
       try {
         const { execSync } = require('child_process')
-        // NSApplicationDelegateAdaptor → macOS; UIApplicationDelegateAdaptor → iOS
-        const grep = execSync(
-          `grep -rl "NSApplicationDelegateAdaptor\\|NSApp\\|AppKit" "${projDir}" --include="*.swift" 2>/dev/null | head -1`,
+        // macOS-only SwiftUI/AppKit APIs
+        const macGrep = execSync(
+          `grep -rl "NSApplicationDelegateAdaptor\\|import AppKit\\|\\.windowStyle\\|\\.windowToolbarStyle\\|NSApp\\b" "${projDir}" --include="*.swift" 2>/dev/null | head -1`,
           { timeout: 5000, encoding: 'utf-8' }
         ).trim()
-        if (grep) platform = 'macOS'
-        else {
-          const grep2 = execSync(
-            `grep -rl "UIApplicationDelegateAdaptor\\|UIKit\\|UIViewController" "${projDir}" --include="*.swift" 2>/dev/null | head -1`,
+        if (macGrep) {
+          platform = 'macOS'
+        } else {
+          // iOS-only UIKit APIs
+          const iosGrep = execSync(
+            `grep -rl "UIApplicationDelegateAdaptor\\|import UIKit\\|UIViewController\\|UINavigationController" "${projDir}" --include="*.swift" 2>/dev/null | head -1`,
             { timeout: 5000, encoding: 'utf-8' }
           ).trim()
-          if (grep2) platform = 'iOS'
+          if (iosGrep) platform = 'iOS'
         }
       } catch { /* grep failed — leave platform null */ }
+    }
+
+    // ── 3b. Deployment target fallback (no SDKROOT/SUPPORTED_PLATFORMS set) ─
+    // iOS projects almost always have IPHONEOS_DEPLOYMENT_TARGET explicitly.
+    // macOS projects often only have MACOSX_DEPLOYMENT_TARGET.
+    if (!platform) {
+      try {
+        const pbxprojPath = pathMod.join(xcodeproj, 'project.pbxproj')
+        const pbx = fsSync.readFileSync(pbxprojPath, 'utf-8')
+        const hasMac = /MACOSX_DEPLOYMENT_TARGET/.test(pbx)
+        const hasIOS = /IPHONEOS_DEPLOYMENT_TARGET/.test(pbx)
+        if (hasMac && !hasIOS) platform = 'macOS'
+        else if (hasIOS && !hasMac) platform = 'iOS'
+        // both present → Catalyst → leave null → "unknown" hint
+      } catch { /* non-fatal */ }
     }
 
     // ── 4. Check for saved macOS config (xcode_setup_project already ran) ─

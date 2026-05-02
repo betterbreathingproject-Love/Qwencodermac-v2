@@ -831,6 +831,61 @@ async function setupXcodeProject(cwd) {
         }
       } catch { /* use default */ }
     }
+
+    // ── Fallback platform detection when xcodebuild -showBuildSettings fails ──
+    // This happens when the scheme has no targets configured (empty scheme).
+    // Strategy (in order):
+    //   1. Read project.pbxproj for SDKROOT / SUPPORTED_PLATFORMS / deployment targets
+    //   2. Grep Swift source files for macOS-only vs iOS-only API markers
+    //   3. Default to macOS if MACOSX_DEPLOYMENT_TARGET is present (safer than iOS default)
+    if (!platform) {
+      try {
+        const pbxprojPath = path.join(projectPath || workspacePath, 'project.pbxproj')
+        const pbx = fs.readFileSync(pbxprojPath, 'utf-8')
+        if (/SDKROOT\s*=\s*macosx\b/i.test(pbx) || /SUPPORTED_PLATFORMS\s*=\s*macosx\b/i.test(pbx)) {
+          platform = 'macOS'
+        } else if (/SDKROOT\s*=\s*(iphoneos|iphonesimulator)\b/i.test(pbx) ||
+                   /SUPPORTED_PLATFORMS\s*=\s*(iphoneos|iphonesimulator)\b/i.test(pbx)) {
+          platform = 'iOS'
+        } else if (/MACOSX_DEPLOYMENT_TARGET/.test(pbx) && !/IPHONEOS_DEPLOYMENT_TARGET/.test(pbx)) {
+          platform = 'macOS'  // only macOS deployment target present
+        } else if (/IPHONEOS_DEPLOYMENT_TARGET/.test(pbx) && !/MACOSX_DEPLOYMENT_TARGET/.test(pbx)) {
+          platform = 'iOS'    // only iOS deployment target present
+        }
+      } catch { /* pbxproj unreadable */ }
+    }
+
+    // Grep Swift files for macOS-only vs iOS-only API markers
+    if (!platform) {
+      try {
+        const projSourceDir = path.dirname(projectPath || workspacePath)
+        const macMarkers = execSync(
+          `grep -rl "NSApplicationDelegateAdaptor\\|import AppKit\\|\\.windowStyle\\|\\.windowToolbarStyle\\|NSApp\\b" "${projSourceDir}" --include="*.swift" 2>/dev/null | head -1`,
+          { timeout: 5000, encoding: 'utf-8', cwd }
+        ).trim()
+        if (macMarkers) {
+          platform = 'macOS'
+        } else {
+          const iosMarkers = execSync(
+            `grep -rl "UIApplicationDelegateAdaptor\\|import UIKit\\|UIViewController\\|UINavigationController" "${projSourceDir}" --include="*.swift" 2>/dev/null | head -1`,
+            { timeout: 5000, encoding: 'utf-8', cwd }
+          ).trim()
+          if (iosMarkers) platform = 'iOS'
+        }
+      } catch { /* grep failed */ }
+    }
+
+    // Final fallback: if MACOSX_DEPLOYMENT_TARGET was in pbxproj, prefer macOS over iOS default
+    // (iOS projects almost always have IPHONEOS_DEPLOYMENT_TARGET explicitly set)
+    if (!platform) {
+      try {
+        const pbxprojPath = path.join(projectPath || workspacePath, 'project.pbxproj')
+        const pbx = fs.readFileSync(pbxprojPath, 'utf-8')
+        platform = /MACOSX_DEPLOYMENT_TARGET/.test(pbx) ? 'macOS' : 'iOS'
+      } catch {
+        platform = 'iOS'  // absolute last resort
+      }
+    }
   } catch (e) {
     return { ok: false, message: `Failed to list schemes: ${e.message}\n\nMake sure Xcode is installed and xcode-select points to Xcode.app:\n  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` }
   }
@@ -856,16 +911,37 @@ async function setupXcodeProject(cwd) {
       }, null, 2))
     } catch { /* non-fatal */ }
 
+    // Check if the project has targets — a missing target means project.pbxproj
+    // needs to be regenerated with generate_xcode_project before building.
+    let hasTargets = true
+    try {
+      const listOut = execSync(
+        `xcodebuild ${projectArg} -list 2>&1`,
+        { timeout: 15000, encoding: 'utf-8', cwd }
+      )
+      if (/There are no targets in project/.test(listOut) || /Supported platforms for the buildables in the current scheme is empty/.test(listOut)) {
+        hasTargets = false
+      }
+    } catch { /* non-fatal */ }
+
+    const noTargetsWarning = hasTargets ? '' :
+      `\n\n⚠️  WARNING: The project has no targets configured — xcodebuild will fail.\n` +
+      `The project.pbxproj is missing target definitions. Fix this first:\n` +
+      `  generate_xcode_project({"product_name": "${scheme}", "source_dir": "${scheme}", "platform": "macos", "deployment_target": "14.0"})\n` +
+      `This regenerates project.pbxproj from the Swift source files. Run it before attempting to build.`
+
     return {
       ok: true,
       projectPath,
       workspacePath,
       scheme,
       platform: 'macOS',
+      hasTargets,
       message: `✅ macOS project configured:\n  Project: ${projDisplay}\n  Scheme: ${scheme}\n  Platform: macOS (builds run directly, no simulator)\n\n` +
         `To build:  bash({command: "xcodebuild ${projectArg} -scheme \\"${scheme}\\" -configuration Debug build 2>&1 | tail -50"})\n` +
         `To run:    bash({command: "xcodebuild ${projectArg} -scheme \\"${scheme}\\" -configuration Debug build && open \\"$(xcodebuild ${projectArg} -scheme \\"${scheme}\\" -showBuildSettings 2>/dev/null | grep BUILT_PRODUCTS_DIR | head -1 | awk '{print $3}')/${scheme}.app\\""})\n` +
-        `To test:   bash({command: "xcodebuild ${projectArg} -scheme \\"${scheme}\\" -destination \\"platform=macOS\\" test 2>&1 | tail -80"})`,
+        `To test:   bash({command: "xcodebuild ${projectArg} -scheme \\"${scheme}\\" -destination \\"platform=macOS\\" test 2>&1 | tail -80"})` +
+        noTargetsWarning,
     }
   }
 
