@@ -1921,7 +1921,13 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
           const cleanPath = withoutFlags.replace(/^["']|["']$/g, '').trim()
           const sourceExt = /\.(swift|js|ts|py|go|rs|java|kt|cpp|c|h|cs|rb|php|html|css|json|yaml|yml|md|txt|sh|bash|zsh|fish|toml|xml|gradle|plist|pbxproj)$/
           if (cleanPath && sourceExt.test(cleanPath) && !cleanPath.startsWith('-')) {
-            return { error: `Use read_file instead of ${verb} for source files. Call: read_file({"path": "${cleanPath}"})` }
+            // Check if the path is absolute and outside the project — read_file won't work either
+            if (path.isAbsolute(cleanPath) && !cleanPath.startsWith(cwd)) {
+              // Let the bash command through for absolute paths outside the project
+              // since read_file can't access them either. The agent needs bash for this.
+            } else {
+              return { error: `Use read_file instead of ${verb} for source files. Call: read_file({"path": "${cleanPath}"})` }
+            }
           }
         }
 
@@ -2667,6 +2673,14 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
     // can break out of the patch loop instead of spinning forever.
     const _compileFailCounts = new Map()  // filePath → consecutive fail count
     let _lastCompileFile = null
+
+    // ── Tool call repetition detection ────────────────────────────────────────
+    // Tracks recent tool calls by signature (name + args). When the agent calls
+    // the same tool with the same arguments 3+ times and keeps getting errors,
+    // it's stuck in a loop. Inject a hard break and force a different approach.
+    const _recentToolCalls = []  // { sig, isError, turn }
+    const _TOOL_REPEAT_WINDOW = 8  // look at last N tool calls
+    const _TOOL_REPEAT_THRESHOLD = 3  // same call N times = stuck
 
     // ── Read-file loop detection ─────────────────────────────────────────────
     // Tracks read_file calls per path with file modification times. When the
@@ -4407,6 +4421,52 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         if (isError) consecutiveErrors++
         else consecutiveErrors = 0
 
+        // ── Tool call repetition detection ───────────────────────────────
+        // Build a signature from tool name + key arguments to detect loops.
+        // When the same call repeats 3+ times (especially with errors), the
+        // agent is stuck and needs a hard intervention.
+        const _tcSig = fnName + ':' + JSON.stringify(fnArgs).slice(0, 200)
+        _recentToolCalls.push({ sig: _tcSig, isError, turn })
+        if (_recentToolCalls.length > _TOOL_REPEAT_WINDOW) _recentToolCalls.shift()
+
+        // Count how many times this exact signature appears in the window
+        const _sigCount = _recentToolCalls.filter(r => r.sig === _tcSig).length
+        const _sigErrorCount = _recentToolCalls.filter(r => r.sig === _tcSig && r.isError).length
+
+        if (_sigCount >= _TOOL_REPEAT_THRESHOLD) {
+          // Same tool call repeated 3+ times — agent is looping
+          const allErrors = _sigErrorCount >= _TOOL_REPEAT_THRESHOLD
+          this.send('qwen-event', {
+            type: 'system', subtype: 'warning',
+            data: `⚠️ Loop detected: the agent called ${fnName} with the same arguments ${_sigCount} times${allErrors ? ' (all failed)' : ''}. Breaking the loop and forcing a different approach.`,
+          })
+
+          // Clear the repetition window so we don't re-trigger immediately
+          _recentToolCalls.length = 0
+
+          if (allErrors) {
+            // All attempts failed — tell the agent to try something completely different
+            messages.push({
+              role: 'system',
+              content: `STOP. You have called ${fnName} with the same arguments ${_sigCount} times and it failed every time. This approach is not working. You MUST try a DIFFERENT tool or a DIFFERENT approach entirely.\n\n` +
+                `What failed: ${fnName}(${JSON.stringify(fnArgs).slice(0, 150)})\n` +
+                `Error: ${modelContent.slice(0, 300)}\n\n` +
+                `Options:\n` +
+                `- If you need to read a file, use read_file (not cat/head/tail via bash)\n` +
+                `- If a command needs a password (sudo/ssh), tell the user via ask_user\n` +
+                `- If a path is wrong, use list_dir to find the correct path\n` +
+                `- If you are truly stuck, call ask_user to get help from the user\n` +
+                `Do NOT repeat the same failing call.`,
+            })
+          } else {
+            // Calls succeeded but agent keeps repeating — it's not making progress
+            messages.push({
+              role: 'system',
+              content: `WARNING: You have called ${fnName} with identical arguments ${_sigCount} times. You are not making progress. Move on to the next step of your task. If you need different information, change your arguments. If you are done reading, start writing/editing.`,
+            })
+          }
+        }
+
         // Track read-only loops: if the model keeps reading without writing,
         // inject a system nudge to force it to start editing
         const READ_TOOLS = new Set(['read_file', 'read_files', 'list_dir', 'search_files'])
@@ -4505,6 +4565,43 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           content: `WARNING: ${consecutiveErrors} consecutive tool errors. Recent errors: ${errorSummary || 'missing required parameters'}.\n\nREMINDER — correct tool call formats:\n- read_file({"path": "file.js"})\n- write_file({"path": "file.js", "content": "..."})\n- edit_file({"path": "file.js", "old_string": "...", "new_string": "..."})\n- search_files({"pattern": "searchTerm", "path": "."})\n- bash({"command": "ls -la"})\n- list_dir({"path": "."})\n\nAll parameters shown above are REQUIRED. Do NOT omit any.`,
         })
         consecutiveErrors = 0
+      }
+
+      // ── Broader error pattern detection ─────────────────────────────────
+      // Detect when the agent keeps hitting the same type of error across
+      // different tool calls (e.g. cat → read_file redirect on 20 different
+      // files). Look at the last N tool results for repeated error patterns.
+      if (_recentToolCalls.length >= 5) {
+        const recentErrors = _recentToolCalls.filter(r => r.isError)
+        if (recentErrors.length >= 4) {
+          // Check if the errors share a common pattern (same error prefix)
+          const errorMsgs = messages.slice(-(_TOOL_REPEAT_WINDOW * 2))
+            .filter(m => m.role === 'tool' && m.content)
+            .map(m => m.content.slice(0, 80))
+          const patterns = new Map()
+          for (const msg of errorMsgs) {
+            // Extract the first 40 chars as a pattern key
+            const key = msg.slice(0, 40)
+            patterns.set(key, (patterns.get(key) || 0) + 1)
+          }
+          const topPattern = [...patterns.entries()].sort((a, b) => b[1] - a[1])[0]
+          if (topPattern && topPattern[1] >= 4) {
+            this.send('qwen-event', {
+              type: 'system', subtype: 'warning',
+              data: `⚠️ Error pattern detected: "${topPattern[0].slice(0, 50)}..." repeated ${topPattern[1]} times. The agent is stuck hitting the same error with different arguments. Forcing a strategy change.`,
+            })
+            _recentToolCalls.length = 0
+            messages.push({
+              role: 'system',
+              content: `STOP. You keep hitting the same error repeatedly with different arguments:\n"${topPattern[0]}..."\n\n` +
+                `This approach is fundamentally broken. You MUST change your strategy:\n` +
+                `- If bash commands keep failing, use the built-in tools instead (read_file, write_file, list_dir)\n` +
+                `- If you cannot read files outside the project, use bash with the full path or ask the user\n` +
+                `- If a command needs interactive input (password, confirmation), use ask_user to tell the user\n` +
+                `- If you are stuck, call ask_user({"question": "I'm having trouble with X. Can you help?"})`,
+            })
+          }
+        }
       }
 
       // Detect if the agent wrote a tasks.md file — signal the renderer
