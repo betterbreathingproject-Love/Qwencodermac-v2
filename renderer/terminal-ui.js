@@ -45,8 +45,6 @@ function terminalSwitchTab(tab) {
   const shellPane = _shellPane()
   const tabAgent  = _tabAgent()
   const tabShell  = _tabShell()
-  const clearBtn  = document.getElementById('termClearBtn')
-  const newBtn    = document.getElementById('termNewBtn')
   const closeBtn  = document.getElementById('termCloseBtn')
 
   if (tab === 'agent') {
@@ -54,16 +52,12 @@ function terminalSwitchTab(tab) {
     if (shellPane) shellPane.style.display = 'none'
     if (tabAgent)  { tabAgent.classList.add('active'); tabAgent.classList.remove('has-activity') }
     if (tabShell)  tabShell.classList.remove('active')
-    if (clearBtn)  clearBtn.style.display = ''
-    if (newBtn)    newBtn.style.display = 'none'
     if (closeBtn)  closeBtn.style.display = 'none'
   } else {
     if (agentPane) agentPane.style.display = 'none'
     if (shellPane) shellPane.style.display = ''
     if (tabAgent)  tabAgent.classList.remove('active')
     if (tabShell)  { tabShell.classList.add('active'); tabShell.classList.remove('has-activity') }
-    if (clearBtn)  clearBtn.style.display = 'none'
-    if (newBtn)    newBtn.style.display = ''
     if (closeBtn)  closeBtn.style.display = _termSessionId ? '' : 'none'
     // Focus the PTY screen if a session is active
     if (_termSessionId) _termFocusScreen()
@@ -86,6 +80,9 @@ async function terminalNew() {
   terminalSwitchTab('shell')
   _termFocusScreen()
   if (_termCollapsed) terminalToggle()
+  // Show close button now that a session exists
+  const closeBtn = document.getElementById('termCloseBtn')
+  if (closeBtn) closeBtn.style.display = ''
 }
 
 /** Close the active PTY session. */
