@@ -2911,6 +2911,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
     let consecutiveReadsWithoutWrite = 0  // Track read-only loops
     let lastTextResponses = []  // Track recent text-only responses for repetition detection
     let consecutivePlanningNudges = 0  // Track how many times we've nudged for planning-only responses
+    let _annotationNudgeCount = 0  // Track consecutive hallucinated-annotation nudges — cap to prevent infinite loop
     let _lastTodos = null  // Track the latest todo list for completion checking
     let _bootstrapDone = false  // Track whether todo bootstrap has fired
     let _textOnlyTurns = 0  // Track consecutive text-only responses for safety valve
@@ -3193,10 +3194,10 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           while (messages.length > 0 && messages[0]?.role === 'system') {
             messages.shift()
           }
-          // Re-insert the originals at the front in order
-          for (let si = originalSystemMessages.length - 1; si >= 0; si--) {
-            messages.unshift(originalSystemMessages[si])
-          }
+          // Re-insert the originals at the front in their original order.
+          // Use splice(0, 0, ...arr) instead of repeated unshift() — unshift
+          // in a reverse loop would reverse the order of multiple system messages.
+          messages.splice(0, 0, ...originalSystemMessages)
         }
 
         // Suppress memory re-injection for the next 3 turns so we don't
@@ -3472,7 +3473,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       // These confuse users — strip them. Real interruptions are handled by abort.
       // IMPORTANT: keep this specific — do NOT use /\[Response [^\]]*\]/ as that
       // would strip legitimate model output like "[Response: ...]".
-      const HALLUCINATED_ANNOTATIONS = /\[Response interrupted[^\]]*\]|\[Response trimmed[^\]]*\]|\[Summarized by[^\]]*\]|\[TRIMMED[^\]]*\]|\[compressed:[^\]]*\]/g
+      const HALLUCINATED_ANNOTATIONS = /\[Response interrupted[^\]]*\]|\[Response trimmed[^\]]*\]|\[Summarized by[^\]]*\]|\[TRIMMED[^\]]*\]|\[compressed:\s*\d+%[^\]]*\]/g
       let text = rawText ? rawText.replace(HALLUCINATED_ANNOTATIONS, '').trim() : rawText
 
       // ── Client-side thinking extraction ─────────────────────────────────
@@ -3561,6 +3562,13 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         // rather than treating this as a server error.
         if (rawText && rawText.trim().length > 0) {
           this.send('qwen-event', { type: 'system', subtype: 'debug', data: '⚠️ Model generated only hallucinated annotations — injecting continuation nudge' })
+          _annotationNudgeCount++
+          if (_annotationNudgeCount >= 3) {
+            // Model is stuck generating only annotations — stop nudging and let it fail gracefully
+            _annotationNudgeCount = 0
+            this.send('qwen-event', { type: 'result', subtype: 'error', is_error: true, result: '⚠️ The model kept generating system annotation markers instead of a real response. Try starting a new session or rephrasing your request.' })
+            return
+          }
           messages.push({
             role: 'system',
             content: 'IMPORTANT: Do NOT generate text like "[Response interrupted by ...]", "[Response trimmed for context space]", or "[Summarized by ...]" — these are system markers, not part of your output. Your last response was stripped entirely because it contained only these markers. Continue your work: call the appropriate tool (write_file, edit_file, bash, etc.) to make progress on the task.',
@@ -3598,6 +3606,12 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         // inject a nudge to continue rather than falling through to the text-only handler.
         if (!text && rawText && rawText.trim().length > 0) {
           this.send('qwen-event', { type: 'system', subtype: 'debug', data: '⚠️ Model generated only hallucinated annotations (with usage) — injecting continuation nudge' })
+          _annotationNudgeCount++
+          if (_annotationNudgeCount >= 3) {
+            _annotationNudgeCount = 0
+            this.send('qwen-event', { type: 'result', subtype: 'error', is_error: true, result: '⚠️ The model kept generating system annotation markers instead of a real response. Try starting a new session or rephrasing your request.' })
+            return
+          }
           messages.push({
             role: 'system',
             content: 'IMPORTANT: Do NOT generate text like "[Response interrupted by ...]", "[Response trimmed for context space]", or "[Summarized by ...]" — these are system markers, not part of your output. Your last response was stripped entirely because it contained only these markers. Continue your work: call the appropriate tool (write_file, edit_file, bash, etc.) to make progress on the task.',
@@ -4347,8 +4361,10 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
                   // as that resets the counter and causes an infinite read loop).
                   if (prev.blockedCount >= 3) {
                     this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Releasing read lock on ${readKey} after ${prev.blockedCount} blocked attempts — allowing one read through` })
-                    // Reset blockedCount so the guard re-arms after this read
+                    // Reset blockedCount so the guard re-arms after this read.
+                    // Also clear mtime so the next read updates it with the fresh value.
                     prev.blockedCount = 0
+                    prev.mtime = null  // will be refreshed when the read result is recorded
                     _readFileHistory.set(readKey, prev)
                     // Fall through to execute the actual read
                   } else {
@@ -5214,6 +5230,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
 
       // Reset planning/repetition counters when tools are used (model is making progress)
       consecutivePlanningNudges = 0
+      _annotationNudgeCount = 0
       lastTextResponses = []
       _textOnlyTurns = 0  // Reset — model is using tools again
 
@@ -5571,7 +5588,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
               // injected markers it sees in context (e.g. "[Response interrupted by ...]").
               // IMPORTANT: keep this specific — do NOT use /\[Response [^\]]*\]/ as that
               // would strip legitimate model output like "[Response: ...]".
-              const STREAM_ANNOTATION_RE = /\[Response interrupted[^\]]*\]|\[Response trimmed[^\]]*\]|\[Summarized by[^\]]*\]|\[TRIMMED[^\]]*\]|\[compressed:[^\]]*\]/g
+              const STREAM_ANNOTATION_RE = /\[Response interrupted[^\]]*\]|\[Response trimmed[^\]]*\]|\[Summarized by[^\]]*\]|\[TRIMMED[^\]]*\]|\[compressed:\s*\d+%[^\]]*\]/g
               const displayText = accumulated.replace(STREAM_ANNOTATION_RE, '').trim()
               this.send('qwen-event', { type: 'text-delta', text: displayText })
             }
@@ -5899,6 +5916,9 @@ ${autoEdit ? '\nAuto-edit mode: proceed with all changes without asking for conf
     this._coalescedToolCallIds = new Set()
     this._sseErrorPending = false
     this._batchRereadBlocks = 0
+    // Clear cached tool defs — LSP status may have changed during the interrupted run
+    this._cachedToolDefs = null
+    this._cachedToolDefsKey = null
 
     // Only call admin abort if we actually had an active inference request.
     // Calling it unconditionally risks aborting the *next* run's inference
