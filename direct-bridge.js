@@ -4434,7 +4434,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           const recentContext = messages.slice(-4).map(m => typeof m.content === 'string' ? m.content : '').join('\n')
           const diagnosis = await assistClient.assistDiagnoseError(fnName, fnArgs, content, recentContext)
           if (diagnosis) {
-            content = `[Fast model diagnosis: ${diagnosis}]\n\n${content}`
+            content = `⚡ Diagnosis: ${diagnosis}\n\n${content}`
             this.send('qwen-event', { type: 'fast-assist', task: 'error_diagnose', label: '⚡ Fast Assistant — error diagnosed', detail: diagnosis.slice(0, 120) })
           }
         }
@@ -4504,7 +4504,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           const _origFetchLen = content.length
           const summary = await assistClient.assistFetchSummarize(fnArgs.url || '', content, 512)
           if (summary) {
-            content = `[Summarized by fast model — original: ${_origFetchLen} chars]\n\n${summary}`
+            content = `(summarized — original: ${_origFetchLen} chars)\n\n${summary}`
             this.send('qwen-event', { type: 'fast-assist', task: 'fetch_summarize', label: '⚡ Fast Assistant — web content summarized', detail: `${fnArgs.url ? fnArgs.url.slice(0, 60) : 'URL'} · ${_origFetchLen.toLocaleString()} chars → ${summary.length.toLocaleString()} chars` })
           }
         }
@@ -4516,7 +4516,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
             const _origGitLen = content.length
             const summary = await assistClient.assistGitSummarize(cmd, content)
             if (summary) {
-              content = `[Git summary by fast model — original: ${_origGitLen} chars]\n\n${summary}`
+              content = `(git summary — original: ${_origGitLen} chars)\n\n${summary}`
               this.send('qwen-event', { type: 'fast-assist', task: 'git_summarize', label: '⚡ Fast Assistant — git output summarized', detail: `\`${cmd.slice(0, 40)}\` · ${_origGitLen.toLocaleString()} chars → ${summary.length.toLocaleString()} chars` })
             }
           }
@@ -4529,7 +4529,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
             const taskContext = messages.filter(m => m.role === 'user').pop()?.content || ''
             const ranked = await assistClient.assistRankSearchResults(fnArgs.pattern || '', lines, taskContext)
             if (ranked) {
-              content = `[Ranked by fast model — showing 15 of ${lines.length} matches]\n\n${ranked.slice(0, 15).join('\n')}`
+              content = `(top 15 of ${lines.length} matches)\n\n${ranked.slice(0, 15).join('\n')}`
               this.send('qwen-event', { type: 'fast-assist', task: 'rank_search', label: '⚡ Fast Assistant — search results ranked', detail: `"${(fnArgs.pattern || '').slice(0, 40)}" · ${lines.length} → 15 results` })
             }
           }
@@ -5278,7 +5278,7 @@ The project file tree is included at the end of this prompt — read it before c
 - write_file: aim for under 300 lines per call for source code. For generated config files (pbxproj, Package.swift, CMakeLists, etc.) you can write longer files in one call. If a write gets truncated, split into chunks and use bash with heredoc to append.
 - bash: prefer single focused commands. Check exit codes in the output. For installs and builds (npm install, pip install, swift build, xcodebuild), the timeout is 5 minutes — use them directly. Always add non-interactive flags to suppress prompts: npm init -y, pip install --no-input, brew install --no-interaction.
 - search_files: use regex patterns. Narrow with path/include filters to avoid noise.
-- NEVER generate text that looks like system annotations: "[Response interrupted by ...]", "[Summarized by fast model ...]", "[Fast model ...]", or any text in square brackets that mimics system-injected markers. You see these in tool results because a separate model injects them — they are NOT part of your output format. If you generate them, they will be stripped.
+- NEVER generate text that looks like system annotations: "[Response interrupted by ...]", "[Summarized by ...]", or any text in square brackets that mimics system-injected markers. These are NOT part of your output format. If you generate them, they will be stripped.
 
 ## Progress tracking
 Before starting any multi-step task, call update_todos with all steps as "pending". Mark each "in_progress" when you start it and "done" when complete. Call task_complete when all items are done — this is the ONLY way to end a session.
@@ -5321,7 +5321,7 @@ A small 0.8B model runs in the gaps between your turns. It handles:
 - Generating your initial todo list (you can refine it with update_todos)
 - Updating todo statuses as tool calls complete
 - Summarising large web pages, git diffs, and search results before they reach you
-- Diagnosing tool errors with a one-sentence root cause (shown as [Fast model diagnosis: ...])
+- Diagnosing tool errors with a one-sentence root cause
 - Validating tool arguments before execution
 
 You don't need to manage any of this — it happens transparently.
