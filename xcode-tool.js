@@ -188,7 +188,7 @@ const XCODE_TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'xcode_build_run_simulator',
-      description: 'Build, install, and launch the app on the iOS Simulator in one step. Boots the simulator automatically. Preferred over separate build + launch steps. NOTE: iOS only — for macOS apps use xcode_setup_project() first then bash with xcodebuild.',
+      description: 'Build, install, and launch the app on the iOS Simulator in one step. Boots the simulator automatically. Preferred over separate build + launch steps. ⚠️ iOS ONLY — do NOT use for macOS apps. For macOS: call xcode_setup_project() first, then use bash() with the xcodebuild command it returns, then open the .app with bash({command: "open /path/to/App.app"}).',
       parameters: {
         type: 'object',
         properties: {

@@ -2228,6 +2228,147 @@ function detectRecallMode(message) {
   return 'fast'
 }
 
+// ── Xcode platform detection for turn-0 hint injection ───────────────────────
+/**
+ * Scan `cwd` (and one level of subdirectories) for an Xcode project, detect
+ * whether it targets macOS or iOS, and return a tailored system-prompt hint.
+ *
+ * Detection strategy (fast, no subprocess):
+ *   1. Find the first .xcodeproj in cwd or immediate subdirs.
+ *   2. Read project.pbxproj and look for SDKROOT / SUPPORTED_PLATFORMS.
+ *   3. Fall back to checking for macOS-only SwiftUI lifecycle markers in Swift files.
+ *
+ * Returns a hint string, or null if no Xcode project is found.
+ */
+function _detectXcodePlatformHint(cwd) {
+  if (!cwd) return null
+  try {
+    const fsSync = require('fs')
+    const pathMod = require('path')
+
+    // ── 1. Find .xcodeproj ──────────────────────────────────────────────
+    function findXcodeproj(dir, depth) {
+      if (depth > 2) return null
+      let entries
+      try { entries = fsSync.readdirSync(dir) } catch { return null }
+      const proj = entries.find(e => e.endsWith('.xcodeproj'))
+      if (proj) return pathMod.join(dir, proj)
+      const SKIP = new Set(['.git', 'node_modules', 'build', 'DerivedData', '.build', 'Pods', '__pycache__'])
+      for (const e of entries) {
+        if (SKIP.has(e) || e.startsWith('.')) continue
+        try {
+          const sub = pathMod.join(dir, e)
+          if (fsSync.statSync(sub).isDirectory()) {
+            const found = findXcodeproj(sub, depth + 1)
+            if (found) return found
+          }
+        } catch { /* skip */ }
+      }
+      return null
+    }
+
+    const xcodeproj = findXcodeproj(cwd, 0)
+    if (!xcodeproj) return null  // no Xcode project — no hint needed
+
+    const projDir = pathMod.dirname(xcodeproj)
+    const schemeName = pathMod.basename(xcodeproj, '.xcodeproj')
+    const projectArg = `-project "${xcodeproj}"`
+
+    // ── 2. Detect platform from pbxproj ────────────────────────────────
+    let platform = null  // 'macOS' | 'iOS' | null
+    try {
+      const pbxprojPath = pathMod.join(xcodeproj, 'project.pbxproj')
+      const pbx = fsSync.readFileSync(pbxprojPath, 'utf-8')
+      // SDKROOT = macosx  →  macOS
+      // SDKROOT = iphoneos / iphonesimulator  →  iOS
+      // SUPPORTED_PLATFORMS = macosx  →  macOS
+      if (/SDKROOT\s*=\s*macosx\b/i.test(pbx) || /SUPPORTED_PLATFORMS\s*=\s*macosx\b/i.test(pbx)) {
+        platform = 'macOS'
+      } else if (/SDKROOT\s*=\s*(iphoneos|iphonesimulator)\b/i.test(pbx) ||
+                 /SUPPORTED_PLATFORMS\s*=\s*(iphoneos|iphonesimulator)\b/i.test(pbx)) {
+        platform = 'iOS'
+      }
+      // IPHONEOS_DEPLOYMENT_TARGET present but no MACOSX_DEPLOYMENT_TARGET → iOS
+      if (!platform) {
+        const hasIOS = /IPHONEOS_DEPLOYMENT_TARGET/.test(pbx)
+        const hasMac = /MACOSX_DEPLOYMENT_TARGET/.test(pbx)
+        if (hasIOS && !hasMac) platform = 'iOS'
+        else if (hasMac && !hasIOS) platform = 'macOS'
+      }
+    } catch { /* pbxproj unreadable — fall through */ }
+
+    // ── 3. Fallback: scan Swift files for lifecycle markers ─────────────
+    if (!platform) {
+      try {
+        const { execSync } = require('child_process')
+        // NSApplicationDelegateAdaptor → macOS; UIApplicationDelegateAdaptor → iOS
+        const grep = execSync(
+          `grep -rl "NSApplicationDelegateAdaptor\\|NSApp\\|AppKit" "${projDir}" --include="*.swift" 2>/dev/null | head -1`,
+          { timeout: 5000, encoding: 'utf-8' }
+        ).trim()
+        if (grep) platform = 'macOS'
+        else {
+          const grep2 = execSync(
+            `grep -rl "UIApplicationDelegateAdaptor\\|UIKit\\|UIViewController" "${projDir}" --include="*.swift" 2>/dev/null | head -1`,
+            { timeout: 5000, encoding: 'utf-8' }
+          ).trim()
+          if (grep2) platform = 'iOS'
+        }
+      } catch { /* grep failed — leave platform null */ }
+    }
+
+    // ── 4. Check for saved macOS config (xcode_setup_project already ran) ─
+    let savedConfig = null
+    try {
+      const configPath = pathMod.join(projDir, '.xcodebuildmcp', 'macos-config.json')
+      if (fsSync.existsSync(configPath)) {
+        savedConfig = JSON.parse(fsSync.readFileSync(configPath, 'utf-8'))
+        if (savedConfig.platform) platform = savedConfig.platform
+      }
+    } catch { /* non-fatal */ }
+
+    // ── 5. Build the hint ───────────────────────────────────────────────
+    if (platform === 'macOS') {
+      const scheme = savedConfig?.scheme || schemeName
+      const buildCmd = savedConfig?.projectArg
+        ? `xcodebuild ${savedConfig.projectArg} -scheme "${scheme}" -configuration Debug build 2>&1 | tail -30`
+        : `xcodebuild ${projectArg} -scheme "${scheme}" -configuration Debug build 2>&1 | tail -30`
+      return (
+        `XCODE PROJECT DETECTED: macOS app — "${schemeName}" at ${xcodeproj}\n` +
+        `Platform: macOS (native app — NO simulator)\n\n` +
+        `Correct workflow:\n` +
+        `  1. Call xcode_setup_project() to configure the session and get exact build commands.\n` +
+        `  2. Build with bash: ${buildCmd}\n` +
+        `  3. Find the .app: bash({command: "xcodebuild ${projectArg} -scheme \\"${scheme}\\" -showBuildSettings 2>/dev/null | grep ' BUILT_PRODUCTS_DIR' | head -1 | awk '{print $3}'"})\n` +
+        `  4. Launch: bash({command: "open /path/to/${scheme}.app"})\n` +
+        `  5. Screenshot: bash({command: "sleep 2 && screencapture -x /tmp/app_preview.png"})\n\n` +
+        `⚠️  Do NOT call xcode_build_run_simulator() — that is iOS only and will fail for macOS targets.`
+      )
+    }
+
+    if (platform === 'iOS') {
+      return (
+        `XCODE PROJECT DETECTED: iOS app — "${schemeName}" at ${xcodeproj}\n` +
+        `Platform: iOS (runs on simulator)\n\n` +
+        `Correct workflow:\n` +
+        `  1. Call xcode_setup_project() — it picks the best available simulator and configures the session.\n` +
+        `  2. Call xcode_build_run_simulator() — builds, installs, and launches on the simulator in one step.\n` +
+        `  3. Call xcode_snapshot_ui() to inspect the running UI.\n` +
+        `  4. Call xcode_screenshot_simulator() to capture a screenshot.\n\n` +
+        `⚠️  Do NOT use bash xcodebuild with platform=macOS for an iOS project.`
+      )
+    }
+
+    // Platform unknown — give a generic "call setup first" hint
+    return (
+      `XCODE PROJECT DETECTED: "${schemeName}" at ${xcodeproj}\n` +
+      `Platform: unknown — call xcode_setup_project() FIRST.\n` +
+      `It will detect whether this is a macOS or iOS project and return the exact build commands to use.\n` +
+      `⚠️  Do NOT assume iOS simulator — the project may target macOS.`
+    )
+  } catch { return null }
+}
+
 // ── DirectBridge ──────────────────────────────────────────────────────────────
 
 class DirectBridge {
@@ -3135,6 +3276,16 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
               'Call it with the product name and source directory — do NOT manually read files or write pbxproj XML. ' +
               'Example: generate_xcode_project({"product_name": "MyApp", "source_dir": "MyApp"})',
           })
+        }
+
+        // ── Xcode platform detection — inject authoritative build workflow ──
+        // Scan the cwd for an Xcode project and detect its platform from build
+        // settings. This fires whenever an Xcode project exists in the working
+        // directory, regardless of what the user typed — so the agent always
+        // gets the right workflow for iOS vs macOS without guessing from keywords.
+        const xcodeHint = _detectXcodePlatformHint(cwd)
+        if (xcodeHint) {
+          messages.push({ role: 'system', content: xcodeHint })
         }
       }
 
@@ -5442,8 +5593,17 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         'Constraint: do NOT skip to step 4 without completing steps 1-3.',
 
       'tester':
-        'You are in TESTER mode. Verify behaviour through the browser. Do NOT write or modify application code.\n' +
-        'Required sequence:\n' +
+        'You are in TESTER mode. Verify behaviour through the browser OR by building and running a native macOS/iOS app. Do NOT write or modify application code.\n' +
+        '\n' +
+        '## For native macOS/iOS apps (Swift/Xcode projects):\n' +
+        '  1. Call xcode_setup_project() FIRST — it detects iOS vs macOS and returns the exact build commands.\n' +
+        '  2. macOS apps: use bash() with the xcodebuild command returned by xcode_setup_project. Then open the .app with bash({command: "open /path/to/App.app"}).\n' +
+        '     Do NOT call xcode_build_run_simulator() for macOS — it only works for iOS.\n' +
+        '  3. iOS apps: use xcode_build_run_simulator() after xcode_setup_project() configures the session.\n' +
+        '  4. To capture the running macOS app: bash({command: "screencapture -x /tmp/app_screenshot.png"}) then read the image.\n' +
+        '  5. To get the built .app path: bash({command: "xcodebuild -scheme SCHEME -showBuildSettings 2>/dev/null | grep BUILT_PRODUCTS_DIR | head -1 | awk \'{print $3}\'"}).\n' +
+        '\n' +
+        '## For web apps (browser testing):\n' +
         '  1. browser_navigate to the URL. Then browser_wait_for("body", "visible") before any interaction.\n' +
         '  2. browser_screenshot immediately — this is your baseline. Describe exactly what you see.\n' +
         '  3. One interaction at a time (browser_click / browser_type / browser_select_option), then browser_screenshot.\n' +
