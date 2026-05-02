@@ -3298,7 +3298,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         // nudge it to take action. Look for planning language without tool calls.
         // On turn 0, allow a brief acknowledgment but still nudge if it contains
         // clear planning language indicating more work is needed.
-        const planningPatterns = /\b(let me|i('ll| will)|let's|i need to|i should|first.*then|i'm going to|got it|on it|generating|creating|working on|i'll start|starting)\b/i
+        const planningPatterns = /\b(let me|i('ll| will)|let's|i need to|i should|first.*then|i'm going to|i'll start|starting now)\b/i
         if (text && text.length > 50 && planningPatterns.test(text) && turn < maxTurns - 1) {
           // On turn 0, only nudge if the text is clearly planning (not just a brief answer)
           if (turn === 0 && text.length < 200 && !text.includes('Let me')) {
@@ -3438,9 +3438,18 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         const todoStatus = _lastTodos
           ? `\nYour todo list: ${_lastTodos.filter(t => t.status === 'done' || t.status === 'completed').length}/${_lastTodos.length} complete.`
           : '\nYou have NOT created a todo list yet — call update_todos first.'
+
+        // If the model has been reading files, it should now write
+        const hasReads = messages.some(m => m.role === 'tool' && m.content && m.content.includes('── '))
+        const hasWrites = messages.some(m => m.role === 'tool' && m.content && (m.content.startsWith('Wrote ') || m.content.startsWith('Edited ')))
+        const readButNoWrite = hasReads && !hasWrites
+        const writeNudge = readButNoWrite
+          ? '\n\nYou have READ files but NOT WRITTEN anything yet. You MUST write code now. Call write_file to create the file you need.'
+          : ''
+
         messages.push({
           role: 'system',
-          content: `REJECTED: Text-only responses are not allowed. You must use a tool.${todoStatus}\n\nOptions:\n- If NOT done: call a tool (read_file, write_file, edit_file, bash, browser_navigate, etc.)\n- If you haven't made a todo list: call update_todos\n- If ALL work is complete: call task_complete({"summary": "what you did"})`,
+          content: `REJECTED: Text-only responses are not allowed. You must use a tool.${todoStatus}${writeNudge}\n\nOptions:\n- If NOT done: call a tool (read_file, write_file, edit_file, bash, browser_navigate, etc.)\n- If you haven't made a todo list: call update_todos\n- If ALL work is complete: call task_complete({"summary": "what you did"})`,
         })
         continue
       }
