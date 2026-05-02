@@ -3159,10 +3159,11 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       const { text: rawText, toolCalls, usage, finishReason } = completion
 
       // Strip hallucinated system annotations from model output.
-      // The model sometimes generates text like "[Response interrupted by Fast assistant]"
+      // The model sometimes generates text like "[Response interrupted by ...]"
       // by mimicking injected annotations it sees in context. These confuse users.
-      // Only strip annotations that look like system-injected markers, not legitimate references.
-      const HALLUCINATED_ANNOTATIONS = /\[Response interrupted by (?:a )?[Ff]ast [Aa]ssistant\.?\]/g
+      // Strip any "[Response interrupted by ...]" pattern — the model should never
+      // generate these. Real interruptions are handled by the abort mechanism.
+      const HALLUCINATED_ANNOTATIONS = /\[Response interrupted[^\]]*\]/g
       const text = rawText ? rawText.replace(HALLUCINATED_ANNOTATIONS, '').trim() : rawText
 
       // Send usage stats
