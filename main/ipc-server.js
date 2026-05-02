@@ -30,11 +30,16 @@ function _loadCachedProfile(modelId) {
     const file = path.join(_calibrationCacheDir(), _modelKey(modelId) + '.json')
     if (fs.existsSync(file)) {
       const data = JSON.parse(fs.readFileSync(file, 'utf-8'))
-      // Validate it has the required fields
-      if (data && data.maxInputTokens && data.maxTurns) {
+      // Validate it has the required fields and the new truncation budgets.
+      // If truncation fields are missing, the profile was created before the
+      // calibrator was updated — force a fresh benchmark.
+      if (data && data.maxInputTokens && data.maxTurns && data.readFileTruncate) {
         console.log(`[calibration] Loaded cached profile for ${_modelKey(modelId)}`)
         return data
       }
+      // Stale profile — delete and re-benchmark
+      console.log(`[calibration] Stale cached profile for ${_modelKey(modelId)} — missing new fields, will re-benchmark`)
+      try { fs.unlinkSync(file) } catch {}
     }
   } catch (err) {
     console.warn(`[calibration] Failed to load cached profile: ${err.message}`)
