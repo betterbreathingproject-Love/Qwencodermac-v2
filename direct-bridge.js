@@ -4537,7 +4537,9 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
 
       // Client-side prompt size guard: estimate tokens and trim if over budget
       // Use calibrated maxInputTokens + small headroom as the hard cap
-      const preSendLimit = Math.floor(effectiveMaxInputTokens * 1.04)
+      const _scProfile = this._getCalibrationProfile?.()
+      const _scMaxInput = _scProfile?.maxInputTokens ?? config.MAX_INPUT_TOKENS
+      const preSendLimit = Math.floor(_scMaxInput * 1.04)
       const estimatedTokens = estimateMessagesTokens(messages)
       if (estimatedTokens > preSendLimit) {
         this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Prompt too large (~${estimatedTokens} tokens), trimming to ${preSendLimit} before sending` })
