@@ -1493,6 +1493,7 @@ async function sendAgentMode(prompt, opts = {}) {
   }
 
   window.app.onQwenEvent(ev => {
+    if (typeof terminalHandleAgentEvent === 'function') terminalHandleAgentEvent(ev)
     if (agentFinished && ev.type !== 'session-end') return
     switch(ev.type) {
       case 'agent-type':
@@ -2088,6 +2089,7 @@ async function sendAgentMode(prompt, opts = {}) {
           }
 
           window.app.onQwenEvent(ev => {
+            if (typeof terminalHandleAgentEvent === 'function') terminalHandleAgentEvent(ev)
             switch (ev.type) {
               case 'agent-type':
                 if (ev.agentType && ev.agentType !== 'general') {
@@ -4461,6 +4463,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
   }
 
   window.app.onQwenEvent(ev => {
+    if (typeof terminalHandleAgentEvent === 'function') terminalHandleAgentEvent(ev)
     switch (ev.type) {
       case 'agent-type': {
         // Small model routed this prompt — set agent type before session-start fires

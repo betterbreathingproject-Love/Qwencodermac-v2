@@ -434,18 +434,32 @@
           <div class="terminal-resize-handle" id="terminalResizeHandle" title="Drag to resize terminal"></div>
           <div class="terminal-panel" id="terminalPanel">
             <div class="terminal-panel-header">
-              <span class="terminal-panel-title">⬛ Terminal</span>
+              <div class="terminal-tabs">
+                <button class="terminal-tab active" id="termTabAgent" onclick="terminalSwitchTab('agent')" title="Agent activity stream">🤖 Agent</button>
+                <button class="terminal-tab" id="termTabShell" onclick="terminalSwitchTab('shell')" title="Interactive shell">⬛ Shell</button>
+              </div>
               <div class="terminal-panel-actions">
-                <button class="btn-sm terminal-btn" id="termNewBtn" onclick="terminalNew()" title="New terminal">+</button>
+                <button class="btn-sm terminal-btn" id="termClearBtn" onclick="terminalClearAgent()" title="Clear agent log" style="display:none">⌫</button>
+                <button class="btn-sm terminal-btn" id="termNewBtn" onclick="terminalNew()" title="New shell" style="display:none">+</button>
                 <button class="btn-sm terminal-btn" id="termToggleBtn" onclick="terminalToggle()" title="Toggle terminal">▼</button>
-                <button class="btn-sm terminal-btn" id="termCloseBtn" onclick="terminalCloseActive()" title="Close terminal">✕</button>
+                <button class="btn-sm terminal-btn" id="termCloseBtn" onclick="terminalCloseActive()" title="Close shell" style="display:none">✕</button>
               </div>
             </div>
             <div class="terminal-panel-body" id="terminalBody">
-              <div class="terminal-empty" id="terminalEmpty">
-                <span>No active terminal. Click <b>+</b> or the agent will open one when needed.</span>
+              <!-- Agent activity tab -->
+              <div class="terminal-agent-pane" id="terminalAgentPane">
+                <div class="terminal-agent-empty" id="terminalAgentEmpty">
+                  <span>Agent activity will appear here when a task is running.</span>
+                </div>
+                <div class="terminal-agent-log" id="terminalAgentLog" style="display:none"></div>
               </div>
-              <div class="terminal-screen" id="terminalScreen" tabindex="0" style="display:none"></div>
+              <!-- Shell tab -->
+              <div class="terminal-shell-pane" id="terminalShellPane" style="display:none">
+                <div class="terminal-empty" id="terminalEmpty">
+                  <span>No active terminal. Click <b>+</b> or the agent will open one when needed.</span>
+                </div>
+                <div class="terminal-screen" id="terminalScreen" tabindex="0" style="display:none"></div>
+              </div>
             </div>
           </div>
         </div>
