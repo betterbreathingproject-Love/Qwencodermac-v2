@@ -355,7 +355,7 @@ const TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'read_files',
-      description: 'Read multiple files in a single call. Much faster than calling read_file repeatedly. Returns all file contents concatenated with clear file headers. Use this when you need to read 2+ files at once (e.g. before editing, understanding imports, comparing files).',
+      description: 'Read multiple files in a single call. Much faster than calling read_file repeatedly. Returns all file contents concatenated with clear file headers. Use when you need to understand existing code before making changes.',
       parameters: {
         type: 'object',
         properties: {
@@ -4017,9 +4017,20 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           }
           if (alreadyRead.length > 0 && needsRead.length === 0) {
             // All files already read and in context — skip entirely
-            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Skipped batch re-read of ${alreadyRead.length} files (all already in context)` })
-            const interceptContent = `All ${alreadyRead.length} files were already read and are still in your context. ` +
-              `Do NOT re-read them. Proceed with your edits using edit_file.`
+            // Track how many times we've blocked batch re-reads this session
+            this._batchRereadBlocks = (this._batchRereadBlocks || 0) + 1
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `Skipped batch re-read of ${alreadyRead.length} files (all already in context, block #${this._batchRereadBlocks})` })
+
+            let interceptContent
+            if (this._batchRereadBlocks >= 2) {
+              // Second+ time being blocked — model is stuck reading instead of writing
+              interceptContent = `STOP READING. You have tried to re-read files ${this._batchRereadBlocks} times — they are ALL still in your context. ` +
+                `You MUST write code NOW. Call write_file to create the file you need, or call edit_file to modify an existing file. ` +
+                `Do NOT call read_file or read_files again.`
+            } else {
+              interceptContent = `All ${alreadyRead.length} files were already read and are still in your context. ` +
+                `Do NOT re-read them. Proceed with write_file (to create new files) or edit_file (to modify existing files).`
+            }
             this.send('qwen-event', { type: 'tool-result', tool_use_id: tc.id, content: interceptContent, is_error: false })
             messages.push({ role: 'tool', tool_call_id: tc.id, content: interceptContent })
             continue
@@ -4655,14 +4666,16 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         } else if (WRITE_TOOLS.has(fnName) && !isError) {
           consecutiveReadsWithoutWrite = 0
         }
-        if (consecutiveReadsWithoutWrite >= 6) {
+        if (consecutiveReadsWithoutWrite >= 4) {
           messages.push({
             role: 'system',
             content: `STOP READING. You have made ${consecutiveReadsWithoutWrite} consecutive read/search calls without writing any code. ` +
-              `You have enough context. Start making changes NOW using write_file or edit_file. ` +
-              `If you are unsure what to change, pick the most important file and start editing it.`,
+              `You have enough context. Start making changes NOW:\n` +
+              `- To CREATE a new file: call write_file({"path": "...", "content": "..."})\n` +
+              `- To MODIFY an existing file: call edit_file({"path": "...", "old_string": "...", "new_string": "..."})\n` +
+              `Do NOT read any more files. Write code NOW.`,
           })
-          this.send('qwen-event', { type: 'system', subtype: 'warning', data: `⚠️ Read-only loop detected (${consecutiveReadsWithoutWrite} reads, 0 writes) — nudging agent to start editing` })
+          this.send('qwen-event', { type: 'system', subtype: 'warning', data: `⚠️ Read-only loop detected (${consecutiveReadsWithoutWrite} reads, 0 writes) — nudging agent to start writing` })
           // Clear read history so the agent can re-read files if it genuinely
           // needs content that was trimmed during compaction
           _readFileHistory.clear()
@@ -5226,17 +5239,19 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
 
       'implementation':
         'You are in IMPLEMENTATION mode. Write and modify code to complete the task.\n' +
-        'Required sequence:\n' +
-        '  1. Read ONLY the file(s) you are about to edit — do NOT read the entire project. If a file list is in your context, use it instead of reading.\n' +
-        '  2. Make one focused change at a time using write_file or edit_file.\n' +
+        'For CREATING new files: call write_file immediately. Do NOT read other files first unless you need specific content from them. The file tree in your context has all the paths you need.\n' +
+        'For EDITING existing files:\n' +
+        '  1. Read ONLY the file you are about to edit — do NOT read the entire project.\n' +
+        '  2. Make one focused change at a time using edit_file.\n' +
         '  3. After each file change, check LSP diagnostics in the tool result. Fix any errors before continuing.\n' +
         '  4. Verify with bash (run tests, check syntax, start the app).\n' +
-        'CRITICAL: Do NOT read all project files before starting. Read one file → edit it → move to the next. Reading everything upfront wastes context and triggers compaction.\n' +
-        'Constraint: each write_file call must be under 300 lines. For larger files use bash with heredoc to append.',
+        'CRITICAL: Do NOT read all project files before starting. If you need file paths, use list_dir — do NOT read file contents just to learn what files exist.\n' +
+        'Constraint: each write_file call should be under 300 lines for source code. Generated config files (pbxproj, Package.swift, CMakeLists) can be longer.',
 
       'general':
         'You are a general-purpose coding assistant. Complete the task using whatever tools are appropriate.\n' +
-        'Read before writing. Verify after changing. Use tools — never output code as text.',
+        'For CREATING new files: use write_file immediately — do not read existing files unless you need specific content from them.\n' +
+        'For EDITING existing files: read the target file first, then edit. Verify after changing. Use tools — never output code as text.',
     }
     const rolePreamble = rolePreambles[this._agentRole] || rolePreambles['general']
 
@@ -5257,7 +5272,7 @@ The project file tree is included at the end of this prompt — read it before c
 - ALWAYS use tools to read, write, and execute. Never output code or file contents as plain text — the user cannot use it.
 - read_file: use this to read source files — NOT bash/cat. read_file handles large files correctly with line ranges and avoids output limits. Never use cat, head, or tail to read source files. For files under 500 lines, read the entire file at once (omit start_line/end_line). For larger files, read in chunks of 500+ lines — never page through a file 200 lines at a time.
 - read_files: PREFERRED over read_file when you need 2+ files. Pass all paths in one call — this is 5-10x faster than separate read_file calls. ALWAYS batch your reads: if you know you need multiple files, use read_files({"paths": ["file1.swift", "file2.swift", ...]}) instead of calling read_file on each one separately. Maximum 20 files per call.
-- edit_file: ALWAYS re-read the file with read_file in the same turn before editing. Compressed history may have stale content.
+- edit_file: re-read the target file before editing IF the file content is no longer in your context (e.g. after compaction). If you just read it this session and it's still visible above, proceed directly with the edit.
 - edit_files: PREFERRED over edit_file when editing 2+ different files. Pass an array of {path, old_string, new_string} objects — all edits execute in one call. Much faster than calling edit_file repeatedly. Use this whenever you have edits across multiple files.
 - write_file: aim for under 300 lines per call for source code. For generated config files (pbxproj, Package.swift, CMakeLists, etc.) you can write longer files in one call. If a write gets truncated, split into chunks and use bash with heredoc to append.
 - bash: prefer single focused commands. Check exit codes in the output. For installs and builds (npm install, pip install, swift build, xcodebuild), the timeout is 5 minutes — use them directly. Always add non-interactive flags to suppress prompts: npm init -y, pip install --no-input, brew install --no-interaction.
