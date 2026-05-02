@@ -234,6 +234,7 @@ contextBridge.exposeInMainWorld('app', {
   // events
   onTaskStatusEvent:(cb)    => ipcRenderer.on('task-status-event', (_, d) => cb(d)),
   onOrchestratorEvent:(cb)  => ipcRenderer.on('orchestrator-agent-event', (_, d) => cb(d)),
+  offOrchestratorEvents:()  => ipcRenderer.removeAllListeners('orchestrator-agent-event'),
   onOrchestratorCompleted:(cb) => ipcRenderer.on('orchestrator-completed', () => cb()),
   offOrchestratorCompleted:() => ipcRenderer.removeAllListeners('orchestrator-completed'),
   onBgTaskEvent:    (cb)    => ipcRenderer.on('bg-task-event', (_, d) => cb(d)),

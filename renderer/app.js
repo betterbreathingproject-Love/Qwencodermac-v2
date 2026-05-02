@@ -1031,6 +1031,7 @@ async function switchSession(id) {
   // Without this, stale onQwenEvent handlers keep firing into the new session's
   // DOM, causing the old status to flash/fight with the new session's UI.
   window.app.offQwenEvents()
+  window.app.offOrchestratorEvents?.()
   window.app.offOrchestratorCompleted()
   if (isGenerating) {
     finishGeneration()
@@ -1058,6 +1059,7 @@ async function newSession(sessionType) {
 
   // Tear down stale agent event listeners from the previous session
   window.app.offQwenEvents()
+  window.app.offOrchestratorEvents?.()
   window.app.offOrchestratorCompleted()
   if (isGenerating) {
     finishGeneration()
@@ -2163,6 +2165,7 @@ async function sendAgentMode(prompt, opts = {}) {
           scrollOutput()
 
           window.app.offQwenEvents()
+          window.app.offOrchestratorEvents?.()
           window.app.offOrchestratorCompleted()  // clear any stale listener from a previous run
           let orchToolName = ''
           let orchTaskBlockId = null
@@ -2196,7 +2199,16 @@ async function sendAgentMode(prompt, opts = {}) {
             scrollOutput()
           }
 
-          window.app.onQwenEvent(ev => {
+          // ── Bridge orchestrator-agent-event → qwen-event handler ──────────
+          // During coding tasks, DirectBridge uses CallbackSink which routes all
+          // events through orchestrator-agent-event instead of qwen-event IPC.
+          window.app.onOrchestratorEvent(evt => {
+            if (evt && evt.channel === 'qwen-event' && evt.data) {
+              _orchQwenEventHandler2(evt.data)
+            }
+          })
+
+          function _orchQwenEventHandler2(ev) {
             if (typeof terminalHandleAgentEvent === 'function') terminalHandleAgentEvent(ev)
             switch (ev.type) {
               case 'agent-type':
@@ -2484,11 +2496,15 @@ async function sendAgentMode(prompt, opts = {}) {
                 appendMsg('system', '❌ Task error: ' + ev.error)
                 break
             }
-          })
+          }
+
+          // Also wire the same handler to the direct qwen-event channel
+          window.app.onQwenEvent(_orchQwenEventHandler2)
 
           window.app.onOrchestratorCompleted(() => {
             window.app.offOrchestratorCompleted()
             window.app.offQwenEvents()
+            window.app.offOrchestratorEvents?.()
             stopPromptProgress()
             // Use task graph node statuses — currentTodos is the chat todo list and
             // is empty at the start of a spec run, making [].every(...) vacuously true.
@@ -4512,6 +4528,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
   scrollOutput()
 
   window.app.offQwenEvents()
+  window.app.offOrchestratorEvents?.()
   window.app.offOrchestratorCompleted()  // clear any stale listener from a previous run
   let orchToolName = ''
   let orchTaskBlockId = null
@@ -4569,7 +4586,18 @@ async function _launchOrchestrator(tasksPath, taskCount) {
     scrollOutput()
   }
 
-  window.app.onQwenEvent(ev => {
+  // ── Bridge orchestrator-agent-event → qwen-event handler ────────────────
+  // During coding tasks, DirectBridge uses CallbackSink which routes all events
+  // through orchestrator-agent-event (shape: { taskId, channel, data }) instead
+  // of the qwen-event IPC channel. We unwrap them here so the same handler below
+  // receives them regardless of which path the event took.
+  window.app.onOrchestratorEvent(evt => {
+    if (evt && evt.channel === 'qwen-event' && evt.data) {
+      _orchQwenEventHandler(evt.data)
+    }
+  })
+
+  function _orchQwenEventHandler(ev) {
     if (typeof terminalHandleAgentEvent === 'function') terminalHandleAgentEvent(ev)
     switch (ev.type) {
       case 'agent-type': {
@@ -4925,11 +4953,16 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         appendMsg('system', '❌ Task error: ' + ev.error)
         break
     }
-  })
+  }
+
+  // Also wire the same handler to the direct qwen-event channel — this fires
+  // when DirectBridge uses WindowSink (e.g. single-agent runs not via pool).
+  window.app.onQwenEvent(_orchQwenEventHandler)
 
   window.app.onOrchestratorCompleted(() => {
     window.app.offOrchestratorCompleted()
     window.app.offQwenEvents()
+    window.app.offOrchestratorEvents?.()
     stopPromptProgress()
     // Use task graph node statuses — currentTodos is the chat todo list and
     // is empty at the start of a spec run, making [].every(...) vacuously true.
