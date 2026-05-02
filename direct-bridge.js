@@ -5327,6 +5327,10 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
 
       // Detect if the agent wrote a tasks.md file — signal the renderer
       // so the orchestrator can pick it up after the session ends.
+      // Also break out of the agent loop immediately: the system prompt tells
+      // the agent to STOP after writing tasks.md, but without an explicit break
+      // the agent continues and produces a text-only "I've created the plan..."
+      // response which triggers the planning-loop detector and resets context.
       const writeCall = toolCalls.find(tc => tc.function.name === 'write_file')
       if (writeCall) {
         try {
@@ -5335,6 +5339,8 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           if (writtenPath.endsWith('tasks.md') || writtenPath.endsWith('todo.md')) {
             const resolvedPath = path.resolve(cwd, writtenPath)
             this.send('qwen-event', { type: 'tasks-file-written', path: resolvedPath })
+            // Stop the loop — the orchestrator takes over from here
+            return
           }
         } catch (_) { /* ignore parse errors */ }
       }
