@@ -1338,7 +1338,7 @@ async def benchmark():
                     _processor, _config, BENCHMARK_PROMPT,
                     num_images=0,
                 )
-                gen_kwargs = dict(max_tokens=80, verbose=False)
+                gen_kwargs = dict(max_tokens=200, verbose=False)
             else:
                 from mlx_lm import generate
                 # Build prompt using chat template or simple fallback
@@ -1355,15 +1355,19 @@ async def benchmark():
                     )
                 else:
                     prompt = f"<|im_start|>user\n{BENCHMARK_PROMPT}<|im_end|>\n<|im_start|>assistant\n"
-                gen_kwargs = dict(max_tokens=80)
+                gen_kwargs = dict(max_tokens=200)
 
-            # Run generation in a thread to keep the event loop responsive
+            # Run generation in a thread to keep the event loop responsive.
+            # Hold _metal_lock so the benchmark doesn't race with the fast
+            # model or prefix-cache build — contention would skew the result.
             loop = asyncio.get_event_loop()
 
+            def _run_benchmark():
+                with _metal_lock:
+                    return generate(_model, _processor, prompt, **gen_kwargs)
+
             start = time.perf_counter()
-            result = await loop.run_in_executor(
-                None, lambda: generate(_model, _processor, prompt, **gen_kwargs)
-            )
+            result = await loop.run_in_executor(None, _run_benchmark)
             elapsed = time.perf_counter() - start
 
             # Prefer MLX's own TPS metrics — they measure each phase separately
