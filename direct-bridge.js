@@ -3710,6 +3710,31 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
 
         const fnName = tc.function.name
 
+        // ── Pre-flight: block excessive reads when no writes have happened ──
+        // If the model is trying to read 10+ files and hasn't written anything
+        // yet, it's gathering context it doesn't need. For file CREATION tasks,
+        // the file tree is sufficient. Intercept and tell it to write.
+        if ((fnName === 'read_files' || fnName === 'read_file') && consecutiveReadsWithoutWrite >= 3) {
+          const hasAnyWrites = messages.some(m => m.role === 'tool' && m.content &&
+            (m.content.startsWith('Wrote ') || m.content.startsWith('Edited ') || m.content.includes('edits applied')))
+          if (!hasAnyWrites && fnName === 'read_files') {
+            try {
+              const readArgs = JSON.parse(tc.function.arguments)
+              if (Array.isArray(readArgs.paths) && readArgs.paths.length >= 8) {
+                this.send('qwen-event', { type: 'system', subtype: 'warning',
+                  data: `⚠️ Blocked bulk read of ${readArgs.paths.length} files — agent has read ${consecutiveReadsWithoutWrite} times without writing. Forcing write action.` })
+                const interceptMsg = `BLOCKED: You are trying to read ${readArgs.paths.length} files but you have NOT written anything yet. ` +
+                  `You already have the file tree showing all paths. For CREATING a new file, you do NOT need to read existing file contents. ` +
+                  `Call write_file NOW to create the file. Use the file paths from the tree above.`
+                this.send('qwen-event', { type: 'tool-result', tool_use_id: tc.id, content: interceptMsg, is_error: true })
+                messages.push({ role: 'tool', tool_call_id: tc.id, content: interceptMsg })
+                consecutiveReadsWithoutWrite = 0
+                continue
+              }
+            } catch { /* parse failed — let it through */ }
+          }
+        }
+
         // Update badge when agent shifts to writing code
         const _writeTools = new Set(['write_file', 'edit_file'])
         const _inferredRole = _writeTools.has(fnName) ? 'implementation' : null
