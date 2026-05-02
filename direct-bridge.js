@@ -446,7 +446,7 @@ const TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'bash',
-      description: 'Execute a shell command and return its output. Use for running tests, installing packages, git operations, building projects, etc. Timeout: 30s for general commands, 5 minutes for install/build commands (npm install, pip install, swift build, xcodebuild, pod install, cargo build, etc.). For interactive commands that ask questions, add flags to suppress prompts (e.g. npm init -y, pip install --no-input). IMPORTANT: Do NOT call agent tools (xcode_*, lsp_*, browser_*, web_*, read_file, write_file, etc.) via bash — they are not shell commands. Use the tool-call interface directly.',
+      description: 'Execute a shell command and return its output. Use for running tests, installing packages, git operations, building projects, etc. Timeout: 30s for general commands, 5 minutes for install/build commands (npm install, pip install, swift build, xcodebuild, pod install, cargo build, etc.). For interactive commands that ask questions, add flags to suppress prompts (e.g. npm init -y, pip install --no-input). IMPORTANT: Do NOT call agent tools (xcode_*, lsp_*, browser_*, desktop_*, web_*, read_file, write_file, etc.) via bash — they are not shell commands. Use the tool-call interface directly.',
       parameters: {
         type: 'object',
         properties: {
@@ -833,15 +833,20 @@ function getToolDefs(lspManager, agentRole, allowedTools) {
     // Default filtering: exclude heavy tool sets that bloat the prompt (~15K tokens)
     // unless the agent role specifically needs them.
     // Browser tools are only included for tester role.
+    // Desktop automation tools are only included for tester role.
     // Xcode tools are only included for tester/implementation roles.
     const BROWSER_NAMES = new Set(['browser_navigate', 'browser_screenshot', 'browser_click',
       'browser_type', 'browser_get_text', 'browser_get_html', 'browser_evaluate',
       'browser_wait_for', 'browser_select_option', 'browser_close'])
+    const DESKTOP_NAMES = new Set(['desktop_get_screen_size', 'desktop_screenshot',
+      'desktop_mouse_move', 'desktop_mouse_click', 'desktop_keyboard_type', 'desktop_keyboard_press'])
     const needsBrowser = agentRole === 'tester'
+    const needsDesktop = agentRole === 'tester'
     const needsXcode = agentRole === 'tester' || agentRole === 'implementation'
     tools = tools.filter(t => {
       const name = t.function.name
       if (BROWSER_NAMES.has(name) && !needsBrowser) return false
+      if (DESKTOP_NAMES.has(name) && !needsDesktop) return false
       if (name.startsWith('xcode_') && !needsXcode) return false
       return true
     })
@@ -2365,7 +2370,7 @@ function _detectXcodePlatformHint(cwd) {
         `  2. Build with bash: ${buildCmd}\n` +
         `  3. Find the .app: bash({command: "xcodebuild ${projectArg} -scheme \\"${scheme}\\" -showBuildSettings 2>/dev/null | grep ' BUILT_PRODUCTS_DIR' | head -1 | awk '{print $3}'"})\n` +
         `  4. Launch: bash({command: "open /path/to/${scheme}.app"})\n` +
-        `  5. Screenshot: bash({command: "sleep 2 && screencapture -x /tmp/app_preview.png"})\n\n` +
+        `  5. Screenshot: use desktop_screenshot() to capture the running app — it captures the full screen.\n\n` +
         `⚠️  Do NOT call xcode_build_run_simulator() — that is iOS only and will fail for macOS targets.`
       )
     }
@@ -5771,15 +5776,34 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         'Constraint: do NOT skip to step 4 without completing steps 1-3.',
 
       'tester':
-        'You are in TESTER mode. Verify behaviour through the browser OR by building and running a native macOS/iOS app. Do NOT write or modify application code.\n' +
+        'You are in TESTER mode. Verify behaviour through the browser, native macOS/iOS app, or desktop automation. Do NOT write or modify application code.\n' +
         '\n' +
         '## For native macOS/iOS apps (Swift/Xcode projects):\n' +
         '  1. Call xcode_setup_project() FIRST — it detects iOS vs macOS and returns the exact build commands.\n' +
         '  2. macOS apps: use bash() with the xcodebuild command returned by xcode_setup_project. Then open the .app with bash({command: "open /path/to/App.app"}).\n' +
         '     Do NOT call xcode_build_run_simulator() for macOS — it only works for iOS.\n' +
         '  3. iOS apps: use xcode_build_run_simulator() after xcode_setup_project() configures the session.\n' +
-        '  4. To capture the running macOS app: bash({command: "screencapture -x /tmp/app_screenshot.png"}) then read the image.\n' +
+        '  4. To capture the running macOS app: use desktop_screenshot() — it captures the full screen including the running app.\n' +
         '  5. To get the built .app path: bash({command: "xcodebuild -scheme SCHEME -showBuildSettings 2>/dev/null | grep BUILT_PRODUCTS_DIR | head -1 | awk \'{print $3}\'"}).\n' +
+        '\n' +
+        '## For Electron / desktop apps (non-browser, non-Xcode):\n' +
+        '  Use the desktop_* tools to interact with any native app running on screen.\n' +
+        '  Required sequence — never skip steps:\n' +
+        '  1. desktop_get_screen_size() — know the canvas before placing clicks.\n' +
+        '  2. desktop_screenshot() — always look before you act. Describe exactly what you see.\n' +
+        '  3. desktop_mouse_move({x, y}) — move to the target coordinates identified in the screenshot.\n' +
+        '  4. desktop_mouse_click() — click. Then desktop_screenshot() again to confirm the result.\n' +
+        '  5. desktop_keyboard_type({text}) or desktop_keyboard_press({key, modifiers}) — for text input or shortcuts.\n' +
+        '  6. Repeat screenshot → act → screenshot until the task is verified.\n' +
+        '\n' +
+        '  Key rules for desktop automation:\n' +
+        '  - ALWAYS take a screenshot before every click. Coordinates from a previous screenshot may be stale.\n' +
+        '  - Move the mouse first (desktop_mouse_move), then click (desktop_mouse_click) — do not click without moving.\n' +
+        '  - For keyboard shortcuts: desktop_keyboard_press({key: "c", modifiers: ["command"]}) for Cmd+C.\n' +
+        '  - To open an app: bash({command: "open -a \\"App Name\\""}) then wait 2s with bash({command: "sleep 2"}), then screenshot.\n' +
+        '  - If a click has no visible effect after a screenshot, re-examine coordinates — the UI may have shifted.\n' +
+        '  - Use desktop_keyboard_press({key: "tab"}) to move focus between fields; desktop_keyboard_press({key: "return"}) to confirm.\n' +
+        '  - Common shortcuts: Cmd+Q quit, Cmd+W close window, Cmd+, preferences, Cmd+R reload.\n' +
         '\n' +
         '## For web apps (browser testing):\n' +
         '  1. browser_navigate to the URL. Then browser_wait_for("body", "visible") before any interaction.\n' +
@@ -5787,12 +5811,12 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         '  3. One interaction at a time (browser_click / browser_type / browser_select_option), then browser_screenshot.\n' +
         '  4. browser_get_text or browser_evaluate to assert expected state.\n' +
         '  5. browser_close at the end — this saves the video recording.\n' +
-        'Anti-stuck rules:\n' +
-        '  - Blank page after navigate: browser_wait_for("body","visible") with timeout 5000, then screenshot.\n' +
-        '  - Element not found: browser_evaluate("document.querySelector(\'selector\') !== null") before retrying.\n' +
-        '  - Loading stuck: browser_evaluate("document.readyState") and check for JS errors.\n' +
+        '\n' +
+        'Anti-stuck rules (all modes):\n' +
         '  - Never click the same element twice without a screenshot between attempts.\n' +
-        'Output format: for each step — action taken / expected result / screenshot observation / pass or fail. End with video file path.',
+        '  - If stuck after 3 attempts, describe what you see and use ask_user to get guidance.\n' +
+        '  - Blank/black screenshot: the app may not be in focus — bash({command: "open -a \\"App Name\\""}) to bring it forward.\n' +
+        'Output format: for each step — action taken / expected result / screenshot observation / pass or fail. End with a clear PASS or FAIL verdict.',
 
       'requirements':
         'You are in REQUIREMENTS mode. Clarify and document what needs to be built.\n' +
