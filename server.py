@@ -804,8 +804,28 @@ def _build_prompt_with_tools(req: ChatRequest):
 
     # convert messages to template format
     tmpl_messages = []
-    for msg in req.messages:
+    for i, msg in enumerate(req.messages):
         m = {"role": msg.role}
+
+        # Use 'developer' role for the first system message — Unsloth's Qwen3.6
+        # models support this role for agentic coding tools (Codex, OpenCode, etc.)
+        # and it signals trusted developer instructions vs user-injected content.
+        if msg.role == "system" and i == 0:
+            m["role"] = "developer"
+
+        # Mid-conversation system messages (nudges, LSP diagnostics, warnings)
+        # are silently dropped by the Jinja template's fix #4 (only the first
+        # system/developer message is rendered). Convert them to user messages
+        # with a [SYSTEM] prefix so they actually reach the model.
+        elif msg.role == "system" and i > 0:
+            m["role"] = "user"
+            content = msg.content or ""
+            if isinstance(content, list):
+                content = " ".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in content)
+            m["content"] = f"[SYSTEM]: {content}"
+            tmpl_messages.append(m)
+            continue
+
         if msg.content is not None:
             if isinstance(msg.content, list):
                 # flatten multimodal content to text for tool-calling path
