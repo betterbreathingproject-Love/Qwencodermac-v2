@@ -1925,7 +1925,14 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
               // Let the bash command through for absolute paths outside the project
               // since read_file can't access them either. The agent needs bash for this.
             } else {
-              return { error: `Use read_file instead of ${verb} for source files. Call: read_file({"path": "${cleanPath}"})` }
+              // Transparently redirect to read_file instead of returning an error.
+              // This saves a round-trip — the model gets the file content immediately
+              // instead of getting an error and having to call read_file separately.
+              const readResult = await executeTool('read_file', { path: cleanPath }, cwd, browserInstance, lspManager, inputRequester, notify)
+              if (readResult.error) {
+                return { error: `${verb} redirected to read_file: ${readResult.error}` }
+              }
+              return { result: readResult.result, _fullRead: readResult._fullRead, _totalLines: readResult._totalLines }
             }
           }
         }
@@ -2709,6 +2716,9 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
 
     for (let turn = 0; turn < effectiveMaxTurns; turn++) {
       if (this._aborted) return
+
+      // Clear coalesced tool call IDs from previous turn
+      this._coalescedToolCallIds.clear()
 
       // Drain any user-injected messages (from mid-run prompts / spec iteration).
       // Insert them as user turns so the model sees the updated objective immediately.
@@ -3586,6 +3596,59 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         }
       } else {
         _consecutiveSingleReads = 0
+      }
+
+      // ── Performance: auto-coalesce multiple edit_file into edit_files ───
+      // When the model returns 2+ edit_file calls on DIFFERENT files in one
+      // turn, merge them into a single edit_files call. Edits on the same
+      // file must stay sequential (each depends on the previous edit's result).
+      if (toolCalls.length >= 2) {
+        const editFileCalls = toolCalls.filter(tc => tc.function.name === 'edit_file')
+        if (editFileCalls.length >= 2) {
+          const validEdits = editFileCalls.filter(tc => {
+            try {
+              const a = JSON.parse(tc.function.arguments)
+              return a.path && typeof a.old_string === 'string' && typeof a.new_string === 'string'
+            } catch { return false }
+          })
+          // Group by file path — only coalesce if all edits are on different files
+          const editPaths = validEdits.map(tc => {
+            try { return JSON.parse(tc.function.arguments).path } catch { return null }
+          })
+          const uniquePaths = new Set(editPaths.filter(Boolean))
+          if (validEdits.length >= 2 && uniquePaths.size === validEdits.length) {
+            // All edits are on different files — safe to batch
+            const edits = validEdits.map(tc => {
+              try { return JSON.parse(tc.function.arguments) } catch { return null }
+            }).filter(Boolean)
+
+            this.send('qwen-event', { type: 'system', subtype: 'debug', data: `⚡ Auto-coalescing ${validEdits.length} edit_file calls into edit_files(${edits.length} edits)` })
+
+            const batchResult = await executeTool(
+              'edit_files', { edits }, cwd,
+              this._browserInstance, this._lspManager, this._inputRequester,
+              { send: this.send.bind(this), _sessionId }
+            )
+
+            const resultContent = batchResult.error || batchResult.result || ''
+            for (const tc of validEdits) {
+              let tcPath
+              try { tcPath = JSON.parse(tc.function.arguments).path } catch { tcPath = '?' }
+              // Extract this edit's result line from the batch output
+              const editLine = resultContent.split('\n').find(l => l.includes(tcPath)) || resultContent
+              this.send('qwen-event', {
+                type: 'tool-result',
+                tool_use_id: tc.id,
+                content: editLine.slice(0, 200),
+                is_error: !!batchResult.error,
+              })
+              messages.push({ role: 'tool', tool_call_id: tc.id, content: editLine || `Edited ${tcPath}` })
+            }
+
+            // Track coalesced IDs
+            for (const tc of validEdits) this._coalescedToolCallIds.add(tc.id)
+          }
+        }
       }
 
       // ── Performance: parallel pre-fetch for read-only tools ─────────────
@@ -5186,7 +5249,7 @@ The project file tree is included at the end of this prompt — read it before c
 - read_file: use this to read source files — NOT bash/cat. read_file handles large files correctly with line ranges and avoids output limits. Never use cat, head, or tail to read source files. For files under 500 lines, read the entire file at once (omit start_line/end_line). For larger files, read in chunks of 500+ lines — never page through a file 200 lines at a time.
 - read_files: PREFERRED over read_file when you need 2+ files. Pass all paths in one call — this is 5-10x faster than separate read_file calls. ALWAYS batch your reads: if you know you need multiple files, use read_files({"paths": ["file1.swift", "file2.swift", ...]}) instead of calling read_file on each one separately. Maximum 20 files per call.
 - edit_file: ALWAYS re-read the file with read_file in the same turn before editing. Compressed history may have stale content.
-- edit_files: use this when you need to make edits across multiple files in one step. Pass an array of {path, old_string, new_string} objects. Much faster than calling edit_file repeatedly.
+- edit_files: PREFERRED over edit_file when editing 2+ different files. Pass an array of {path, old_string, new_string} objects — all edits execute in one call. Much faster than calling edit_file repeatedly. Use this whenever you have edits across multiple files.
 - write_file: keep each call under 300 lines. For larger files, write the first chunk then use bash with heredoc to append.
 - bash: prefer single focused commands. Check exit codes in the output. For installs and builds (npm install, pip install, swift build, xcodebuild), the timeout is 5 minutes — use them directly. Always add non-interactive flags to suppress prompts: npm init -y, pip install --no-input, brew install --no-interaction.
 - search_files: use regex patterns. Narrow with path/include filters to avoid noise.
