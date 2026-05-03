@@ -24,7 +24,10 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
     }
     if (orchestratorInstance) {
       orchestratorInstance.removeAllListeners()
-      await orchestratorInstance.abort().catch(() => {})
+      // Fire-and-forget abort — don't block the caller. The 10s timeout
+      // inside cancelAll() was causing the new orchestrator to wait before
+      // it could start, making Build feel unresponsive.
+      orchestratorInstance.abort().catch(() => {})
       orchestratorInstance = null
     }
   }
@@ -170,8 +173,8 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
       getAgentPool().cancelAll()
       // Notify renderer that execution has stopped so listeners clean up
       getMainWindow()?.webContents.send('orchestrator-completed')
-      // Tear down the instance so it can't fire stale events
-      await _teardownOrchestrator()
+      // Tear down the instance so it can't fire stale events (non-blocking)
+      _teardownOrchestrator()
       return { ok: true }
     } catch (e) { return { error: e.message } }
   })
