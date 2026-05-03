@@ -3819,7 +3819,6 @@ async function taskGraphResume() {
 }
 
 async function taskGraphAbort() {
-  if (!confirm('Abort task graph execution?')) return
   await window.app.taskGraphAbort()
   document.getElementById('tgPauseBtn').style.display = 'none'
   document.getElementById('tgResumeBtn').style.display = 'none'
@@ -3829,6 +3828,7 @@ async function taskGraphAbort() {
   _orchestratorRunning = false
   document.getElementById('agentPrompt').placeholder = 'Ask anything... drop images here. ⌘↵ to send'
   appendMsg('system', '⏹ Task graph aborted.')
+  finishGeneration()
 }
 
 async function taskGraphInject() {

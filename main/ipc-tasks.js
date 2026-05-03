@@ -168,6 +168,10 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
       }
       // Also cancel any running pool tasks directly (belt-and-suspenders)
       getAgentPool().cancelAll()
+      // Notify renderer that execution has stopped so listeners clean up
+      getMainWindow()?.webContents.send('orchestrator-completed')
+      // Tear down the instance so it can't fire stale events
+      _teardownOrchestrator()
       return { ok: true }
     } catch (e) { return { error: e.message } }
   })
