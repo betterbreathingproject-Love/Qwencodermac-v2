@@ -2382,6 +2382,10 @@ async function sendAgentMode(prompt, opts = {}) {
                 orchTaskText = ev.text
                 // Strip thinking tags from display
                 let displayText = orchTaskText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+                // Strip tool call XML that leaks into text stream (model outputting raw tool XML)
+                displayText = displayText.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '').trim()
+                displayText = displayText.replace(/<function[\s\S]*?<\/function>/gi, '').trim()
+                displayText = displayText.replace(/><function=[^>]*>[\s\S]*?<\/tool_call>/gi, '').trim()
                 // If still inside an unclosed <think> tag, don't show the thinking content
                 const openThink = orchTaskText.lastIndexOf('<think>')
                 const closeThink = orchTaskText.lastIndexOf('</think>')
@@ -4795,6 +4799,10 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         stopPromptProgress()
         orchTaskText = ev.text
         let displayText = orchTaskText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+        // Strip tool call XML that leaks into text stream
+        displayText = displayText.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '').trim()
+        displayText = displayText.replace(/<function[\s\S]*?<\/function>/gi, '').trim()
+        displayText = displayText.replace(/><function=[^>]*>[\s\S]*?<\/tool_call>/gi, '').trim()
         const openThink = orchTaskText.lastIndexOf('<think>')
         const closeThink = orchTaskText.lastIndexOf('</think>')
         if (openThink > closeThink) {
