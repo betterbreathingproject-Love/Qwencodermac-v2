@@ -1476,7 +1476,7 @@ async def extractor_load(req: ExtractorLoadRequest):
     """Load a secondary Qwen3-4B model via MLX for async fact extraction.
 
     Checks Metal memory before loading: rejects with HTTP 507 if active
-    memory > 85% of system RAM. Reports extraction model status via GET /memory/status.
+    memory > 92% of system RAM. Reports extraction model status via GET /memory/status.
 
     Returns HTTP 507 if insufficient memory, HTTP 500 on load failure.
     """
@@ -1488,10 +1488,10 @@ async def extractor_load(req: ExtractorLoadRequest):
         total_ram = psutil.virtual_memory().total
         available_ram = psutil.virtual_memory().available
         used_fraction = (total_ram - available_ram) / total_ram
-        if used_fraction > 0.85:
+        if used_fraction > 0.92:
             raise HTTPException(
                 status_code=507,
-                detail=f"Insufficient memory: {used_fraction:.1%} of system RAM in use (limit: 85%). "
+                detail=f"Insufficient memory: {used_fraction:.1%} of system RAM in use (limit: 92%). "
                        f"Unload other models before loading the extraction model."
             )
     except ImportError:
