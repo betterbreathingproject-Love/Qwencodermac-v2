@@ -113,7 +113,13 @@ const ROLE_OVERLAYS = {
   'implementation':
     'You are in IMPLEMENTATION mode. Focus on writing and modifying code.\n' +
     'Read relevant files first, then make surgical changes with write_file/edit_file.\n' +
-    'Use LSP diagnostics to validate changes. Verify with bash. Each write_file under 300 lines.',
+    'Use LSP diagnostics to validate changes. Verify with bash. Each write_file under 300 lines.\n' +
+    '\n' +
+    'For Swift/Xcode projects:\n' +
+    '1. Call xcode_setup_project() first — auto-detects project, scheme, and simulator.\n' +
+    '2. After writing .swift files, call xcode_build_simulator() to validate — it returns structured errors with file/line.\n' +
+    '3. Fix all build errors before calling task_complete. Use xcode_get_build_settings() to check SWIFT_VERSION, DEPLOYMENT_TARGET, BUNDLE_ID.\n' +
+    '4. Use xcode_clean() only if you suspect stale derived data is causing phantom errors.',
 
   'general':
     'You are a general-purpose coding assistant. Adapt your approach to whatever the task requires.',
@@ -252,7 +258,14 @@ agentPool.registerType({ name: 'context-gather', systemPrompt: '', allowedTools:
 agentPool.registerType({ name: 'code-search', systemPrompt: '', allowedTools: ['read_file', 'read_files', 'list_dir', 'search_files', 'bash'] })
 agentPool.registerType({ name: 'requirements', systemPrompt: '', allowedTools: [] })
 agentPool.registerType({ name: 'design', systemPrompt: '', allowedTools: [] })
-agentPool.registerType({ name: 'debug', systemPrompt: '', allowedTools: ['read_file', 'read_files', 'list_dir', 'search_files', 'bash', 'web_search', 'web_fetch'] })
+agentPool.registerType({ name: 'debug', systemPrompt: '', allowedTools: [
+  'read_file', 'read_files', 'list_dir', 'search_files', 'bash', 'web_search', 'web_fetch',
+  // Xcode / Swift — needed to reproduce crashes, read logs, inspect build errors
+  'xcode_setup_project', 'xcode_discover_projects', 'xcode_set_defaults', 'xcode_show_defaults',
+  'xcode_build_simulator', 'xcode_get_build_settings',
+  'xcode_start_log_capture', 'xcode_stop_log_capture',
+  'xcode_snapshot_ui', 'xcode_screenshot_simulator',
+] })
 agentPool.registerType({ name: 'tester', systemPrompt: '', allowedTools: [
   // Browser (web testing)
   'browser_navigate', 'browser_screenshot', 'browser_click', 'browser_type',
@@ -269,8 +282,18 @@ agentPool.registerType({ name: 'tester', systemPrompt: '', allowedTools: [
   'xcode_get_coverage_report', 'xcode_get_file_coverage',
   'xcode_get_bundle_id', 'xcode_get_app_path', 'xcode_record_video',
 ] })
-agentPool.registerType({ name: 'implementation', systemPrompt: '', allowedTools: ['read_file', 'read_files', 'write_file', 'edit_file', 'edit_files', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch'], timeout: 1800000 }) // 30 min
-agentPool.registerType({ name: 'general', systemPrompt: '', allowedTools: ['read_file', 'read_files', 'write_file', 'edit_file', 'edit_files', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch'], timeout: 1800000 }) // 30 min
+agentPool.registerType({ name: 'implementation', systemPrompt: '', allowedTools: [
+  'read_file', 'read_files', 'write_file', 'edit_file', 'edit_files', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch',
+  // Xcode / Swift — build-validate loop after writing Swift code
+  'xcode_setup_project', 'xcode_discover_projects', 'xcode_set_defaults', 'xcode_show_defaults',
+  'xcode_build_simulator', 'xcode_get_build_settings', 'xcode_clean',
+  'xcode_list_schemes', 'xcode_list_simulators',
+], timeout: 1800000 }) // 30 min
+agentPool.registerType({ name: 'general', systemPrompt: '', allowedTools: [
+  'read_file', 'read_files', 'write_file', 'edit_file', 'edit_files', 'list_dir', 'bash', 'search_files', 'web_search', 'web_fetch',
+  // Xcode / Swift — general tasks may involve Swift projects
+  'xcode_setup_project', 'xcode_discover_projects', 'xcode_build_simulator', 'xcode_get_build_settings',
+], timeout: 1800000 }) // 30 min
 
 // ── shared accessors for IPC modules ──────────────────────────────────────────
 const ctx = {
