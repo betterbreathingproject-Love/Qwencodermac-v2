@@ -2453,6 +2453,15 @@ class DirectBridge {
     this._cachedToolDefs = null
     this._cachedToolDefsKey = null
 
+    // ── Adaptive max_tokens ───────────────────────────────────────────────
+    // Starts at the configured baseline. Steps up on truncation (finish_reason
+    // 'length'), decays back toward baseline on clean stops so we don't
+    // permanently inflate KV cache allocation after a one-off large response.
+    this._adaptiveMaxTokens = config.MAX_OUTPUT_TOKENS
+    this._adaptiveMaxTokensFloor = config.MAX_OUTPUT_TOKENS   // baseline / floor
+    this._adaptiveMaxTokensCeil = 32768                        // hard ceiling
+    this._adaptiveCleanTurns = 0  // consecutive clean-stop turns since last bump
+
     // ── Performance: deferred LSP diagnostics ─────────────────────────────
     // After write_file/edit_file, diagnostics are fetched asynchronously and
     // injected as a system message on the next turn instead of blocking.
@@ -3529,7 +3538,38 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
 
       const { text: rawText, toolCalls, usage, finishReason, reasoningContent } = completion
 
-      // Strip hallucinated system annotations from model output.
+      // ── Adaptive max_tokens adjustment ───────────────────────────────────
+      // If the model was truncated (finish_reason 'length'), step up the budget
+      // so the next turn has more room. On clean stops, decay back toward the
+      // baseline floor so we don't permanently inflate KV cache allocation.
+      if (finishReason === 'length') {
+        const prev = this._adaptiveMaxTokens
+        this._adaptiveMaxTokens = Math.min(
+          this._adaptiveMaxTokensCeil,
+          Math.round(this._adaptiveMaxTokens * 1.5)
+        )
+        this._adaptiveCleanTurns = 0
+        if (this._adaptiveMaxTokens !== prev) {
+          this.send('qwen-event', { type: 'system', subtype: 'debug',
+            data: `[adaptive] max_tokens bumped ${prev} → ${this._adaptiveMaxTokens} (truncation detected)` })
+        }
+      } else if (finishReason === 'stop' || finishReason === 'tool_calls') {
+        this._adaptiveCleanTurns++
+        // After 3 consecutive clean turns, step back down toward the floor
+        if (this._adaptiveCleanTurns >= 3 && this._adaptiveMaxTokens > this._adaptiveMaxTokensFloor) {
+          const prev = this._adaptiveMaxTokens
+          // Decay by 25% per 3-turn window, floor at baseline
+          this._adaptiveMaxTokens = Math.max(
+            this._adaptiveMaxTokensFloor,
+            Math.round(this._adaptiveMaxTokens * 0.75)
+          )
+          this._adaptiveCleanTurns = 0
+          if (this._adaptiveMaxTokens !== prev) {
+            this.send('qwen-event', { type: 'system', subtype: 'debug',
+              data: `[adaptive] max_tokens decayed ${prev} → ${this._adaptiveMaxTokens} (3 clean turns)` })
+          }
+        }
+      }
       // The model sometimes generates text like "[Response interrupted by ...]"
       // or "[Summarized by ...]" by mimicking injected annotations it sees in context.
       // These confuse users — strip them. Real interruptions are handled by abort.
@@ -5522,7 +5562,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         messages,
         tools: this._cachedToolDefs,
         stream: true,
-        max_tokens: config.MAX_OUTPUT_TOKENS,
+        max_tokens: this._adaptiveMaxTokens,
       }
       // Merge sampling parameters (temperature, top_p, repetition_penalty)
       if (this._samplingParams) {
