@@ -1811,6 +1811,62 @@ async function sendAgentMode(prompt, opts = {}) {
             bodyEl.innerHTML = `<pre><code>$ ${esc(cmd)}</code></pre><span class="cursor">▌</span>`
             bodyEl.style.display = 'block'
           }
+        } else if ((toolName === 'read_file' || toolName === 'read_files') && args.length > 5) {
+          const bodyEl = previewEl.querySelector('.tool-preview-body')
+          if (bodyEl) {
+            const pMatch = args.match(/"path"\s*:\s*"([^"]*)"/) || args.match(/"paths"\s*:\s*\["([^"]*)"/)
+            if (pMatch) { bodyEl.innerHTML = `<pre><code style="color:var(--muted)">📖 ${esc(pMatch[1])}</code></pre>`; bodyEl.style.display = 'block' }
+          }
+        } else if (toolName === 'list_dir' && args.length > 5) {
+          const bodyEl = previewEl.querySelector('.tool-preview-body')
+          if (bodyEl) {
+            const pMatch = args.match(/"path"\s*:\s*"([^"]*)"/)
+            if (pMatch) { bodyEl.innerHTML = `<pre><code style="color:var(--muted)">📁 ${esc(pMatch[1])}</code></pre>`; bodyEl.style.display = 'block' }
+          }
+        } else if ((toolName === 'search_files' || toolName === 'grep_search') && args.length > 5) {
+          const bodyEl = previewEl.querySelector('.tool-preview-body')
+          if (bodyEl) {
+            const pMatch = args.match(/"pattern"\s*:\s*"([^"]*)"/) || args.match(/"query"\s*:\s*"([^"]*)"/)
+            if (pMatch) { bodyEl.innerHTML = `<pre><code style="color:var(--muted)">🔍 ${esc(pMatch[1])}</code></pre>`; bodyEl.style.display = 'block' }
+          }
+        } else if (toolName === 'web_search' && args.length > 5) {
+          const bodyEl = previewEl.querySelector('.tool-preview-body')
+          if (bodyEl) {
+            const qMatch = args.match(/"query"\s*:\s*"([^"]*)"/)
+            if (qMatch) { bodyEl.innerHTML = `<pre><code style="color:var(--muted)">🔎 ${esc(qMatch[1])}</code></pre>`; bodyEl.style.display = 'block' }
+          }
+        } else if (toolName === 'web_fetch' && args.length > 5) {
+          const bodyEl = previewEl.querySelector('.tool-preview-body')
+          if (bodyEl) {
+            const uMatch = args.match(/"url"\s*:\s*"([^"]*)"/)
+            if (uMatch) { bodyEl.innerHTML = `<pre><code style="color:var(--muted)">🌍 ${esc(uMatch[1])}</code></pre>`; bodyEl.style.display = 'block' }
+          }
+        } else if (toolName === 'browser_navigate' && args.length > 5) {
+          const bodyEl = previewEl.querySelector('.tool-preview-body')
+          if (bodyEl) {
+            const uMatch = args.match(/"url"\s*:\s*"([^"]*)"/)
+            if (uMatch) { bodyEl.innerHTML = `<pre><code style="color:var(--muted)">🌐 ${esc(uMatch[1])}</code></pre>`; bodyEl.style.display = 'block' }
+          }
+        } else if (toolName === 'ask_user' && args.length > 5) {
+          const bodyEl = previewEl.querySelector('.tool-preview-body')
+          if (bodyEl) {
+            const qMatch = args.match(/"question"\s*:\s*"([^"]*(?:\\.[^"]*)*)/)
+            if (qMatch) {
+              let q = qMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"')
+              bodyEl.innerHTML = `<pre><code style="color:var(--yellow)">❓ ${esc(q)}</code></pre><span class="cursor">▌</span>`
+              bodyEl.style.display = 'block'
+            }
+          }
+        } else if (toolName === 'task_complete' && args.length > 5) {
+          const bodyEl = previewEl.querySelector('.tool-preview-body')
+          if (bodyEl) {
+            const sMatch = args.match(/"summary"\s*:\s*"([^"]*(?:\\.[^"]*)*)/)
+            if (sMatch) {
+              let s = sMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"')
+              bodyEl.innerHTML = `<pre><code style="color:var(--green)">✅ ${esc(s)}</code></pre><span class="cursor">▌</span>`
+              bodyEl.style.display = 'block'
+            }
+          }
         }
 
         _scheduleToolPreviewScroll()
@@ -4799,6 +4855,62 @@ async function _launchOrchestrator(tasksPath, taskCount) {
             let cmd = cmdMatch[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\\\/g, '\\')
             bodyEl.innerHTML = `<pre><code>$ ${esc(cmd)}</code></pre><span class="cursor">▌</span>`
             bodyEl.style.display = 'block'
+          }
+        } else if (tdPreviewEl && (tdToolName === 'read_file' || tdToolName === 'read_files') && tdArgs.length > 5) {
+          const bodyEl = tdPreviewEl.querySelector('.tool-preview-body')
+          if (bodyEl) {
+            const pMatch = tdArgs.match(/"path"\s*:\s*"([^"]*)"/) || tdArgs.match(/"paths"\s*:\s*\["([^"]*)"/)
+            if (pMatch) { bodyEl.innerHTML = `<pre><code style="color:var(--muted)">📖 ${esc(pMatch[1])}</code></pre>`; bodyEl.style.display = 'block' }
+          }
+        } else if (tdPreviewEl && tdToolName === 'list_dir' && tdArgs.length > 5) {
+          const bodyEl = tdPreviewEl.querySelector('.tool-preview-body')
+          if (bodyEl) {
+            const pMatch = tdArgs.match(/"path"\s*:\s*"([^"]*)"/)
+            if (pMatch) { bodyEl.innerHTML = `<pre><code style="color:var(--muted)">📁 ${esc(pMatch[1])}</code></pre>`; bodyEl.style.display = 'block' }
+          }
+        } else if (tdPreviewEl && (tdToolName === 'search_files' || tdToolName === 'grep_search') && tdArgs.length > 5) {
+          const bodyEl = tdPreviewEl.querySelector('.tool-preview-body')
+          if (bodyEl) {
+            const pMatch = tdArgs.match(/"pattern"\s*:\s*"([^"]*)"/) || tdArgs.match(/"query"\s*:\s*"([^"]*)"/)
+            if (pMatch) { bodyEl.innerHTML = `<pre><code style="color:var(--muted)">🔍 ${esc(pMatch[1])}</code></pre>`; bodyEl.style.display = 'block' }
+          }
+        } else if (tdPreviewEl && tdToolName === 'web_search' && tdArgs.length > 5) {
+          const bodyEl = tdPreviewEl.querySelector('.tool-preview-body')
+          if (bodyEl) {
+            const qMatch = tdArgs.match(/"query"\s*:\s*"([^"]*)"/)
+            if (qMatch) { bodyEl.innerHTML = `<pre><code style="color:var(--muted)">🔎 ${esc(qMatch[1])}</code></pre>`; bodyEl.style.display = 'block' }
+          }
+        } else if (tdPreviewEl && tdToolName === 'web_fetch' && tdArgs.length > 5) {
+          const bodyEl = tdPreviewEl.querySelector('.tool-preview-body')
+          if (bodyEl) {
+            const uMatch = tdArgs.match(/"url"\s*:\s*"([^"]*)"/)
+            if (uMatch) { bodyEl.innerHTML = `<pre><code style="color:var(--muted)">🌍 ${esc(uMatch[1])}</code></pre>`; bodyEl.style.display = 'block' }
+          }
+        } else if (tdPreviewEl && tdToolName === 'browser_navigate' && tdArgs.length > 5) {
+          const bodyEl = tdPreviewEl.querySelector('.tool-preview-body')
+          if (bodyEl) {
+            const uMatch = tdArgs.match(/"url"\s*:\s*"([^"]*)"/)
+            if (uMatch) { bodyEl.innerHTML = `<pre><code style="color:var(--muted)">🌐 ${esc(uMatch[1])}</code></pre>`; bodyEl.style.display = 'block' }
+          }
+        } else if (tdPreviewEl && tdToolName === 'ask_user' && tdArgs.length > 5) {
+          const bodyEl = tdPreviewEl.querySelector('.tool-preview-body')
+          if (bodyEl) {
+            const qMatch = tdArgs.match(/"question"\s*:\s*"([^"]*(?:\\.[^"]*)*)/)
+            if (qMatch) {
+              let q = qMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"')
+              bodyEl.innerHTML = `<pre><code style="color:var(--yellow)">❓ ${esc(q)}</code></pre><span class="cursor">▌</span>`
+              bodyEl.style.display = 'block'
+            }
+          }
+        } else if (tdPreviewEl && tdToolName === 'task_complete' && tdArgs.length > 5) {
+          const bodyEl = tdPreviewEl.querySelector('.tool-preview-body')
+          if (bodyEl) {
+            const sMatch = tdArgs.match(/"summary"\s*:\s*"([^"]*(?:\\.[^"]*)*)/)
+            if (sMatch) {
+              let s = sMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"')
+              bodyEl.innerHTML = `<pre><code style="color:var(--green)">✅ ${esc(s)}</code></pre><span class="cursor">▌</span>`
+              bodyEl.style.display = 'block'
+            }
           }
         }
 
