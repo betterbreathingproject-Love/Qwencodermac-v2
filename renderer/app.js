@@ -2413,24 +2413,22 @@ async function sendAgentMode(prompt, opts = {}) {
                 stopPromptProgress()
                 orchToolName = ev.name || ''
                 _agentToolCount++
-                // Route update_todos: when a task graph is active, the graph is the
-                // source of truth — suppress agent update_todos to avoid overwriting it.
+                // Route update_todos to the todo panel — always update regardless of task graph state.
+                // The task graph panel (left sidebar) and todo panel (right) are independent.
                 if (ev.name === 'update_todos' && ev.input?.todos) {
-                  if (!currentTaskGraph) {
-                    const mapped = ev.input.todos.map(t => ({
-                      id: t.id,
-                      content: t.content || t.title || t.text || '',
-                      status: t.status === 'done' ? 'completed' : t.status === 'in_progress' ? 'in_progress' : 'pending',
-                    }))
-                    updateTodoPanel(mapped, 'running')
-                  }
+                  const mapped = ev.input.todos.map(t => ({
+                    id: t.id,
+                    content: t.content || t.title || t.text || '',
+                    status: t.status === 'done' ? 'completed' : t.status === 'in_progress' ? 'in_progress' : 'pending',
+                  }))
+                  updateTodoPanel(mapped, 'running')
                   updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Updating progress...' })
                   scrollOutput()
                   break
                 }
                 // Route edit_todos — surgical mutations to the existing list
                 if (ev.name === 'edit_todos') {
-                  if (!currentTaskGraph) applyTodoEdits(ev.input)
+                  applyTodoEdits(ev.input)
                   updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Updating progress...' })
                   scrollOutput()
                   break
@@ -4973,20 +4971,18 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         stopPromptProgress()
         orchToolName = ev.name || ''
         _agentToolCount++
-        // Route update_todos: when a task graph is active, suppress agent update_todos
-        // so the task graph remains the single source of truth for the todo panel.
+        // Route update_todos to the todo panel — always update regardless of task graph state.
+        // The task graph panel (left sidebar) and todo panel (right) are independent.
         if (ev.name === 'update_todos' && ev.input?.todos) {
           { const prevPreview = orchTaskBlockId ? document.getElementById(orchTaskBlockId + '-tool-preview') : null
             if (prevPreview) prevPreview.remove()
           }
-          if (!currentTaskGraph) {
-            const mapped = ev.input.todos.map(t => ({
-              id: t.id,
-              content: t.content || t.title || t.text || '',
-              status: t.status === 'done' ? 'completed' : t.status === 'in_progress' ? 'in_progress' : 'pending',
-            }))
-            updateTodoPanel(mapped, 'running')
-          }
+          const mapped = ev.input.todos.map(t => ({
+            id: t.id,
+            content: t.content || t.title || t.text || '',
+            status: t.status === 'done' ? 'completed' : t.status === 'in_progress' ? 'in_progress' : 'pending',
+          }))
+          updateTodoPanel(mapped, 'running')
           updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Updating progress...' })
           scrollOutput()
           break
@@ -4996,7 +4992,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
           { const prevPreview = orchTaskBlockId ? document.getElementById(orchTaskBlockId + '-tool-preview') : null
             if (prevPreview) prevPreview.remove()
           }
-          if (!currentTaskGraph) applyTodoEdits(ev.input)
+          applyTodoEdits(ev.input)
           updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Updating progress...' })
           scrollOutput()
           break
