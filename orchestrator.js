@@ -72,7 +72,79 @@ class Orchestrator extends EventEmitter {
     if (this._onStatusChange) {
       this._onStatusChange(nodeId, status);
     }
+    // Roll up parent status: if all children of a parent are resolved
+    // (completed/skipped/failed), mark the parent completed so sibling
+    // dependency chains unblock correctly.
+    if (status === 'completed' || status === 'skipped' || status === 'failed') {
+      this._rollupParentStatus(nodeId);
+    }
     this._persist();
+  }
+
+  /**
+   * Walk up the parent chain and mark each ancestor completed if all its
+   * children are in a terminal state (completed, skipped, or failed).
+   * This keeps parent-level task statuses in sync with child progress so
+   * sequential sibling dependencies resolve correctly.
+   */
+  _rollupParentStatus(nodeId) {
+    const node = this._graph.nodes.get(nodeId);
+    if (!node || !node.parent) return;
+
+    const parent = this._graph.nodes.get(node.parent);
+    if (!parent) return;
+
+    // Only roll up if parent is not already in a terminal state
+    if (parent.status === 'completed' || parent.status === 'skipped' || parent.status === 'failed') return;
+
+    const allChildrenResolved = parent.children.every((childId) => {
+      const child = this._graph.nodes.get(childId);
+      return child && (child.status === 'completed' || child.status === 'skipped' || child.status === 'failed');
+    });
+
+    if (allChildrenResolved && parent.children.length > 0) {
+      console.log(`[orchestrator] Rolling up parent ${node.parent} → completed (all children resolved)`);
+      this._graph = updateNodeStatus(this._graph, node.parent, 'completed');
+      this.emit('task-status-event', { nodeId: node.parent, status: 'completed' });
+      if (this._onStatusChange) {
+        this._onStatusChange(node.parent, 'completed');
+      }
+      // Recurse up the tree
+      this._rollupParentStatus(node.parent);
+    }
+  }
+
+  /**
+   * Full upward rollup pass over all nodes — called on start() to repair
+   * stale parent statuses from a previously interrupted run.
+   * Processes leaf nodes first (deepest depth) so parents are evaluated
+   * after all their children have been considered.
+   */
+  _rollupAllParents() {
+    // Sort nodes deepest-first so children are processed before parents
+    const sorted = [...this._graph.nodes.values()].sort((a, b) => b.depth - a.depth);
+    let rolledUp = 0;
+    for (const node of sorted) {
+      if (!node.parent) continue;
+      const parent = this._graph.nodes.get(node.parent);
+      if (!parent || parent.status === 'completed' || parent.status === 'skipped' || parent.status === 'failed') continue;
+      if (parent.children.length === 0) continue;
+
+      const allResolved = parent.children.every((childId) => {
+        const child = this._graph.nodes.get(childId);
+        return child && (child.status === 'completed' || child.status === 'skipped' || child.status === 'failed');
+      });
+
+      if (allResolved) {
+        console.log(`[orchestrator] _rollupAllParents: ${node.parent} → completed`);
+        this._graph = updateNodeStatus(this._graph, node.parent, 'completed');
+        rolledUp++;
+      }
+    }
+    if (rolledUp > 0) {
+      console.log(`[orchestrator] _rollupAllParents: rolled up ${rolledUp} parent nodes`);
+      this._persist();
+    }
   }
 
   _persist() {
@@ -104,6 +176,14 @@ class Orchestrator extends EventEmitter {
     // assumes they're being handled by active dispatches, and breaks out
     // — causing the orchestrator to hang silently.
     this._resetStaleInProgressNodes();
+
+    // Roll up parent statuses from persisted child states.
+    // When resuming a partially-run graph, parent nodes may still be
+    // not_started even though all their children completed in a prior run.
+    // This causes the sequential sibling chain to break — task 5 depends
+    // on task 4, but task 4 never got marked completed, so task 5 never
+    // unblocks. Fix by rolling up from leaves to roots before the run loop.
+    this._rollupAllParents();
 
     // Log node statuses after reset for debugging
     const statusCounts = {};
