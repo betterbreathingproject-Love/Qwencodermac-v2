@@ -177,14 +177,6 @@ class Orchestrator extends EventEmitter {
     // — causing the orchestrator to hang silently.
     this._resetStaleInProgressNodes();
 
-    // Roll up parent statuses from persisted child states.
-    // When resuming a partially-run graph, parent nodes may still be
-    // not_started even though all their children completed in a prior run.
-    // This causes the sequential sibling chain to break — task 5 depends
-    // on task 4, but task 4 never got marked completed, so task 5 never
-    // unblocks. Fix by rolling up from leaves to roots before the run loop.
-    this._rollupAllParents();
-
     // Log node statuses after reset for debugging
     const statusCounts = {};
     for (const [id, node] of this._graph.nodes) {
@@ -205,6 +197,17 @@ class Orchestrator extends EventEmitter {
       for (const id of ids) {
         this._updateNodeStatus(id, 'not_started');
       }
+    }
+
+    // Roll up parent statuses from persisted child states — runs AFTER the
+    // allDone check so it doesn't cause a false "all complete" reset.
+    // When resuming a partially-run graph, parent nodes may still be
+    // not_started even though all their children completed in a prior run.
+    // This causes the sequential sibling chain to break — task 5 depends
+    // on task 4, but task 4 never got marked completed, so task 5 never
+    // unblocks. Fix by rolling up from leaves to roots before the run loop.
+    if (!allDone) {
+      this._rollupAllParents();
     }
 
     // Check for stuck graphs: nodes that are not_started but whose
