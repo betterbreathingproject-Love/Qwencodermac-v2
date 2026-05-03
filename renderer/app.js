@@ -2328,6 +2328,29 @@ async function sendAgentMode(prompt, opts = {}) {
                 else appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${ev.label || '⚡ Fast Assistant'}</span>`)
                 break
               }
+              case 'todo-bootstrap': {
+                // Orchestrator seeded todos from tasks.md subtasks — show them in the panel
+                if (Array.isArray(ev.todos) && ev.todos.length > 0) {
+                  const mapped = ev.todos.map(t => ({
+                    id: t.id,
+                    content: t.content || t.title || t.text || '',
+                    status: t.status === 'done' ? 'completed' : t.status === 'in_progress' ? 'in_progress' : 'pending',
+                  }))
+                  updateTodoPanel(mapped, 'running')
+                }
+                break
+              }
+              case 'todo-watch': {
+                if (Array.isArray(ev.todos) && ev.todos.length > 0) {
+                  const mapped = ev.todos.map(t => ({
+                    id: t.id,
+                    content: t.content || t.title || t.text || '',
+                    status: t.status === 'done' ? 'completed' : t.status === 'in_progress' ? 'in_progress' : 'pending',
+                  }))
+                  updateTodoPanel(mapped, 'running')
+                }
+                break
+              }
               case 'user-injection': {
                 if (ev.content) {
                   const out = document.getElementById('agentOutput')
@@ -4728,6 +4751,29 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         const faOrcEl = orchTaskBlockId ? document.getElementById(orchTaskBlockId + '-fast') : null
         if (faOrcEl) faOrcEl.insertAdjacentHTML('beforeend', renderFastAssistBlock(ev))
         else appendMsg('system', `<span style="color:var(--accent,#7c6af7);font-size:11px">${ev.label || '⚡ Fast Assistant'}</span>`)
+        break
+      }
+      case 'todo-bootstrap': {
+        // Orchestrator seeded todos from tasks.md subtasks — show them in the panel
+        if (Array.isArray(ev.todos) && ev.todos.length > 0) {
+          const mapped = ev.todos.map(t => ({
+            id: t.id,
+            content: t.content || t.title || t.text || '',
+            status: t.status === 'done' ? 'completed' : t.status === 'in_progress' ? 'in_progress' : 'pending',
+          }))
+          updateTodoPanel(mapped, 'running')
+        }
+        break
+      }
+      case 'todo-watch': {
+        if (Array.isArray(ev.todos) && ev.todos.length > 0) {
+          const mapped = ev.todos.map(t => ({
+            id: t.id,
+            content: t.content || t.title || t.text || '',
+            status: t.status === 'done' ? 'completed' : t.status === 'in_progress' ? 'in_progress' : 'pending',
+          }))
+          updateTodoPanel(mapped, 'running')
+        }
         break
       }
       case 'user-injection': {
