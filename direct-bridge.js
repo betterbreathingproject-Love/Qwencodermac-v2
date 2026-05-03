@@ -1874,6 +1874,12 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
           }
         }
         try {
+          // Guard: ensure the resolved path is actually a directory before scanning.
+          const stat = fs.statSync(p)
+          if (!stat.isDirectory()) {
+            return { error: `list_dir error for "${listPath}": path is a file, not a directory. Use read_file to read its contents.` }
+          }
+
           const entries = fs.readdirSync(p, { withFileTypes: true })
             .filter(e => !e.name.startsWith('.'))
             .sort((a, b) => {
