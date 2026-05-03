@@ -3881,7 +3881,9 @@ if (window.app.onTaskStatusEvent) {
       }
     }
     // Also update the todo panel to reflect task graph status.
-    // Seed from task graph nodes if the panel is empty, otherwise update in place.
+    // Only update in-place if the panel already has todos (agent subtasks).
+    // Do NOT seed from the full task graph — the task graph panel already
+    // shows all nodes. The todo panel is for the current agent's subtasks only.
     const statusMap = { 'in_progress': 'in_progress', 'completed': 'completed', 'failed': 'pending', 'not_started': 'pending' }
     const todoStatus = statusMap[evt.status] || evt.status
 
@@ -3890,16 +3892,6 @@ if (window.app.onTaskStatusEvent) {
         String(t.id) === String(evt.nodeId) ? { ...t, status: todoStatus } : t
       )
       updateTodoPanel(updated, 'done')
-    } else if (currentTaskGraph && currentTaskGraph.nodes) {
-      // Panel is empty — seed it from the full task graph
-      const todos = Object.values(currentTaskGraph.nodes)
-        .filter(n => n.title && n.title.trim())
-        .map(n => ({
-          id: n.id,
-          content: n.title,
-          status: statusMap[n.status] || 'pending',
-        }))
-      if (todos.length > 0) updateTodoPanel(todos, 'done')
     }
   })
 }
