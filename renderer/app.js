@@ -230,14 +230,6 @@ async function refreshStatus() {
     _setStartupStage('server-ready')
     if (s.models) renderModels(s.models)
     if (s.loaded) setLoadedModel(s.loaded)
-    // Restore saved reviewer model path (no load — just configure)
-    try {
-      const appSettings = await window.app.getAppSettings()
-      if (appSettings.lastReviewerModelPath && !_reviewerModelPath) {
-        _reviewerModelPath = appSettings.lastReviewerModelPath
-        _renderReviewerModelSection()
-      }
-    } catch { /* non-fatal */ }
   }
 }
 
@@ -309,8 +301,6 @@ function renderModels(models) {
   _renderModelSwitcher(models)
   // Update extraction model dropdown
   populateExtractionModelList(models)
-  // Update reviewer model dropdown
-  populateReviewerModelList(models)
   // Refresh extraction model status
   refreshExtractionModelStatus()
 }
@@ -2133,22 +2123,11 @@ async function sendAgentMode(prompt, opts = {}) {
       case 'system':
         if (ev.subtype === 'debug') {
           setActivity(`🔍 ${esc(ev.data)} <span class="activity-dot">●</span>`)
-          // Show retries and important debug info inline in chat
-          if (ev.data && (ev.data.includes('retrying') || ev.data.includes('Trimmed') || ev.data.includes('Repetition'))) {
+          // Show retries, reviewer diagnosis, and important debug info inline in chat
+          if (ev.data && (ev.data.includes('retrying') || ev.data.includes('Trimmed') || ev.data.includes('Repetition') ||
+              ev.data.includes('Escalating to reviewer') || ev.data.includes('Reviewer diagnosis'))) {
             const toolsEl = document.getElementById(respId+'-tools')
             if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--muted)">🔍 ${esc(ev.data)}</div>`)
-          }
-          // Reviewer escalation — show inline in chat and animate the reviewer bar
-          if (ev.data && ev.data.includes('Escalating to reviewer model')) {
-            const toolsEl = document.getElementById(respId+'-tools')
-            if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:#63b3ed;font-size:11px">🔍 ${esc(ev.data)}</div>`)
-            if (typeof setReviewerEscalating === 'function') setReviewerEscalating(true)
-          } else if (ev.data && (ev.data.includes('Primary model reloaded') || ev.data.includes('Reviewer diagnosis') || ev.data.includes('Reviewer escalation failed'))) {
-            if (typeof setReviewerEscalating === 'function') setReviewerEscalating(false)
-            if (ev.data.includes('Reviewer diagnosis')) {
-              const toolsEl = document.getElementById(respId+'-tools')
-              if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:#63b3ed;font-size:11px">🔍 ${esc(ev.data)}</div>`)
-            }
           }
         } else {
           setActivity(ev.subtype === 'init' ? '🤖 Agent initialized <span class="activity-dot">●</span>' : `⚙️ ${esc(ev.subtype)} <span class="activity-dot">●</span>`)
@@ -2587,24 +2566,11 @@ async function sendAgentMode(prompt, opts = {}) {
               case 'system':
                 if (ev.subtype === 'debug') {
                   setOrchActivity(`🔍 ${esc(ev.data)} <span class="activity-dot">●</span>`)
-                  if (ev.data && (ev.data.includes('retrying') || ev.data.includes('Trimmed') || ev.data.includes('Repetition'))) {
+                  if (ev.data && (ev.data.includes('retrying') || ev.data.includes('Trimmed') || ev.data.includes('Repetition') ||
+                      ev.data.includes('Escalating to reviewer') || ev.data.includes('Reviewer diagnosis'))) {
                     if (orchTaskBlockId) {
                       const toolsEl = document.getElementById(orchTaskBlockId + '-tools')
                       if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--muted)">🔍 ${esc(ev.data)}</div>`)
-                    }
-                  }
-                  // Reviewer escalation — show inline and animate reviewer bar
-                  if (ev.data && ev.data.includes('Escalating to reviewer model')) {
-                    if (orchTaskBlockId) {
-                      const toolsEl = document.getElementById(orchTaskBlockId + '-tools')
-                      if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:#63b3ed;font-size:11px">🔍 ${esc(ev.data)}</div>`)
-                    }
-                    if (typeof setReviewerEscalating === 'function') setReviewerEscalating(true)
-                  } else if (ev.data && (ev.data.includes('Primary model reloaded') || ev.data.includes('Reviewer diagnosis') || ev.data.includes('Reviewer escalation failed'))) {
-                    if (typeof setReviewerEscalating === 'function') setReviewerEscalating(false)
-                    if (ev.data.includes('Reviewer diagnosis') && orchTaskBlockId) {
-                      const toolsEl = document.getElementById(orchTaskBlockId + '-tools')
-                      if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:#63b3ed;font-size:11px">🔍 ${esc(ev.data)}</div>`)
                     }
                   }
                 }
@@ -5152,24 +5118,11 @@ async function _launchOrchestrator(tasksPath, taskCount) {
       case 'system':
         if (ev.subtype === 'debug') {
           setOrchActivity(`🔍 ${esc(ev.data)} <span class="activity-dot">●</span>`)
-          if (ev.data && (ev.data.includes('retrying') || ev.data.includes('Trimmed') || ev.data.includes('Repetition'))) {
+          if (ev.data && (ev.data.includes('retrying') || ev.data.includes('Trimmed') || ev.data.includes('Repetition') ||
+              ev.data.includes('Escalating to reviewer') || ev.data.includes('Reviewer diagnosis'))) {
             if (orchTaskBlockId) {
               const toolsEl = document.getElementById(orchTaskBlockId + '-tools')
               if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--muted)">🔍 ${esc(ev.data)}</div>`)
-            }
-          }
-          // Reviewer escalation — show inline and animate reviewer bar
-          if (ev.data && ev.data.includes('Escalating to reviewer model')) {
-            if (orchTaskBlockId) {
-              const toolsEl = document.getElementById(orchTaskBlockId + '-tools')
-              if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:#63b3ed;font-size:11px">🔍 ${esc(ev.data)}</div>`)
-            }
-            if (typeof setReviewerEscalating === 'function') setReviewerEscalating(true)
-          } else if (ev.data && (ev.data.includes('Primary model reloaded') || ev.data.includes('Reviewer diagnosis') || ev.data.includes('Reviewer escalation failed'))) {
-            if (typeof setReviewerEscalating === 'function') setReviewerEscalating(false)
-            if (ev.data.includes('Reviewer diagnosis') && orchTaskBlockId) {
-              const toolsEl = document.getElementById(orchTaskBlockId + '-tools')
-              if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:#63b3ed;font-size:11px">🔍 ${esc(ev.data)}</div>`)
             }
           }
         }
@@ -6946,162 +6899,6 @@ async function loadExtractionModelFromSwitcher(modelPath, modelId) {
   } catch (err) {
     showToast('Failed to load: ' + (err.message || 'Unknown error'), 'error')
     if (nameEl) nameEl.textContent = prevText
-  }
-}
-
-// ── Reviewer Model Switcher ───────────────────────────────────────────────────
-
-let _reviewerModelPath = null  // currently configured reviewer model path
-let _reviewerModelList = []    // available models for the dropdown
-
-/**
- * Render the reviewer model bar and dropdown.
- */
-function _renderReviewerModelSection() {
-  const nameEl = document.getElementById('reviewerModelName')
-  const list = document.getElementById('reviewerModelList')
-  if (!nameEl || !list) return
-
-  const isSet = !!_reviewerModelPath
-
-  if (isSet) {
-    const displayName = _formatModelName(_reviewerModelPath.split('/').pop())
-    nameEl.textContent = displayName
-    nameEl.classList.add('active')
-  } else {
-    nameEl.textContent = 'Not configured'
-    nameEl.classList.remove('active')
-  }
-
-  // Build dropdown list from available models (prefer mid-size: 14B–32B)
-  let html = ''
-  if (_reviewerModelList.length > 0) {
-    html = _reviewerModelList.map((m, i) => {
-      const name = _formatModelName(m.id)
-      const isActive = isSet && (_reviewerModelPath === m.path || _reviewerModelPath.includes(m.id.split('/').pop()))
-      const cls = isActive ? 'fm-item active' : 'fm-item'
-      return `<div class="${cls}" data-rv-idx="${i}">
-        <div class="fm-item-icon">🔍</div>
-        <div class="fm-item-info">
-          <div class="fm-item-name">${esc(name)}</div>
-          <div class="fm-item-path">${esc(m.model_type || m.id)}</div>
-        </div>
-        ${isActive ? '<div class="fm-item-check">✓</div>' : ''}
-      </div>`
-    }).join('')
-  } else {
-    html = '<div style="padding:12px;text-align:center;color:var(--muted);font-size:11px">No models found — download a 14B–32B model</div>'
-  }
-
-  if (isSet) {
-    html += '<div class="fm-unload" onclick="clearReviewerModel()">✕ Clear reviewer model</div>'
-  }
-
-  list.innerHTML = html
-
-  list.onclick = (e) => {
-    const item = e.target.closest('[data-rv-idx]')
-    if (!item) return
-    const idx = parseInt(item.dataset.rvIdx, 10)
-    const m = _reviewerModelList[idx]
-    if (m) setReviewerModel(m.path, m.id)
-  }
-}
-
-/**
- * Toggle the reviewer model dropdown.
- */
-function toggleReviewerModelSwitcher() {
-  const bar = document.getElementById('reviewerModelBar')
-  let dd = document.getElementById('reviewerModelDropdown')
-  if (!bar || !dd) return
-
-  const isOpen = dd.style.display === 'flex'
-  if (isOpen) {
-    dd.style.display = 'none'
-    bar.classList.remove('open')
-    return
-  }
-
-  if (dd.parentNode !== document.body) {
-    dd.parentNode.removeChild(dd)
-    document.body.appendChild(dd)
-  }
-
-  const btn = document.getElementById('reviewerModelBtn')
-  if (!btn) return
-  const rect = btn.getBoundingClientRect()
-  dd.style.position = 'fixed'
-  dd.style.top = Math.round(rect.bottom + 4) + 'px'
-  dd.style.left = Math.round(rect.left) + 'px'
-  dd.style.width = Math.max(rect.width, 280) + 'px'
-  dd.style.display = 'flex'
-  dd.style.flexDirection = 'column'
-  bar.classList.add('open')
-
-  function closer(e) {
-    if (dd.contains(e.target) || bar.contains(e.target)) return
-    dd.style.display = 'none'
-    bar.classList.remove('open')
-    document.removeEventListener('mousedown', closer, true)
-  }
-  requestAnimationFrame(() => {
-    document.addEventListener('mousedown', closer, true)
-  })
-}
-
-/**
- * Set the reviewer model path (persisted to app settings, no immediate load).
- */
-async function setReviewerModel(modelPath, modelId) {
-  _reviewerModelPath = modelPath
-  window.app.saveAppSettings({ lastReviewerModelPath: modelPath })
-  if (window.app.setReviewerModel) window.app.setReviewerModel(modelPath)
-  // Close dropdown
-  const dd = document.getElementById('reviewerModelDropdown')
-  if (dd) dd.style.display = 'none'
-  const bar = document.getElementById('reviewerModelBar')
-  if (bar) bar.classList.remove('open')
-  _renderReviewerModelSection()
-  showToast('Reviewer model set — will load on demand when a loop is detected', 'success')
-}
-
-/**
- * Clear the reviewer model selection.
- */
-function clearReviewerModel() {
-  _reviewerModelPath = null
-  window.app.saveAppSettings({ lastReviewerModelPath: null })
-  if (window.app.setReviewerModel) window.app.setReviewerModel(null)
-  _renderReviewerModelSection()
-  showToast('Reviewer model cleared', 'info')
-}
-
-/**
- * Populate the reviewer model list from available models.
- * Called when the model list is refreshed. Prefers Qwen3 27B 4-bit for reviewer role.
- */
-function populateReviewerModelList(models) {
-  // Prefer 27B models first, then anything in the 14B–35B range
-  const preferred = models.filter(m => /27[Bb]/.test(m.id))
-  const midModels = models.filter(m => /([12][0-9]|[3][0-5]|1[0-9])[Bb]/.test(m.id))
-  _reviewerModelList = preferred.length > 0 ? preferred : midModels.length > 0 ? midModels : models
-  _renderReviewerModelSection()
-}
-
-/**
- * Show a visual indicator in the reviewer bar when escalation is in progress.
- * Called from the qwen-event handler when it sees the escalation debug message.
- */
-function setReviewerEscalating(active) {
-  const nameEl = document.getElementById('reviewerModelName')
-  if (!nameEl) return
-  if (active) {
-    nameEl.classList.add('escalating')
-    nameEl.textContent = 'Diagnosing loop...'
-  } else {
-    nameEl.classList.remove('escalating')
-    _renderReviewerModelSection()
   }
 }
 

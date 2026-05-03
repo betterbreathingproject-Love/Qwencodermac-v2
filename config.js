@@ -12,16 +12,13 @@ const CONTEXT_WINDOW = parseInt(process.env.CTX_WINDOW, 10) || 131072
 const MAX_OUTPUT_TOKENS = parseInt(process.env.MAX_OUTPUT_TOKENS, 10) || 8192
 
 // ── Default model paths ───────────────────────────────────────────────────────
-// Primary:  Qwen3.6 35B A3B 8bit — the main intelligent agent model
-// Fast:     Qwen3.5 0.8B 8bit    — extraction model for fast-assist tasks
-// Reviewer: Qwen3 27B 4bit       — escalation model for loop-breaking diagnosis
+// Primary: Qwen3.6 35B A3B 8bit — the main intelligent agent model
+// Fast:    Qwen3.5 0.8B 8bit    — extraction model for fast-assist tasks
 const MODELS_DIR = process.env.MODELS_DIR || (require('os').homedir() + '/.lmstudio/models')
 const DEFAULT_PRIMARY_MODEL = process.env.PRIMARY_MODEL ||
   MODELS_DIR + '/unsloth/Qwen3.6-35B-A3B-MLX-8bit'
 const DEFAULT_FAST_MODEL = process.env.FAST_MODEL ||
   MODELS_DIR + '/mlx-community/Qwen3.5-0.8B-MLX-8bit'
-const DEFAULT_REVIEWER_MODEL = process.env.REVIEWER_MODEL ||
-  MODELS_DIR + '/mlx-community/Qwen3-27B-MLX-4bit'
 
 module.exports = {
   // Total context budget in tokens
@@ -61,5 +58,4 @@ module.exports = {
   // Default model paths
   DEFAULT_PRIMARY_MODEL,
   DEFAULT_FAST_MODEL,
-  DEFAULT_REVIEWER_MODEL,
 }

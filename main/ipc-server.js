@@ -542,29 +542,6 @@ function register(ipcMain, { getServerUrl, getServerPort, getMainWindow, appDir 
     return { ok: true }
   })
 
-  // ── Reviewer model path (persisted preference, no immediate load) ─────────
-  // The reviewer model is loaded on-demand by direct-bridge when a loop is
-  // detected. This IPC just saves the user's choice to app settings so
-  // direct-bridge can read it at escalation time.
-  ipcMain.handle('set-reviewer-model', async (_, modelPath) => {
-    if (modelPath && typeof modelPath === 'string') {
-      const projects = require('../projects.js')
-      projects.saveAppSettings({ lastReviewerModelPath: modelPath })
-    } else if (modelPath === null) {
-      const projects = require('../projects.js')
-      projects.saveAppSettings({ lastReviewerModelPath: null })
-    }
-    return { ok: true }
-  })
-
-  ipcMain.handle('get-reviewer-model', async () => {
-    try {
-      const projects = require('../projects.js')
-      const s = projects.getAppSettings ? projects.getAppSettings() : {}
-      return { modelPath: s.lastReviewerModelPath || config.DEFAULT_REVIEWER_MODEL || null }
-    } catch { return { modelPath: config.DEFAULT_REVIEWER_MODEL || null } }
-  })
-
   ipcMain.handle('get-server-url', () => serverUrl())
 
   // ── Fast model chat reply ─────────────────────────────────────────────────
