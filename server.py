@@ -950,7 +950,7 @@ def _build_prompt_and_kwargs(req: ChatRequest):
             prompt = "\n".join(parts)
         print(f"[server] Built text-only prompt, len={len(prompt)}", file=sys.stderr)
 
-    kwargs = dict(max_tokens=min(req.max_tokens or 1024, 8192))
+    kwargs = dict(max_tokens=min(req.max_tokens or 1024, 32768))
     if _model_is_vision:
         kwargs["verbose"] = False
     if req.temperature is not None:
