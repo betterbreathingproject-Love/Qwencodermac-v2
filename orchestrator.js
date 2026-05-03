@@ -428,6 +428,21 @@ class Orchestrator extends EventEmitter {
         task.cwd = this._projectDir;
       }
 
+      // Seed the todo list from the node's children in tasks.md so the agent
+      // follows the spec's detailed subtask plan rather than improvising its own.
+      // The agent can still call update_todos to refine, but starts grounded.
+      if (node.children && node.children.length > 0) {
+        const childTodos = node.children.map((childId, idx) => {
+          const child = this._graph.nodes.get(childId);
+          return {
+            id: idx + 1,
+            content: child ? (child.title || child.id) : childId,
+            status: child && child.status === 'completed' ? 'done' : 'pending',
+          };
+        });
+        task.initialTodos = childTodos;
+      }
+
       // Inject a compact summary of predecessor task outputs so the agent
       // knows what's already been done without carrying full transcripts.
       // Cap each predecessor summary at 300 chars to keep the prompt lean.

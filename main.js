@@ -231,6 +231,7 @@ const agentPool = new AgentPool({
           taskPrompt = `# Spec Context (summary)\n\n${trimmedContext}\n---\n\n# Current Task\n\n${prompt}\n\nImplement ONLY this task. Use write_file/edit_file tools directly. Do not output code in chat.`
         }
         try {
+          bridge._task = task  // expose task metadata (initialTodos, etc.) to _agentLoop
           await bridge.run({
             prompt: taskPrompt,
             cwd,

@@ -3352,16 +3352,24 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       // Todo bootstrap — await before first LLM call to prevent concurrent Metal inference.
       // Running fire-and-forget caused SIGABRT: fast model and main model both hit Metal
       // simultaneously. Awaiting serializes them via the server's inference semaphore.
-      if (assistClient && assistClient.TODO_BOOTSTRAP_ENABLED && turn === 0) {
-        const userPrompt = messages.filter(m => m.role === 'user').pop()?.content || ''
-        if (typeof userPrompt === 'string' && userPrompt) {
-          try {
-            const todos = await assistClient.assistTodoBootstrap(userPrompt)
-            if (todos && !_bootstrapDone) {
-              this.send('qwen-event', { type: 'fast-assist', task: 'todo_bootstrap', label: '⚡ Fast Assistant — generated initial todo list', detail: `${todos.length} items` })
-              this.send('qwen-event', { type: 'todo-bootstrap', todos })
-            }
-          } catch (_) {}
+      if (turn === 0) {
+        if (Array.isArray(this._task?.initialTodos) && this._task.initialTodos.length > 0 && !_bootstrapDone) {
+          // Orchestrator provided subtasks from tasks.md — use them directly,
+          // no fast model call needed. Agent follows the spec's detailed plan.
+          this.send('qwen-event', { type: 'todo-bootstrap', todos: this._task.initialTodos })
+          _lastTodos = this._task.initialTodos
+          _bootstrapDone = true
+        } else if (assistClient && assistClient.TODO_BOOTSTRAP_ENABLED) {
+          const userPrompt = messages.filter(m => m.role === 'user').pop()?.content || ''
+          if (typeof userPrompt === 'string' && userPrompt) {
+            try {
+              const todos = await assistClient.assistTodoBootstrap(userPrompt)
+              if (todos && !_bootstrapDone) {
+                this.send('qwen-event', { type: 'fast-assist', task: 'todo_bootstrap', label: '⚡ Fast Assistant — generated initial todo list', detail: `${todos.length} items` })
+                this.send('qwen-event', { type: 'todo-bootstrap', todos })
+              }
+            } catch (_) {}
+          }
         }
       }
 
