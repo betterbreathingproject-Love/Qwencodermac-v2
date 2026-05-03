@@ -425,6 +425,12 @@ class AgentPool extends EventEmitter {
       try { waiter.resolve() } catch (_) {}
     }
     this._waitQueue.length = 0
+    // Reset active count so the next dispatch can acquire a slot immediately.
+    // Without this, the slot held by the aborted task stays "occupied" until
+    // its finally{} block fires _releaseSlot() — which may happen after the
+    // next orchestrator has already tried (and failed) to acquire a slot.
+    this._runningTasks.clear()
+    this._activeCount = 0
     // Wait for all agents to finish their interrupt (server cleanup)
     // with a timeout so we don't hang forever if an agent is stuck
     if (interruptPromises.length > 0) {

@@ -886,10 +886,12 @@ function getToolDefs(lspManager, agentRole, allowedTools) {
  */
 function buildFileTree(dir, maxDepth = 99) {
   const lines = []
-  const SKIP = new Set(['.git', 'node_modules', '__pycache__', '.next', 'dist', 'build', '.cache', '.vscode', '.maccoder', 'coverage', '.DS_Store'])
+  const SKIP = new Set(['.git', 'node_modules', '__pycache__', '.next', 'dist', 'build', '.cache', '.vscode', '.maccoder', 'coverage', '.DS_Store',
+    'DerivedData', '.build', 'Pods', '.swiftpm', 'vendor', 'xcuserdata', '.xcscmblueprint'])
 
   function walk(current, prefix, depth) {
     if (depth > maxDepth) return
+    if (lines.length > 2000) return  // safety cap — prevent runaway scans
     let entries
     try { entries = fs.readdirSync(current, { withFileTypes: true }) } catch { return }
     entries = entries

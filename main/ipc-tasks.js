@@ -17,14 +17,14 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
   let _agentEventHandler = null  // track so we can remove it before creating a new orchestrator
 
   // ── helper: tear down the current orchestrator cleanly ──────────────────
-  function _teardownOrchestrator() {
+  async function _teardownOrchestrator() {
     if (_agentEventHandler) {
       getAgentPool().off('agent-event', _agentEventHandler)
       _agentEventHandler = null
     }
     if (orchestratorInstance) {
       orchestratorInstance.removeAllListeners()
-      orchestratorInstance.abort().catch(() => {})
+      await orchestratorInstance.abort().catch(() => {})
       orchestratorInstance = null
     }
   }
@@ -100,7 +100,7 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
       // Abort any previously running orchestrator before starting a new one.
       // Without this, two orchestrators can run concurrently, both dispatching
       // tasks to the same agent pool and corrupting each other's state.
-      _teardownOrchestrator()
+      await _teardownOrchestrator()
 
       orchestratorInstance = new Orchestrator({
         taskGraph: graph,
@@ -171,7 +171,7 @@ function register(ipcMain, { getMainWindow, getCurrentProject, getAgentPool, get
       // Notify renderer that execution has stopped so listeners clean up
       getMainWindow()?.webContents.send('orchestrator-completed')
       // Tear down the instance so it can't fire stale events
-      _teardownOrchestrator()
+      await _teardownOrchestrator()
       return { ok: true }
     } catch (e) { return { error: e.message } }
   })
