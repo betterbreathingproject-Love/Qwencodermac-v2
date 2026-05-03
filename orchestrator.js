@@ -379,6 +379,26 @@ class Orchestrator extends EventEmitter {
     }
   }
 
+  /**
+   * Reset cascade-skipped nodes back to not_started so they can run on resume.
+   * When _handleFailure cascade-skips dependents of a failed node, those nodes
+   * need to be reset if the user wants to retry the workflow.
+   */
+  _resetSkippedNodes() {
+    const skippedIds = [];
+    for (const [id, node] of this._graph.nodes) {
+      if (node.status === 'skipped') {
+        skippedIds.push(id);
+      }
+    }
+    if (skippedIds.length > 0) {
+      console.log('[orchestrator] Resetting skipped nodes:', skippedIds);
+    }
+    for (const id of skippedIds) {
+      this._updateNodeStatus(id, 'not_started');
+    }
+  }
+
   _findStartNodeId() {
     // Prefer ^start marker
     if (this._graph.startNodeId) return this._graph.startNodeId;
@@ -705,8 +725,12 @@ class Orchestrator extends EventEmitter {
     // Siblings and unrelated nodes continue running normally.
     this._cascadeSkipDependents(nodeId);
 
-    // Continue the run loop — remaining independent tasks should still execute.
-    this._runLoop().catch(() => {});
+    // Pause so the user can inspect the failure and choose to resume.
+    // The old behaviour of silently continuing caused the orchestrator to
+    // reach 'completed' state with skipped tasks, leaving the user unable
+    // to retry via resume().
+    this._setState('paused');
+    this.emit('task-status-event', { nodeId, status: 'failed', error: errMsg });
   }
 
   /**
@@ -1026,18 +1050,26 @@ class Orchestrator extends EventEmitter {
   }
 
   async resume() {
-    if (this._state === 'paused') {
-      this._setState('running');
-      // Reset failed nodes so they become eligible for re-dispatch.
-      // Without this, a failed node blocks all its dependents and
-      // _runLoop exits immediately thinking the graph is complete.
-      this._resetFailedNodes();
-      // Also reset stale in_progress nodes (same as start()) in case
-      // any were left over from a concurrent dispatch that finished
-      // while the orchestrator was paused.
-      this._resetStaleInProgressNodes();
-      await this._runLoop();
-    }
+    if (this._state !== 'paused') return;
+
+    this._setState('running');
+    // Clear retry tracking so previously-failed nodes get fresh attempts
+    if (this._retryCount) this._retryCount.clear();
+    if (this._simplifiedRetry) this._simplifiedRetry.clear();
+    // Reset failed nodes so they become eligible for re-dispatch.
+    // Without this, a failed node blocks all its dependents and
+    // _runLoop exits immediately thinking the graph is complete.
+    this._resetFailedNodes();
+    // Reset cascade-skipped nodes so they can run after the failed
+    // node is retried.
+    this._resetSkippedNodes();
+    // Also reset stale in_progress nodes (same as start()) in case
+    // any were left over from a concurrent dispatch that finished
+    // while the orchestrator was paused.
+    this._resetStaleInProgressNodes();
+    // Roll up parent statuses so sibling dependency chains unblock correctly
+    this._rollupAllParents();
+    await this._runLoop();
   }
 
   async retry(nodeId) {
