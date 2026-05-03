@@ -740,12 +740,10 @@ class Orchestrator extends EventEmitter {
     // Siblings and unrelated nodes continue running normally.
     this._cascadeSkipDependents(nodeId);
 
-    // Pause so the user can inspect the failure and choose to resume.
-    // The old behaviour of silently continuing caused the orchestrator to
-    // reach 'completed' state with skipped tasks, leaving the user unable
-    // to retry via resume().
-    this._setState('paused');
-    this.emit('task-status-event', { nodeId, status: 'failed', error: errMsg });
+    // Continue the run loop — remaining independent tasks should still execute.
+    // The orchestrator stays running so sibling/unrelated tasks can complete.
+    // The user can resume() later to retry failed nodes and their skipped dependents.
+    this._runLoop().catch(() => {});
   }
 
   /**

@@ -191,6 +191,12 @@ class AgentPool extends EventEmitter {
    * Release a semaphore slot. Wakes up the next queued dispatch if any.
    */
   _releaseSlot() {
+    // Guard: if cancelAll() zeroed the count while this task's finally{} was
+    // still in flight, absorb the release instead of going negative.
+    if (this._cancelGeneration > 0) {
+      this._cancelGeneration--;
+      return;
+    }
     if (this._waitQueue.length > 0) {
       const next = this._waitQueue.shift();
       // Don't decrement — the slot transfers to the next waiter
@@ -429,8 +435,12 @@ class AgentPool extends EventEmitter {
     // Without this, the slot held by the aborted task stays "occupied" until
     // its finally{} block fires _releaseSlot() — which may happen after the
     // next orchestrator has already tried (and failed) to acquire a slot.
+    const prevActive = this._activeCount
     this._runningTasks.clear()
     this._activeCount = 0
+    // Patch _releaseSlot for any in-flight finally{} blocks that will fire
+    // after we've already zeroed the count — prevent going negative.
+    this._cancelGeneration = (this._cancelGeneration || 0) + prevActive
     // Wait for all agents to finish their interrupt (server cleanup)
     // with a timeout so we don't hang forever if an agent is stuck
     if (interruptPromises.length > 0) {
