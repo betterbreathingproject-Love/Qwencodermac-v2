@@ -9,7 +9,7 @@
  */
 
 const CONTEXT_WINDOW = parseInt(process.env.CTX_WINDOW, 10) || 131072
-const MAX_OUTPUT_TOKENS = parseInt(process.env.MAX_OUTPUT_TOKENS, 10) || 32768
+const MAX_OUTPUT_TOKENS = parseInt(process.env.MAX_OUTPUT_TOKENS, 10) || 8192
 
 // ── Default model paths ───────────────────────────────────────────────────────
 // Primary: Qwen3.6 35B A3B 8bit — the main intelligent agent model

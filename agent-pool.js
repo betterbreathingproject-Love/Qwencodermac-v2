@@ -42,6 +42,9 @@ class AgentPool extends EventEmitter {
    */
   constructor(options = {}) {
     super();
+    // Each queued task registers a once('agent-type-selected') listener before acquiring
+    // a slot — so N queued tasks = N listeners. Raise the limit to avoid false leak warnings.
+    this.setMaxListeners(50);
     this._maxConcurrency = options.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY;
     this._defaultTimeout = options.defaultTimeout ?? DEFAULT_TIMEOUT;
     this._agentFactory = options.agentFactory || null;
@@ -344,20 +347,30 @@ class AgentPool extends EventEmitter {
 
     // If agent has a run method (QwenBridge-like)
     if (agent && typeof agent.run === 'function') {
-      // Set up event forwarding
+      // Set up event forwarding — keep a reference so we can remove it after run
+      let eventHandler = null;
       if (agent.on) {
-        agent.on('event', (evt) => {
+        eventHandler = (evt) => {
           this.emit('agent-event', {
             taskId: task.id,
             ...evt,
           });
-        });
+        };
+        agent.on('event', eventHandler);
       }
 
-      const result = await agent.run({
-        prompt: task.title,
-        cwd: task.cwd || process.cwd(),
-      });
+      let result;
+      try {
+        result = await agent.run({
+          prompt: task.title,
+          cwd: task.cwd || process.cwd(),
+        });
+      } finally {
+        // Always remove the listener to prevent accumulation across dispatches
+        if (eventHandler && agent.off) {
+          agent.off('event', eventHandler);
+        }
+      }
 
       return {
         nodeId: task.id,
