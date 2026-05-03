@@ -219,7 +219,7 @@ const agentPool = new AgentPool({
 
     return {
       run: async ({ prompt }) => {
-        console.log('[agent-factory] Running', typeName, 'task:', task.id)
+        console.log('[agent-factory] Running', typeName, 'task:', task.id, 'at', Date.now())
         // Build the task prompt — keep it focused on just this task
         // Spec context is trimmed to avoid overwhelming the model
         let taskPrompt = `Task: ${prompt}`

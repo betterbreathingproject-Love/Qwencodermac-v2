@@ -238,6 +238,8 @@ class Orchestrator extends EventEmitter {
   async start() {
     if (this._state !== 'idle' && this._state !== 'paused') return;
 
+    const _t0 = Date.now();
+    console.log('[orchestrator] start() called, state:', this._state);
     this._setState('running');
 
     // Reset stale in_progress nodes from a previous interrupted session.
@@ -313,6 +315,7 @@ class Orchestrator extends EventEmitter {
     }
 
     // ── Memory: archive workflow start ────────────────────────────────────
+    console.log('[orchestrator] start() pre-checks done in %dms', Date.now() - _t0);
     if (memoryClient) {
       const graphSummary = {
         nodeCount: this._graph.nodes.size,
@@ -328,6 +331,7 @@ class Orchestrator extends EventEmitter {
     }
 
     // Find start node: ^start marker or first root node
+    console.log('[orchestrator] start() ready to execute, elapsed %dms', Date.now() - _t0);
     if (this._state === 'running' && !this._hasInProgressNodes()) {
       const startNodeId = this._findStartNodeId();
       console.log('[orchestrator] Start node:', startNodeId, 'status:', startNodeId ? this._graph.nodes.get(startNodeId)?.status : 'N/A');

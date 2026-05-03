@@ -2518,6 +2518,8 @@ class DirectBridge {
   }
 
   async run({ prompt, cwd, permissionMode, model, images, conversationHistory, systemPromptOverride, samplingParams, taskGraphPath }) {
+    const _runT0 = Date.now();
+    console.log('[direct-bridge] run() called, role:', this._agentRole, 'hasSystemOverride:', !!systemPromptOverride);
     // Prevent concurrent runs — if a previous run is still winding down after
     // interrupt(), wait up to 3s for it to finish before starting the new one.
     if (this._running) {
@@ -2832,7 +2834,9 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
 
     try {
       // Wait for the server to be ready before starting the agent loop
+      console.log('[direct-bridge] run() pre-server-wait, elapsed %dms', Date.now() - _runT0);
       await this._waitForServer()
+      console.log('[direct-bridge] run() server ready, elapsed %dms', Date.now() - _runT0);
 
       // ── Memory: session-start retrieval ──────────────────────────────────
       // Retrieve relevant past context using the current prompt as the query.
@@ -2956,6 +2960,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
         } catch { /* diagnostics pre-fetch failed — proceed without */ }
       }
 
+      console.log('[direct-bridge] run() entering agentLoop, elapsed %dms', Date.now() - _runT0);
       await this._agentLoop(messages, workDir, model)
       this.send('qwen-event', { type: 'session-end' })
     } catch (err) {
