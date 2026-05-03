@@ -1753,15 +1753,12 @@ async def chat_completions(req: ChatRequest):
                                 pass
                             loop.call_soon_threadsafe(queue.put_nowait, ("error", str(e)))
                     finally:
-                        # Drain all pending Metal operations before releasing the
-                        # semaphore. Without this, the next agent can start a new
-                        # Metal command buffer while completion handlers from this
-                        # run are still firing → SIGABRT "addCompletedHandler after commit".
-                        try:
-                            import mlx.core as mx
-                            mx.synchronize()
-                        except Exception:
-                            pass
+                        # Small delay to let Metal command buffer completion
+                        # handlers fire before the next agent acquires the lock.
+                        # mx.synchronize() can deadlock inside run_in_executor —
+                        # a brief sleep is sufficient to drain pending callbacks.
+                        import time
+                        time.sleep(0.05)
                         # Smart post-inference cache clearing — only when memory pressure warrants it
                         if _should_clear_metal_cache():
                             try:
@@ -2133,13 +2130,9 @@ async def chat_completions(req: ChatRequest):
                 result = generate(_model, _processor, _ns_prompt, draft_model=_ns_draft, **kwargs)
             else:
                 result = generate(_model, _processor, _ns_prompt, **kwargs)
-            # Drain Metal before releasing the lock so the next inference
-            # doesn't race with completion handlers from this run.
-            try:
-                import mlx.core as mx
-                mx.synchronize()
-            except Exception:
-                pass
+            # Brief pause to let Metal completion handlers fire before lock releases
+            import time
+            time.sleep(0.05)
             if images:
                 try:
                     import mlx.core as mx
