@@ -2071,7 +2071,16 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
             if (killed) {
               resolve({ error: `Command timed out or exceeded output limit (${timeoutMs / 1000}s):\n${(stdout + '\n' + stderr).trim().slice(0, 2000)}` })
             } else if (code === 0) {
-              resolve({ result: stdout || '(no output)' })
+              if (stdout) {
+                resolve({ result: stdout })
+              } else {
+                // Command succeeded with no stdout — common for write operations
+                // (cat > file << EOF, echo > file, cp, mv, mkdir, etc.).
+                // Return a clear success message so the agent doesn't retry thinking nothing happened.
+                const cmd = (args.command || '').trim()
+                const isWrite = /cat\s*>|>>\s*\S|cp\s|mv\s|mkdir\s|touch\s|rm\s|chmod\s|chown\s|ln\s|rsync\s/.test(cmd)
+                resolve({ result: isWrite ? 'Done. (command succeeded, no output — this is normal for file write/move/delete operations)' : 'Done. (command succeeded with no output)' })
+              }
             } else {
               const combined = (stdout + '\n' + stderr).trim()
               // When stderr is suppressed (e.g. 2>/dev/null) and stdout is empty,
