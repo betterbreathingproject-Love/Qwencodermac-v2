@@ -2214,15 +2214,9 @@ async function sendAgentMode(prompt, opts = {}) {
             currentTasksPath = tasksPath
             renderTaskGraph(parsed)
             saveWorkflowState() // persist task graph path for session restore
-
-            const todos = Object.values(parsed.nodes)
-              .filter(n => n.title && n.title.trim())
-              .map(n => ({
-                id: n.id,
-                content: n.title,
-                status: n.status === 'not_started' ? 'pending' : n.status,
-              }))
-            if (todos.length > 0) updateTodoPanel(todos, 'done')
+            // Do NOT seed the todo panel from the full task graph — the task graph
+            // panel already shows all nodes. The todo panel will be populated with
+            // the current task's subtasks when the agent starts (via todo-bootstrap).
           }
 
           agentFinished = false
@@ -2376,6 +2370,10 @@ async function sendAgentMode(prompt, opts = {}) {
                 startPromptProgress()
                 setOrchActivity(`📊 Task ${orchTaskCount}: evaluating prompt... <span class="activity-dot">●</span>`)
                 updateAgentStatsBar({ state: 'prompt-eval', inputTokens, outputTokens: tokenCount, progress: 0, toolCount: _agentToolCount, agentType, activity: activeTask ? `Task ${activeTask.id}: Evaluating prompt...` : 'Evaluating prompt...' })
+                // Clear todo panel so stale subtasks from the previous task don't linger.
+                currentTodos = []
+                const todoPanelBody2 = document.getElementById('todoPanelBody')
+                if (todoPanelBody2) todoPanelBody2.innerHTML = ''
                 break
               }
               case 'text-delta': {
@@ -4600,15 +4598,9 @@ async function _launchOrchestrator(tasksPath, taskCount) {
     currentTasksPath = tasksPath
     renderTaskGraph(parsed)
     saveWorkflowState()
-
-    const todos = Object.values(parsed.nodes)
-      .filter(n => n.title && n.title.trim())
-      .map(n => ({
-        id: n.id,
-        content: n.title,
-        status: n.status === 'not_started' ? 'pending' : n.status,
-      }))
-    if (todos.length > 0) updateTodoPanel(todos, 'done')
+    // Do NOT seed the todo panel from the full task graph — the task graph
+    // panel already shows all nodes. The todo panel will be populated with
+    // the current task's subtasks when the agent starts (via todo-bootstrap).
   }
 
   agentFinished = false
@@ -4790,6 +4782,11 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         startPromptProgress()
         setOrchActivity(`📊 Task ${orchTaskCount}: evaluating prompt... <span class="activity-dot">●</span>`)
         updateAgentStatsBar({ state: 'prompt-eval', inputTokens, outputTokens: tokenCount, progress: 0, toolCount: _agentToolCount, agentType, activity: activeTask ? `Task ${activeTask.id}: Evaluating prompt...` : 'Evaluating prompt...' })
+        // Clear todo panel so stale subtasks from the previous task don't linger.
+        // The new task's subtasks will arrive via todo-bootstrap momentarily.
+        currentTodos = []
+        const todoPanelBody = document.getElementById('todoPanelBody')
+        if (todoPanelBody) todoPanelBody.innerHTML = ''
         break
       }
       case 'text-delta': {
