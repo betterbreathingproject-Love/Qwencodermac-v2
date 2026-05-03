@@ -3202,6 +3202,19 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
                   reminderContent += `\n\nProject file tree (refreshed after compaction):\n\`\`\`\n${cappedTree}\n\`\`\``
                 }
               } catch { /* skip */ }
+              // Re-inject agent notes so the model doesn't lose its scratchpad
+              if (_agentNotes) {
+                reminderContent += `\n\n[Your thinking notes — written by you earlier, survived compaction]:\n${_agentNotes}`
+              }
+              // Re-inject todo list so the model retains its progress checklist
+              if (_lastTodos && _lastTodos.length > 0) {
+                const done = _lastTodos.filter(t => t.status === 'done' || t.status === 'completed').length
+                const todoLines = _lastTodos.map(t => {
+                  const icon = (t.status === 'done' || t.status === 'completed') ? '✅' : t.status === 'in_progress' ? '🔄' : '⬜'
+                  return `${icon} [${t.id}] ${t.content}`
+                }).join('\n')
+                reminderContent += `\n\nYour todo list (${done}/${_lastTodos.length} complete — restored after compaction):\n${todoLines}`
+              }
               messages.push({
                 role: 'system',
                 content: reminderContent,
@@ -4258,7 +4271,13 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           }
         }
 
-        // ── Performance: conditional speculative edit ──────────────────────
+        // Track agent notes — persist across compaction as a JS variable
+        if (fnName === 'agent_notes' && typeof fnArgs.notes === 'string' && fnArgs.notes.trim()) {
+          _agentNotes = fnArgs.notes.trim()
+          this.send('qwen-event', { type: 'agent-notes', notes: _agentNotes, turn })
+        }
+
+
         // Only run speculative edit simulation for files that previously had
         // compile errors. Clean files rarely benefit from pre-checking, and
         // the 10s timeout adds significant latency to every write.
@@ -5908,6 +5927,11 @@ Use **edit_todos** (not update_todos) when you need to:
 - Remove a step that's no longer needed: edit_todos({"remove": [4]})
 
 Use **update_todos** only to set the initial plan or completely reset the list.
+
+## Thinking notes
+Use **agent_notes** to write a persistent scratchpad that survives context compaction. Record key discoveries, decisions, constraints, and intermediate findings you want to remember across the entire session. Notes are re-injected automatically after every compaction event — they are your long-term working memory.
+Call agent_notes whenever you discover something important: agent_notes({"notes": "Found that X uses Y pattern. Auth is in auth.js line 42. Do NOT touch config.py — it's auto-generated."})
+Keep notes concise (under 500 words). Each call replaces the previous notes entirely, so include everything you want to keep.
 
 ## Asking the user
 When you need the user to choose between options, use the ask_user tool — it renders clickable buttons. Provide short options (under 60 chars each) in the "options" array.

@@ -636,9 +636,22 @@
               </div>
             </div>
 
-            <!-- right: KG query -->
+            <!-- right: agent notes + KG query stacked -->
             <div class="memory-kg-col">
-              <div class="memory-section-header">
+              <!-- Agent Notes -->
+              <div class="memory-notes-panel" id="memoryNotesPanel">
+                <div class="memory-section-header">
+                  <span class="memory-section-title">✏️ Agent Notes</span>
+                  <span class="memory-notes-badge" id="memoryNotesBadge" style="display:none">live</span>
+                </div>
+                <div class="memory-notes-body" id="memoryNotesBody">
+                  <div class="memory-empty">No notes yet — the agent will write here when it calls agent_notes()</div>
+                </div>
+                <div class="memory-notes-meta" id="memoryNotesMeta"></div>
+              </div>
+
+              <!-- Knowledge Graph -->
+              <div class="memory-section-header" style="border-top:1px solid var(--border)">
                 <span class="memory-section-title">Knowledge Graph</span>
               </div>
               <div style="display:flex;gap:4px;padding:6px 8px">

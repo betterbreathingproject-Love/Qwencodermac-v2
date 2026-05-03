@@ -1663,6 +1663,13 @@ async function sendAgentMode(prompt, opts = {}) {
         }
         break
       }
+      case 'agent-notes': {
+        // Agent wrote persistent thinking notes — update the memory bank panel live
+        if (typeof ev.notes === 'string') {
+          _memRenderNotes(ev.notes, ev.turn)
+        }
+        break
+      }
       case 'user-injection': {
         // A mid-run user message was injected into the agent's turn loop.
         // Show it as a user bubble so the conversation stays readable.
@@ -7141,6 +7148,35 @@ function _memFmtBytes(bytes) {
   const units = ['B', 'KB', 'MB', 'GB']
   const i = Math.floor(Math.log(bytes) / Math.log(1024))
   return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i]
+}
+
+/**
+ * Render agent thinking notes into the notes panel.
+ * Called both from live qwen-events and on memoryRefresh.
+ */
+function _memRenderNotes(notes, turn) {
+  const body = document.getElementById('memoryNotesBody')
+  const meta = document.getElementById('memoryNotesMeta')
+  const badge = document.getElementById('memoryNotesBadge')
+  if (!body) return
+  if (!notes || !notes.trim()) {
+    body.innerHTML = '<div class="memory-empty">No notes yet — the agent will write here when it calls agent_notes()</div>'
+    body.classList.remove('has-notes')
+    if (meta) meta.textContent = ''
+    if (badge) badge.style.display = 'none'
+    return
+  }
+  // Escape HTML but preserve newlines
+  const escaped = notes.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  body.textContent = notes  // use textContent — pre-wrap handles newlines
+  body.classList.add('has-notes')
+  if (meta) meta.textContent = turn != null ? `Turn ${turn} · ${notes.length} chars` : `${notes.length} chars`
+  if (badge) {
+    badge.style.display = ''
+    // Fade badge after 4s to indicate it's no longer actively updating
+    clearTimeout(badge._fadeTimer)
+    badge._fadeTimer = setTimeout(() => { badge.style.display = 'none' }, 4000)
+  }
 }
 
 /**
