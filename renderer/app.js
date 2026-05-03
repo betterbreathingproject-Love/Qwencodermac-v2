@@ -3870,6 +3870,12 @@ if (window.app.onTaskStatusEvent) {
         // Record start time for elapsed timer
         if (evt.status === 'in_progress') {
           currentTaskGraph.nodes[evt.nodeId]._startTime = Date.now()
+          // Clear the todo panel when a new task starts — the agent will
+          // populate it with its subtasks via todo-bootstrap immediately after.
+          // This fires before the agent runs so bootstrap always wins.
+          currentTodos = []
+          const _todoPanelBody = document.getElementById('todoPanelBody')
+          if (_todoPanelBody) _todoPanelBody.innerHTML = ''
         }
         renderTaskGraph(currentTaskGraph)
         renderSpecTaskProgress() // sync spec panel
@@ -4782,11 +4788,6 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         startPromptProgress()
         setOrchActivity(`📊 Task ${orchTaskCount}: evaluating prompt... <span class="activity-dot">●</span>`)
         updateAgentStatsBar({ state: 'prompt-eval', inputTokens, outputTokens: tokenCount, progress: 0, toolCount: _agentToolCount, agentType, activity: activeTask ? `Task ${activeTask.id}: Evaluating prompt...` : 'Evaluating prompt...' })
-        // Clear todo panel so stale subtasks from the previous task don't linger.
-        // The new task's subtasks will arrive via todo-bootstrap momentarily.
-        currentTodos = []
-        const todoPanelBody = document.getElementById('todoPanelBody')
-        if (todoPanelBody) todoPanelBody.innerHTML = ''
         break
       }
       case 'text-delta': {
