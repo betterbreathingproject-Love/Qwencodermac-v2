@@ -7079,12 +7079,13 @@ function clearReviewerModel() {
 
 /**
  * Populate the reviewer model list from available models.
- * Called when the model list is refreshed. Prefers mid-size models (10B–35B).
+ * Called when the model list is refreshed. Prefers Qwen3 27B 4-bit for reviewer role.
  */
 function populateReviewerModelList(models) {
-  // Prefer models in the 10B–35B range for reviewer role
+  // Prefer 27B models first, then anything in the 14B–35B range
+  const preferred = models.filter(m => /27[Bb]/.test(m.id))
   const midModels = models.filter(m => /([12][0-9]|[3][0-5]|1[0-9])[Bb]/.test(m.id))
-  _reviewerModelList = midModels.length > 0 ? midModels : models
+  _reviewerModelList = preferred.length > 0 ? preferred : midModels.length > 0 ? midModels : models
   _renderReviewerModelSection()
 }
 

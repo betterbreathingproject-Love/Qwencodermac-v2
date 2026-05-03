@@ -21,7 +21,7 @@ const DEFAULT_PRIMARY_MODEL = process.env.PRIMARY_MODEL ||
 const DEFAULT_FAST_MODEL = process.env.FAST_MODEL ||
   MODELS_DIR + '/mlx-community/Qwen3.5-0.8B-MLX-8bit'
 const DEFAULT_REVIEWER_MODEL = process.env.REVIEWER_MODEL ||
-  MODELS_DIR + '/mlx-community/Qwen3-30B-A3B-MLX-4bit'
+  MODELS_DIR + '/mlx-community/Qwen3-27B-MLX-4bit'
 
 module.exports = {
   // Total context budget in tokens
