@@ -115,6 +115,75 @@ class Orchestrator extends EventEmitter {
   }
 
   /**
+   * Artifact sanity check: if the project directory has no source files but
+   * the task graph has completed nodes, something is wrong (directory deleted,
+   * spec copied to a new project, etc.). Reset all completed/skipped nodes back
+   * to not_started so the orchestrator re-runs from the earliest point.
+   *
+   * "Source files" = any non-hidden file with a recognised code/config extension,
+   * found recursively up to 3 levels deep. Ignores .git, node_modules, etc.
+   */
+  _resetIfProjectEmpty() {
+    if (!this._projectDir) return;
+    const completedNodes = [...this._graph.nodes.values()].filter(
+      n => n.status === 'completed' || n.status === 'skipped'
+    );
+    if (completedNodes.length === 0) return;
+
+    try {
+      const sourceCount = this._countSourceFiles(this._projectDir, 3);
+      if (sourceCount === 0) {
+        console.log(
+          `[orchestrator] Project directory appears empty (0 source files) ` +
+          `but ${completedNodes.length} tasks are marked completed — ` +
+          `resetting all to not_started`
+        );
+        this.emit('task-error', {
+          nodeId: '_sanity',
+          error: `Project directory is empty but ${completedNodes.length} tasks were marked completed. Resetting to re-run from the start.`,
+        });
+        for (const node of completedNodes) {
+          this._graph = updateNodeStatus(this._graph, node.id, 'not_started');
+        }
+        this._persist();
+      }
+    } catch (err) {
+      console.warn('[orchestrator] _resetIfProjectEmpty: could not scan project dir:', err.message);
+    }
+  }
+
+  /**
+   * Count source files in a directory up to maxDepth levels deep.
+   * Skips hidden directories and common non-source directories.
+   * Returns early (count=1) as soon as any source file is found — we only
+   * need to know if the directory is empty or not.
+   */
+  _countSourceFiles(dir, maxDepth) {
+    if (maxDepth <= 0) return 0;
+    const SKIP_DIRS = new Set(['.git', 'node_modules', '__pycache__', '.next', 'dist', 'build',
+      'DerivedData', '.build', 'Pods', '.swiftpm', 'vendor', 'coverage', '.cache']);
+    const SOURCE_EXTS = new Set([
+      '.swift', '.js', '.ts', '.py', '.rs', '.go', '.java', '.kt', '.c', '.cpp',
+      '.h', '.m', '.mm', '.cs', '.rb', '.php', '.html', '.css', '.json', '.yaml',
+      '.yml', '.toml', '.xml', '.sh', '.md',
+    ]);
+    try {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name.startsWith('.')) continue;
+        if (entry.isDirectory()) {
+          if (SKIP_DIRS.has(entry.name)) continue;
+          const sub = this._countSourceFiles(require('path').join(dir, entry.name), maxDepth - 1);
+          if (sub > 0) return sub; // early exit
+        } else if (entry.isFile()) {
+          const ext = require('path').extname(entry.name).toLowerCase();
+          if (SOURCE_EXTS.has(ext)) return 1; // early exit — directory is not empty
+        }
+      }
+    } catch { /* unreadable dir — treat as empty */ }
+    return 0;
+  }
+
+  /**
    * Full upward rollup pass over all nodes — called on start() to repair
    * stale parent statuses from a previously interrupted run.
    * Processes leaf nodes first (deepest depth) so parents are evaluated
@@ -208,6 +277,15 @@ class Orchestrator extends EventEmitter {
     // unblocks. Fix by rolling up from leaves to roots before the run loop.
     if (!allDone) {
       this._rollupAllParents();
+    }
+
+    // Artifact sanity check — verify the project directory actually has source
+    // files before trusting completed task statuses. If the directory is empty
+    // (e.g. it was deleted and recreated, or the spec was copied to a new project),
+    // reset all completed tasks back to not_started so the orchestrator re-runs
+    // from the earliest point rather than skipping work that was never done.
+    if (!allDone && this._projectDir) {
+      this._resetIfProjectEmpty();
     }
 
     // Check for stuck graphs: nodes that are not_started but whose
