@@ -2838,6 +2838,14 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       await this._waitForServer()
       console.log('[direct-bridge] run() server ready, elapsed %dms', Date.now() - _runT0);
 
+      // ── Memory & LSP pre-flight: skip for orchestrator tasks ────────────
+      // When running under the orchestrator (systemPromptOverride is set),
+      // skip the expensive memory retrieval and LSP diagnostics pre-fetch.
+      // Each agent already gets spec context from the orchestrator, and the
+      // LSP diagnostics scan (especially for Swift projects with 20+ files)
+      // can hang for minutes, blocking all concurrent agents.
+      const _isOrchestratorTask = !!systemPromptOverride
+
       // ── Memory: session-start retrieval ──────────────────────────────────
       // Retrieve relevant past context using the current prompt as the query.
       // This is especially valuable on session resume when conversation history
@@ -2845,7 +2853,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
       // Fetch more candidates than needed, then filter by relevance score and
       // cap by token budget so high-relevance sessions get rich context while
       // cold starts with no good matches waste minimal tokens.
-      if (memoryClient) {
+      if (memoryClient && !_isOrchestratorTask) {
         try {
           const recallMode = detectRecallMode(prompt)
           const memResult = await memoryClient.retrieve(prompt, {
@@ -2913,7 +2921,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
 
       // Gather active diagnostics and inject into context so the agent
       // is aware of existing errors before it starts working
-      if (this._lspManager?.getStatus().status === 'ready') {
+      if (!_isOrchestratorTask && this._lspManager?.getStatus().status === 'ready') {
         try {
           // For Swift/Xcode projects, scan .swift files directly — detectEntryPoints
           // returns JS/Python files which sourcekit-lsp doesn't handle.
