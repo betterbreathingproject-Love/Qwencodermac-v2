@@ -186,6 +186,10 @@ contextBridge.exposeInMainWorld('app', {
   onFastModelStatus:     (cb)        => ipcRenderer.on('fast-model-status', (_, d) => cb(d)),
   offFastModelStatus:    ()          => ipcRenderer.removeAllListeners('fast-model-status'),
 
+  // Reviewer model — configured by user, loaded on-demand when a loop is detected
+  setReviewerModel:      (modelPath) => ipcRenderer.invoke('set-reviewer-model', modelPath),
+  getReviewerModel:      ()          => ipcRenderer.invoke('get-reviewer-model'),
+
   // Memory bank — archive viewer, KG query, stats
   memoryArchiveSearch:   (q, limit, projectId) => ipcRenderer.invoke('memory-archive-search', q, limit, projectId),
   memoryArchiveEvents:   (limit, projectId)    => ipcRenderer.invoke('memory-archive-events', limit, projectId),
