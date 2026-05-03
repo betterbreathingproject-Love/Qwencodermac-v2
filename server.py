@@ -197,7 +197,7 @@ def _should_clear_metal_cache() -> bool:
     try:
         import mlx.core as mx
         import subprocess
-        active_gb = mx.get_active_memory() / (1024**3)
+        active_gb = mx.metal.get_active_memory() / (1024**3)
         total_bytes = int(subprocess.check_output(
             ["sysctl", "-n", "hw.memsize"], timeout=1
         ).strip())
@@ -275,7 +275,7 @@ def _unload_model():
         gc.collect()
         try:
             import mlx.core as mx
-            mx.clear_cache()
+            mx.metal.clear_cache()
         except Exception:
             pass
         print(f"[server] Model unloaded, Metal cache cleared")
@@ -1054,9 +1054,9 @@ def autotune_stats():
     try:
         import mlx.core as mx
         import subprocess
-        active_gb = mx.get_active_memory() / (1024**3)
-        peak_gb = mx.get_peak_memory() / (1024**3)
-        cache_gb = mx.get_cache_memory() / (1024**3)
+        active_gb = mx.metal.get_active_memory() / (1024**3)
+        peak_gb = mx.metal.get_peak_memory() / (1024**3)
+        cache_gb = mx.metal.get_cache_memory() / (1024**3)
         total_bytes = int(subprocess.check_output(["sysctl", "-n", "hw.memsize"], timeout=1).strip())
         total_gb = total_bytes / (1024**3)
         pressure_pct = round(active_gb / total_gb * 100, 1) if total_gb > 0 else 0
@@ -1122,7 +1122,7 @@ async def admin_speculative(req: SpeculativeRequest):
         import gc; gc.collect()
         try:
             import mlx.core as mx
-            mx.clear_cache()
+            mx.metal.clear_cache()
         except Exception:
             pass
         print("[server] Speculative decoding disabled, draft model unloaded")
@@ -1389,11 +1389,11 @@ async def benchmark():
                 if prompt_tps is None:
                     prompt_tps = prompt_tokens / elapsed if elapsed > 0 else 0
 
-            peak_mem = mx.get_peak_memory() / (1024**3)
+            peak_mem = mx.metal.get_peak_memory() / (1024**3)
             # Available memory = total system memory minus what MLX is actively using
             import os
             total_mem = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / (1024**3)
-            active_mem = mx.get_active_memory() / (1024**3)
+            active_mem = mx.metal.get_active_memory() / (1024**3)
             avail_mem = max(0, total_mem - active_mem)
 
             # Read context window from model config
@@ -1411,7 +1411,7 @@ async def benchmark():
             if "metal" in str(e).lower() or "mps" in str(e).lower():
                 try:
                     import mlx.core as mx
-                    mx.clear_cache()
+                    mx.metal.clear_cache()
                     import gc
                     gc.collect()
                 except Exception:
@@ -1533,7 +1533,7 @@ async def chat_completions(req: ChatRequest):
             import mlx.core as mx
             import gc
             gc.collect()
-            mx.clear_cache()
+            mx.metal.clear_cache()
             print("[autotune] Metal cache cleared (memory pressure >65%)", file=sys.stderr)
         except Exception:
             pass
@@ -1541,7 +1541,7 @@ async def chat_completions(req: ChatRequest):
     # Preventive guard: check Metal memory before inference
     try:
         import mlx.core as mx
-        mem_active = mx.get_active_memory() / (1024**3)
+        mem_active = mx.metal.get_active_memory() / (1024**3)
         # Use 80% of system memory as threshold (Apple Silicon shares RAM with GPU)
         import subprocess
         total_mem_bytes = int(subprocess.check_output(["sysctl", "-n", "hw.memsize"]).strip())
@@ -1549,11 +1549,11 @@ async def chat_completions(req: ChatRequest):
         threshold_gb = total_mem_gb * 0.80
         if mem_active > threshold_gb:
             print(f"[server] ⚠️ Metal memory too high: {mem_active:.2f} GB / {total_mem_gb:.1f} GB (threshold: {threshold_gb:.1f} GB)", file=sys.stderr)
-            mx.clear_cache()
+            mx.metal.clear_cache()
             import gc
             gc.collect()
             # Re-check after clearing
-            mem_after = mx.get_active_memory() / (1024**3)
+            mem_after = mx.metal.get_active_memory() / (1024**3)
             if mem_after > threshold_gb:
                 raise HTTPException(503, f"Server busy — Metal memory too high ({mem_after:.1f}/{total_mem_gb:.1f} GB). Retry after a moment.")
     except HTTPException:
@@ -1635,7 +1635,7 @@ async def chat_completions(req: ChatRequest):
         try:
             import mlx.core as mx
             import subprocess
-            _mem_active = mx.get_active_memory() / (1024**3)
+            _mem_active = mx.metal.get_active_memory() / (1024**3)
             _total_bytes = int(subprocess.check_output(["sysctl", "-n", "hw.memsize"]).strip())
             _total_gb = _total_bytes / (1024**3)
             _pressure = _mem_active / _total_gb
@@ -1703,7 +1703,7 @@ async def chat_completions(req: ChatRequest):
         if len(prompt) > 50000:
             try:
                 import mlx.core as mx
-                mx.clear_cache()
+                mx.metal.clear_cache()
             except Exception:
                 pass
 
@@ -1746,8 +1746,8 @@ async def chat_completions(req: ChatRequest):
                             traceback.print_exc(file=sys.stderr)
                             try:
                                 import mlx.core as mx
-                                mem_active = mx.get_active_memory() / (1024**3)
-                                mem_peak = mx.get_peak_memory() / (1024**3)
+                                mem_active = mx.metal.get_active_memory() / (1024**3)
+                                mem_peak = mx.metal.get_peak_memory() / (1024**3)
                                 print(f"[server] Metal memory — active: {mem_active:.2f} GB, peak: {mem_peak:.2f} GB", file=sys.stderr)
                             except Exception:
                                 pass
@@ -1763,7 +1763,7 @@ async def chat_completions(req: ChatRequest):
                         if _should_clear_metal_cache():
                             try:
                                 import mlx.core as mx
-                                mx.clear_cache()
+                                mx.metal.clear_cache()
                             except Exception:
                                 pass
                     # Use try/except on call_soon_threadsafe in case the event loop
@@ -2064,7 +2064,7 @@ async def chat_completions(req: ChatRequest):
         # Aggressive post-request cache clearing to prevent memory accumulation
         try:
             import mlx.core as mx
-            mx.clear_cache()
+            mx.metal.clear_cache()
         except Exception:
             pass
 
@@ -2136,7 +2136,7 @@ async def chat_completions(req: ChatRequest):
             if images:
                 try:
                     import mlx.core as mx
-                    mx.clear_cache()
+                    mx.metal.clear_cache()
                 except Exception:
                     pass
             return result
@@ -2151,9 +2151,9 @@ async def chat_completions(req: ChatRequest):
         traceback.print_exc(file=sys.stderr)
         try:
             import mlx.core as mx
-            mem_active = mx.get_active_memory() / (1024**3)
-            mem_peak = mx.get_peak_memory() / (1024**3)
-            mem_cache = mx.get_cache_memory() / (1024**3)
+            mem_active = mx.metal.get_active_memory() / (1024**3)
+            mem_peak = mx.metal.get_peak_memory() / (1024**3)
+            mem_cache = mx.metal.get_cache_memory() / (1024**3)
             print(f"[server] Metal memory — active: {mem_active:.2f} GB, peak: {mem_peak:.2f} GB, cache: {mem_cache:.2f} GB", file=sys.stderr)
         except Exception:
             pass
@@ -2165,7 +2165,7 @@ async def chat_completions(req: ChatRequest):
     if _should_clear_metal_cache():
         try:
             import mlx.core as mx
-            mx.clear_cache()
+            mx.metal.clear_cache()
         except Exception:
             pass
 
@@ -2246,7 +2246,7 @@ if __name__ == "__main__":
                 print(f"[server] WARNING: Memory-bridge shutdown error: {e}", file=sys.stderr)
 
         # Use the proper unload function — clears model, draft model, prefix cache,
-        # vision state, token cache, and calls gc.collect() + mx.clear_cache()
+        # vision state, token cache, and calls gc.collect() + mx.metal.clear_cache()
         try:
             _unload_model()
         except Exception as e:

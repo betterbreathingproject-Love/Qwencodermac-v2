@@ -5318,19 +5318,20 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
               temperature: 0.3,
             }
             const reviewerResponse = await new Promise((resolve) => {
+              // Hard wall-clock timeout — don't block the agent loop if the
+              // server is busy processing another inference on the semaphore.
+              const wallTimer = setTimeout(() => resolve(null), 20000)
               const bodyStr = JSON.stringify(reviewerBody)
               const req = http.request({
                 hostname: '127.0.0.1', port: SERVER_PORT,
                 path: '/v1/chat/completions', method: 'POST',
-                timeout: 45000,
                 headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
               }, (res) => {
                 let data = ''
                 res.on('data', c => data += c)
-                res.on('end', () => { try { resolve(JSON.parse(data)) } catch { resolve(null) } })
+                res.on('end', () => { clearTimeout(wallTimer); try { resolve(JSON.parse(data)) } catch { resolve(null) } })
               })
-              req.on('error', () => resolve(null))
-              req.on('timeout', () => { req.destroy(); resolve(null) })
+              req.on('error', () => { clearTimeout(wallTimer); resolve(null) })
               req.write(bodyStr)
               req.end()
             })
