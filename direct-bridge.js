@@ -891,7 +891,7 @@ function buildFileTree(dir, maxDepth = 99) {
 
   function walk(current, prefix, depth) {
     if (depth > maxDepth) return
-    if (lines.length > 2000) return  // safety cap — prevent runaway scans
+    if (lines.length > 500) return  // tighter cap — 500 lines is plenty for context
     let entries
     try { entries = fs.readdirSync(current, { withFileTypes: true }) } catch { return }
     entries = entries
@@ -916,6 +916,21 @@ function buildFileTree(dir, maxDepth = 99) {
   lines.push(`${base}/`)
   walk(dir, '', 1)
   return lines.join('\n')
+}
+
+// Cache for buildFileTree — avoids re-walking the filesystem for every agent
+// in the same orchestrator run. Invalidated after 30s so changes are picked up.
+const _fileTreeCache = new Map()  // dir → { tree, timestamp }
+const FILE_TREE_CACHE_TTL = 30000 // 30 seconds
+
+function buildFileTreeCached(dir, maxDepth = 6) {
+  const cached = _fileTreeCache.get(dir)
+  if (cached && Date.now() - cached.timestamp < FILE_TREE_CACHE_TTL) {
+    return cached.tree
+  }
+  const tree = buildFileTree(dir, maxDepth)
+  _fileTreeCache.set(dir, { tree, timestamp: Date.now() })
+  return tree
 }
 
 /**
@@ -2750,7 +2765,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
     // Inject a compact file tree — goes into the variable section so it
     // doesn't invalidate the prefix cache when files change.
     try {
-      const tree = buildFileTree(workDir, 99)
+      const tree = buildFileTreeCached(workDir, 6)
       if (tree) {
         const treeLines = tree.split('\n')
         const cappedTree = treeLines.length > 150

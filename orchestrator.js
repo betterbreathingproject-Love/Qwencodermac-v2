@@ -207,11 +207,13 @@ class Orchestrator extends EventEmitter {
       if (allResolved) {
         console.log(`[orchestrator] _rollupAllParents: ${node.parent} → completed`);
         this._graph = updateNodeStatus(this._graph, node.parent, 'completed');
+        this.emit('task-status-event', { nodeId: node.parent, status: 'completed' });
         rolledUp++;
       }
     }
     if (rolledUp > 0) {
       console.log(`[orchestrator] _rollupAllParents: rolled up ${rolledUp} parent nodes`);
+      // Single persist for all rollups instead of per-node
       this._persist();
     }
   }
@@ -264,8 +266,10 @@ class Orchestrator extends EventEmitter {
       console.log('[orchestrator] All nodes already completed — resetting for re-execution');
       const ids = [...this._graph.nodes.keys()];
       for (const id of ids) {
-        this._updateNodeStatus(id, 'not_started');
+        this._graph = updateNodeStatus(this._graph, id, 'not_started');
+        this.emit('task-status-event', { nodeId: id, status: 'not_started' });
       }
+      this._persist();
     }
 
     // Roll up parent statuses from persisted child states — runs AFTER the
@@ -299,10 +303,12 @@ class Orchestrator extends EventEmitter {
       const failed = [...this._graph.nodes.values()].filter(n => n.status === 'failed');
       if (notStarted.length > 0 || failed.length > 0) {
         console.log('[orchestrator] Stuck graph detected: %d not_started, %d failed — resetting blocked nodes', notStarted.length, failed.length);
-        // Reset failed nodes so their dependents can proceed
+        // Reset failed nodes so their dependents can proceed — batch persist
         for (const node of failed) {
-          this._updateNodeStatus(node.id, 'not_started');
+          this._graph = updateNodeStatus(this._graph, node.id, 'not_started');
+          this.emit('task-status-event', { nodeId: node.id, status: 'not_started' });
         }
+        if (failed.length > 0) this._persist();
       }
     }
 
@@ -344,7 +350,7 @@ class Orchestrator extends EventEmitter {
    * the tasks.md was persisted with [-] nodes that have no active dispatch.
    */
   _resetStaleInProgressNodes() {
-    // Collect IDs first since _updateNodeStatus replaces this._graph
+    // Collect IDs first since updateNodeStatus replaces this._graph
     const staleIds = [];
     for (const [id, node] of this._graph.nodes) {
       if (node.status === 'in_progress') {
@@ -354,9 +360,12 @@ class Orchestrator extends EventEmitter {
     if (staleIds.length > 0) {
       console.log('[orchestrator] Resetting stale in_progress nodes:', staleIds);
     }
+    // Batch update without persisting each one — persist once at the end
     for (const id of staleIds) {
-      this._updateNodeStatus(id, 'not_started');
+      this._graph = updateNodeStatus(this._graph, id, 'not_started');
+      this.emit('task-status-event', { nodeId: id, status: 'not_started' });
     }
+    if (staleIds.length > 0) this._persist();
   }
 
   /**
@@ -374,9 +383,12 @@ class Orchestrator extends EventEmitter {
     if (failedIds.length > 0) {
       console.log('[orchestrator] Resetting failed nodes:', failedIds);
     }
+    // Batch update without persisting each one — persist once at the end
     for (const id of failedIds) {
-      this._updateNodeStatus(id, 'not_started');
+      this._graph = updateNodeStatus(this._graph, id, 'not_started');
+      this.emit('task-status-event', { nodeId: id, status: 'not_started' });
     }
+    if (failedIds.length > 0) this._persist();
   }
 
   /**
@@ -394,9 +406,12 @@ class Orchestrator extends EventEmitter {
     if (skippedIds.length > 0) {
       console.log('[orchestrator] Resetting skipped nodes:', skippedIds);
     }
+    // Batch update without persisting each one — persist once at the end
     for (const id of skippedIds) {
-      this._updateNodeStatus(id, 'not_started');
+      this._graph = updateNodeStatus(this._graph, id, 'not_started');
+      this.emit('task-status-event', { nodeId: id, status: 'not_started' });
     }
+    if (skippedIds.length > 0) this._persist();
   }
 
   _findStartNodeId() {
@@ -925,11 +940,13 @@ class Orchestrator extends EventEmitter {
           walk(fullPath, prefix ? `${prefix}/${e.name}` : e.name)
         } else if (SOURCE_EXTS.has(path.extname(e.name).toLowerCase())) {
           try {
+            // Use file size to estimate line count (~40 bytes/line) instead of
+            // reading the entire file. This avoids O(n) I/O per source file
+            // which was the main startup bottleneck for large projects.
             const stat = fs.statSync(fullPath)
-            const content = fs.readFileSync(fullPath, 'utf-8')
-            const lineCount = content.split('\n').length
+            const estimatedLines = Math.max(1, Math.round(stat.size / 40))
             const relPath = prefix ? `${prefix}/${e.name}` : e.name
-            lines.push(`  ${relPath} (${lineCount} lines)`)
+            lines.push(`  ${relPath} (~${estimatedLines} lines)`)
           } catch { /* skip unreadable files */ }
         }
       }
