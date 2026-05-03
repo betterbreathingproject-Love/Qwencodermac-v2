@@ -431,12 +431,12 @@ const TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'list_dir',
-      description: 'List files and directories at the given path. Returns names with / suffix for directories. When called on the project root ("."), returns a full recursive file tree — use this to get a complete picture of what files exist before searching. For subdirectories, returns a recursive tree to depth 2 by default — set depth=0 for flat listing or depth=3+ for deeper trees.',
+      description: 'List files and directories at the given path. Returns names with / suffix for directories. When called on the project root ("."), returns a full recursive file tree — use this to get a complete picture of what files exist before searching. For subdirectories, returns a recursive tree to depth 4 by default — set depth=0 for flat listing or a higher number for even deeper trees.',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string', description: 'Directory path to list' },
-          depth: { type: 'number', description: 'Recursion depth (default: 2 for subdirs, 3 for root). Set 0 for flat listing.' },
+          depth: { type: 'number', description: 'Recursion depth (default: 4 for subdirs, 6 for root). Set 0 for flat listing.' },
         },
         required: ['path'],
       },
@@ -870,7 +870,7 @@ function getToolDefs(lspManager, agentRole, allowedTools) {
  * so it stays under ~1500 tokens. Gives the agent spatial awareness of what
  * exists without burning the entire context window.
  */
-function buildFileTree(dir, maxDepth = 3) {
+function buildFileTree(dir, maxDepth = 6) {
   const lines = []
   const SKIP = new Set(['.git', 'node_modules', '__pycache__', '.next', 'dist', 'build', '.cache', '.vscode', '.maccoder', 'coverage', '.DS_Store'])
 
@@ -883,7 +883,7 @@ function buildFileTree(dir, maxDepth = 3) {
       .sort((a, b) => (b.isDirectory() - a.isDirectory()) || a.name.localeCompare(b.name))
 
     for (let i = 0; i < entries.length; i++) {
-      if (lines.length > 200) return // hard cap
+      if (lines.length > 600) return // hard cap
       const e = entries[i]
       const isLast = i === entries.length - 1
       const connector = isLast ? '└── ' : '├── '
@@ -1876,7 +1876,7 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
           const isProjectRoot = p === cwd || p === path.resolve(cwd, '.')
           const requestedDepth = (args && args.depth != null) ? args.depth : null
           if (isProjectRoot) {
-            const tree = buildFileTree(p, requestedDepth ?? 3)
+            const tree = buildFileTree(p, requestedDepth ?? 6)
             const treeResult = tree || (entries.length > 0 ? entries.join('\n') : '(empty directory)')
             // Append a clear note so the agent doesn't prepend the folder name to paths.
             // The tree header shows e.g. "photo ranker/" but that's just a label — all
@@ -1885,9 +1885,9 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
             return { result: `${treeResult}\n\nNOTE: You are at the project root. Use paths relative to here — do NOT include "${rootName}/" as a prefix. Example: "PhotoRanker/Models/Photo.swift", not "${rootName}/PhotoRanker/Models/Photo.swift".` }
           }
 
-          // For subdirectories, return a recursive tree (depth 2 by default)
+          // For subdirectories, return a recursive tree (depth 4 by default)
           // so the agent doesn't need to call list_dir on each child directory.
-          const subDepth = requestedDepth ?? 2
+          const subDepth = requestedDepth ?? 4
           if (subDepth > 0) {
             const tree = buildFileTree(p, subDepth)
             if (tree) return { result: tree }
@@ -2705,7 +2705,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
     // Inject a compact file tree — goes into the variable section so it
     // doesn't invalidate the prefix cache when files change.
     try {
-      const tree = buildFileTree(workDir, 3)
+      const tree = buildFileTree(workDir, 6)
       if (tree) {
         const treeLines = tree.split('\n')
         const cappedTree = treeLines.length > 150
