@@ -2123,9 +2123,8 @@ async function sendAgentMode(prompt, opts = {}) {
       case 'system':
         if (ev.subtype === 'debug') {
           setActivity(`🔍 ${esc(ev.data)} <span class="activity-dot">●</span>`)
-          // Show retries, reviewer diagnosis, and important debug info inline in chat
-          if (ev.data && (ev.data.includes('retrying') || ev.data.includes('Trimmed') || ev.data.includes('Repetition') ||
-              ev.data.includes('Escalating to reviewer') || ev.data.includes('Reviewer diagnosis'))) {
+          // Show retries and important debug info inline in chat
+          if (ev.data && (ev.data.includes('retrying') || ev.data.includes('Trimmed') || ev.data.includes('Repetition'))) {
             const toolsEl = document.getElementById(respId+'-tools')
             if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--muted)">🔍 ${esc(ev.data)}</div>`)
           }
@@ -2566,8 +2565,7 @@ async function sendAgentMode(prompt, opts = {}) {
               case 'system':
                 if (ev.subtype === 'debug') {
                   setOrchActivity(`🔍 ${esc(ev.data)} <span class="activity-dot">●</span>`)
-                  if (ev.data && (ev.data.includes('retrying') || ev.data.includes('Trimmed') || ev.data.includes('Repetition') ||
-                      ev.data.includes('Escalating to reviewer') || ev.data.includes('Reviewer diagnosis'))) {
+                  if (ev.data && (ev.data.includes('retrying') || ev.data.includes('Trimmed') || ev.data.includes('Repetition'))) {
                     if (orchTaskBlockId) {
                       const toolsEl = document.getElementById(orchTaskBlockId + '-tools')
                       if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--muted)">🔍 ${esc(ev.data)}</div>`)
@@ -5118,8 +5116,7 @@ async function _launchOrchestrator(tasksPath, taskCount) {
       case 'system':
         if (ev.subtype === 'debug') {
           setOrchActivity(`🔍 ${esc(ev.data)} <span class="activity-dot">●</span>`)
-          if (ev.data && (ev.data.includes('retrying') || ev.data.includes('Trimmed') || ev.data.includes('Repetition') ||
-              ev.data.includes('Escalating to reviewer') || ev.data.includes('Reviewer diagnosis'))) {
+          if (ev.data && (ev.data.includes('retrying') || ev.data.includes('Trimmed') || ev.data.includes('Repetition'))) {
             if (orchTaskBlockId) {
               const toolsEl = document.getElementById(orchTaskBlockId + '-tools')
               if (toolsEl) toolsEl.insertAdjacentHTML('beforeend', `<div class="msg-system" style="color:var(--muted)">🔍 ${esc(ev.data)}</div>`)
