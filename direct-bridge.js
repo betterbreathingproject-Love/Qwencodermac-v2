@@ -5276,160 +5276,82 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
           _recentToolNames.length = 0
 
           // ── Reviewer escalation ──────────────────────────────────────────
-          // Load a larger, smarter model for one diagnostic turn to break the
-          // loop. The reviewer sees the stuck context and produces a concrete
-          // action plan that is injected as a system message before the primary
-          // model continues.
-          // Reviewer model path: prefer user's saved preference, fall back to config default.
-          let reviewerModel = config.DEFAULT_REVIEWER_MODEL
-          try {
-            const projects = require('./projects.js')
-            const appSettings = projects.getAppSettings ? projects.getAppSettings() : {}
-            if (appSettings.lastReviewerModelPath) reviewerModel = appSettings.lastReviewerModelPath
-          } catch { /* non-fatal — use config default */ }
-          if (reviewerModel && reviewerModel !== model) {
-            try {
-              this.send('qwen-event', {
-                type: 'system', subtype: 'debug',
-                data: `🔍 Escalating to reviewer model for loop diagnosis...`,
-              })
+          // Use the already-loaded primary model with a focused diagnostic
+          // system prompt. No model swap — avoids Metal memory churn and
+          // SIGABRT crashes on Apple Silicon.
+          this.send('qwen-event', {
+            type: 'system', subtype: 'debug',
+            data: `🔍 Escalating to reviewer mode for loop diagnosis...`,
+          })
 
-              // Build a compact diagnostic context: last 6 tool exchanges
-              const recentExchanges = messages.slice(-12).map(m => {
-                if (m.role === 'system') return null
-                if (m.role === 'assistant' && m.tool_calls) {
-                  const calls = m.tool_calls.map(tc => `  → ${tc.function.name}(${JSON.stringify(tc.function.arguments || {}).slice(0, 120)})`).join('\n')
-                  return `[assistant tool calls]\n${calls}`
-                }
-                if (m.role === 'tool') {
-                  return `[tool result]\n${(m.content || '').slice(0, 400)}`
-                }
-                if (m.role === 'user') {
-                  return `[user]\n${(m.content || '').slice(0, 300)}`
-                }
-                return null
-              }).filter(Boolean).join('\n\n')
-
-              const reviewerMessages = [
-                {
-                  role: 'system',
-                  content: 'You are a senior code reviewer diagnosing a stuck AI agent. The agent is in a tool-call loop and cannot make progress. Analyse the recent tool calls and results, identify the root cause, and provide a concrete 2-3 step action plan to break the loop. Be specific about what tool to call next and with what arguments. Do NOT use any tools yourself — respond with plain text only.',
-                },
-                {
-                  role: 'user',
-                  content: `The agent has called \`${fnName}\` with identical arguments ${_sigCount} times${allErrors ? ' and it failed every time' : ' without making progress'}.\n\nRecent tool exchange:\n${recentExchanges}\n\nWhat is the root cause and what should the agent do next? Give a concrete action plan (2-3 steps max).`,
-                },
-              ]
-
-              // ── Step 1: unload primary model, load reviewer ──────────────
-              const _swapModel = async (targetPath) => {
-                const bodyStr = JSON.stringify({ model_path: targetPath })
-                return new Promise((resolve, reject) => {
-                  const req = http.request({
-                    hostname: '127.0.0.1', port: SERVER_PORT,
-                    path: '/admin/load', method: 'POST',
-                    timeout: 120000,
-                    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
-                  }, (res) => {
-                    let data = ''
-                    res.on('data', c => data += c)
-                    res.on('end', () => {
-                      if (res.statusCode >= 400) reject(new Error(`HTTP ${res.statusCode}: ${data.slice(0, 200)}`))
-                      else resolve(data)
-                    })
-                  })
-                  req.on('error', reject)
-                  req.on('timeout', () => { req.destroy(); reject(new Error('model swap timed out')) })
-                  req.write(bodyStr)
-                  req.end()
-                })
-              }
-
-              await _swapModel(reviewerModel)
-              this.send('qwen-event', {
-                type: 'system', subtype: 'debug',
-                data: `🔍 Reviewer model loaded — running diagnosis...`,
-              })
-
-              // ── Step 2: call reviewer (non-streaming, text only) ─────────
-              const reviewerBody = {
-                model: reviewerModel,
-                messages: reviewerMessages,
-                stream: false,
-                max_tokens: 512,
-                temperature: 0.3,
-              }
-
-              const reviewerResponse = await new Promise((resolve, reject) => {
-                const bodyStr = JSON.stringify(reviewerBody)
-                const req = http.request({
-                  hostname: '127.0.0.1', port: SERVER_PORT,
-                  path: '/v1/chat/completions', method: 'POST',
-                  timeout: 60000,
-                  headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
-                }, (res) => {
-                  let data = ''
-                  res.on('data', c => data += c)
-                  res.on('end', () => {
-                    try { resolve(JSON.parse(data)) } catch { resolve(null) }
-                  })
-                })
-                req.on('error', () => resolve(null))
-                req.on('timeout', () => { req.destroy(); resolve(null) })
-                req.write(bodyStr)
-                req.end()
-              })
-
-              const diagnosis = reviewerResponse?.choices?.[0]?.message?.content
-
-              // ── Step 3: reload primary model ─────────────────────────────
-              await _swapModel(model)
-              this.send('qwen-event', {
-                type: 'system', subtype: 'debug',
-                data: `🔍 Primary model reloaded — injecting reviewer diagnosis`,
-              })
-
-              if (diagnosis && diagnosis.trim()) {
-                this.send('qwen-event', {
-                  type: 'system', subtype: 'debug',
-                  data: `🔍 Reviewer diagnosis: ${diagnosis.slice(0, 200)}`,
-                })
-                messages.push({
-                  role: 'system',
-                  content: `REVIEWER DIAGNOSIS (from a larger model analysing your loop):\n\n${diagnosis}\n\nFollow this plan. Do NOT repeat the same ${fnName} call.`,
-                })
-              } else {
-                // Reviewer returned nothing useful — fall back to standard nudge
-                throw new Error('empty reviewer response')
-              }
-            } catch (reviewerErr) {
-              // Reviewer unavailable or failed — fall back to standard loop-break message
-              this.send('qwen-event', {
-                type: 'system', subtype: 'debug',
-                data: `Reviewer escalation failed (${reviewerErr.message}) — using standard loop-break`,
-              })
-              if (allErrors) {
-                messages.push({
-                  role: 'system',
-                  content: `STOP. You have called ${fnName} with the same arguments ${_sigCount} times and it failed every time. This approach is not working. You MUST try a DIFFERENT tool or a DIFFERENT approach entirely.\n\n` +
-                    `What failed: ${fnName}(${JSON.stringify(fnArgs).slice(0, 150)})\n` +
-                    `Error: ${modelContent.slice(0, 300)}\n\n` +
-                    `Options:\n` +
-                    `- If you need to read a file, use read_file (not cat/head/tail via bash)\n` +
-                    `- If a command needs a password (sudo/ssh), tell the user via ask_user\n` +
-                    `- If a path is wrong, use list_dir to find the correct path\n` +
-                    `- If you are truly stuck, call ask_user to get help from the user\n` +
-                    `Do NOT repeat the same failing call.`,
-                })
-              } else {
-                messages.push({
-                  role: 'system',
-                  content: `WARNING: You have called ${fnName} with identical arguments ${_sigCount} times. You are not making progress. Move on to the next step of your task. If you need different information, change your arguments. If you are done reading, start writing/editing.`,
-                })
-              }
+          // Build compact diagnostic context from last 6 tool exchanges
+          const recentExchanges = messages.slice(-12).map(m => {
+            if (m.role === 'system') return null
+            if (m.role === 'assistant' && m.tool_calls) {
+              const calls = m.tool_calls.map(tc =>
+                `  → ${tc.function.name}(${JSON.stringify(tc.function.arguments || {}).slice(0, 120)})`
+              ).join('\n')
+              return `[assistant tool calls]\n${calls}`
             }
-          } else {
-            // No reviewer model configured — use standard loop-break messages
+            if (m.role === 'tool') return `[tool result]\n${(m.content || '').slice(0, 400)}`
+            if (m.role === 'user') return `[user]\n${(m.content || '').slice(0, 300)}`
+            return null
+          }).filter(Boolean).join('\n\n')
+
+          const reviewerMessages = [
+            {
+              role: 'system',
+              content: 'You are a senior code reviewer diagnosing a stuck AI agent. The agent is in a tool-call loop and cannot make progress. Analyse the recent tool calls and results, identify the root cause, and provide a concrete 2-3 step action plan to break the loop. Be specific about what tool to call next and with what arguments. Do NOT use any tools yourself — respond with plain text only.',
+            },
+            {
+              role: 'user',
+              content: `The agent has called \`${fnName}\` with identical arguments ${_sigCount} times${allErrors ? ' and it failed every time' : ' without making progress'}.\n\nRecent tool exchange:\n${recentExchanges}\n\nWhat is the root cause and what should the agent do next? Give a concrete action plan (2-3 steps max).`,
+            },
+          ]
+
+          try {
+            const reviewerBody = {
+              model: model || 'default',
+              messages: reviewerMessages,
+              stream: false,
+              max_tokens: 512,
+              temperature: 0.3,
+            }
+            const reviewerResponse = await new Promise((resolve) => {
+              const bodyStr = JSON.stringify(reviewerBody)
+              const req = http.request({
+                hostname: '127.0.0.1', port: SERVER_PORT,
+                path: '/v1/chat/completions', method: 'POST',
+                timeout: 45000,
+                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
+              }, (res) => {
+                let data = ''
+                res.on('data', c => data += c)
+                res.on('end', () => { try { resolve(JSON.parse(data)) } catch { resolve(null) } })
+              })
+              req.on('error', () => resolve(null))
+              req.on('timeout', () => { req.destroy(); resolve(null) })
+              req.write(bodyStr)
+              req.end()
+            })
+            const diagnosis = reviewerResponse?.choices?.[0]?.message?.content
+            if (diagnosis && diagnosis.trim()) {
+              this.send('qwen-event', {
+                type: 'system', subtype: 'debug',
+                data: `🔍 Reviewer diagnosis: ${diagnosis.slice(0, 200)}`,
+              })
+              messages.push({
+                role: 'system',
+                content: `REVIEWER DIAGNOSIS:\n\n${diagnosis}\n\nFollow this plan exactly. Do NOT repeat the same ${fnName} call.`,
+              })
+            } else {
+              throw new Error('empty reviewer response')
+            }
+          } catch (reviewerErr) {
+            this.send('qwen-event', {
+              type: 'system', subtype: 'debug',
+              data: `Reviewer escalation failed (${reviewerErr.message}) — using standard loop-break`,
+            })
             if (allErrors) {
               messages.push({
                 role: 'system',
