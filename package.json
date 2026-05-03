@@ -18,6 +18,9 @@
       "hardenedRuntime": true,
       "entitlements": "entitlements.mac.plist",
       "entitlementsInherit": "entitlements.mac.plist",
+      "signIgnore": [
+        "node_modules/xcodebuildmcp/bundled"
+      ],
       "target": [
         {
           "target": "dmg",
