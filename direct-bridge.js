@@ -543,6 +543,20 @@ const TOOL_DEFS = [
   {
     type: 'function',
     function: {
+      name: 'agent_notes',
+      description: 'Write persistent thinking notes that survive context compaction. Use this to record key discoveries, decisions, constraints, and intermediate findings you want to remember across the entire session — especially before a long tool chain where context may be compressed. Notes are re-injected automatically after every compaction event. Keep notes concise (under 500 words). Calling this replaces the previous notes entirely.',
+      parameters: {
+        type: 'object',
+        properties: {
+          notes: { type: 'string', description: 'Your thinking notes — key facts, decisions, constraints, and findings to remember. Will survive context compaction.' },
+        },
+        required: ['notes'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'rewind_context',
       description: 'Retrieve the original uncompressed content for a previously compressed section. Use when you need full detail from a compressed tool result.',
       parameters: {
@@ -2128,6 +2142,13 @@ async function executeTool(name, args, cwd, browserInstance, lspManager, inputRe
         if (remove.length) parts.push(`${remove.length} removed`)
         return { result: `Todo list edited: ${parts.join(', ') || 'no changes'}` }
       }
+      case 'agent_notes': {
+        // agent_notes is handled by the agent loop (_agentNotes variable).
+        // executeTool just validates and echoes back — the loop captures the value.
+        const notes = args.notes
+        if (typeof notes !== 'string' || !notes.trim()) return { error: 'notes must be a non-empty string' }
+        return { result: `Notes saved (${notes.length} chars). They will be re-injected after any context compaction.` }
+      }
       case 'task_complete': {
         // Signal that the agent has finished. Return a special marker that
         // the agent loop checks to end the session gracefully.
@@ -2932,6 +2953,7 @@ When the user wants you to take action (write code, fix bugs, etc.), tell them t
     let consecutivePlanningNudges = 0  // Track how many times we've nudged for planning-only responses
     let _annotationNudgeCount = 0  // Track consecutive hallucinated-annotation nudges — cap to prevent infinite loop
     let _lastTodos = null  // Track the latest todo list for completion checking
+    let _agentNotes = null  // Persistent thinking notes — survive compaction, re-injected after each compact
     let _bootstrapDone = false  // Track whether todo bootstrap has fired
     let _textOnlyTurns = 0  // Track consecutive text-only responses for safety valve
     // ── Unproductive turn tracking ────────────────────────────────────────
