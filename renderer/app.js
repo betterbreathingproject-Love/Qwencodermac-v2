@@ -1820,9 +1820,6 @@ async function sendAgentMode(prompt, opts = {}) {
         lastToolName = ev.name || ''
         _agentToolCount++
         stopPromptProgress()
-        // Remove the streaming preview — the real tool block replaces it
-        const previewToRemove = document.getElementById(respId + '-tool-preview')
-        if (previewToRemove) previewToRemove.remove()
         // Start a new text segment for the next turn after this tool call
         allTextSegments.push('')
 
@@ -1836,6 +1833,9 @@ async function sendAgentMode(prompt, opts = {}) {
           }))
           _bootstrapShown = true  // main model has set todos — suppress any pending bootstrap
           updateTodoPanel(mapped, 'running')
+          // Remove the streaming preview now that we've handled the tool
+          const _prevRemove = document.getElementById(respId + '-tool-preview')
+          if (_prevRemove) _prevRemove.remove()
           document.getElementById(respId+'-status').textContent = `📋 Updated todo list`
           updateStatusBar('tool', { toolName: ev.name, activity: 'Updating progress...' })
           updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: 'Updating progress...' })
@@ -1847,6 +1847,8 @@ async function sendAgentMode(prompt, opts = {}) {
         if (ev.name === 'edit_todos') {
           _bootstrapShown = true
           applyTodoEdits(ev.input)
+          const _prevRemove2 = document.getElementById(respId + '-tool-preview')
+          if (_prevRemove2) _prevRemove2.remove()
           document.getElementById(respId+'-status').textContent = `📋 Updated todo list`
           updateStatusBar('tool', { toolName: ev.name, activity: 'Updating progress...' })
           updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: outputTokens || tokenCount, toolCount: _agentToolCount, activity: 'Updating progress...' })
@@ -1854,7 +1856,16 @@ async function sendAgentMode(prompt, opts = {}) {
           break
         }
 
-        document.getElementById(respId+'-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
+        // Replace the streaming preview with the real tool block in a single DOM operation
+        // to avoid the visual flash where content disappears between preview removal and
+        // real block insertion.
+        const _streamingPreview = document.getElementById(respId + '-tool-preview')
+        if (_streamingPreview) {
+          _streamingPreview.insertAdjacentHTML('beforebegin', renderToolUse(ev.name, ev.input, 'running'))
+          _streamingPreview.remove()
+        } else {
+          document.getElementById(respId+'-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
+        }
         // Capture the ID of the just-inserted tool block so tool-result can find it
         // reliably even if LSP/system messages are inserted after it.
         const _justInsertedTool = document.getElementById(respId+'-tools').querySelector('.tool-block:last-child')
@@ -1906,6 +1917,19 @@ async function sendAgentMode(prompt, opts = {}) {
             todoStatus.textContent = ev.is_error ? '✗ Error' : '✓ Done'
           } else {
             lastTool.insertAdjacentHTML('beforeend', renderToolResult(ev.content, ev.is_error))
+            // Animate the result body: it starts at natural height (streaming visible),
+            // then collapses to the 200px scroll box with a smooth transition.
+            const resultBody = lastTool.querySelector('.tool-result-body')
+            if (resultBody) {
+              const naturalH = resultBody.scrollHeight
+              if (naturalH > 200) {
+                resultBody.style.maxHeight = naturalH + 'px'
+                requestAnimationFrame(() => {
+                  resultBody.style.maxHeight = '200px'
+                  resultBody.style.overflowY = 'auto'
+                })
+              }
+            }
           }
         }
         const FILE_TOOLS = ['write_file', 'edit_file', 'create_file', 'bash', 'str_replace_editor']
@@ -2352,6 +2376,14 @@ async function sendAgentMode(prompt, opts = {}) {
                   const statusEl = lastTool.querySelector('.tool-status')
                   if (statusEl) { statusEl.className = 'tool-status ' + newStatus; statusEl.innerHTML = ev.is_error ? '✗ Error' : '✓ Done' }
                   lastTool.insertAdjacentHTML('beforeend', renderToolResult(ev.content, ev.is_error))
+                  const resultBody = lastTool.querySelector('.tool-result-body')
+                  if (resultBody) {
+                    const naturalH = resultBody.scrollHeight
+                    if (naturalH > 200) {
+                      resultBody.style.maxHeight = naturalH + 'px'
+                      requestAnimationFrame(() => { resultBody.style.maxHeight = '200px'; resultBody.style.overflowY = 'auto' })
+                    }
+                  }
                 }
                 const FILE_TOOLS = ['write_file', 'edit_file', 'create_file', 'bash']
                 if (!ev.is_error && FILE_TOOLS.some(t => orchToolName.includes(t))) {
@@ -4778,13 +4810,12 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         stopPromptProgress()
         orchToolName = ev.name || ''
         _agentToolCount++
-        // Remove the streaming preview — the real tool block replaces it
-        { const prevPreview = orchTaskBlockId ? document.getElementById(orchTaskBlockId + '-tool-preview') : null
-          if (prevPreview) prevPreview.remove()
-        }
         // Route update_todos: when a task graph is active, suppress agent update_todos
         // so the task graph remains the single source of truth for the todo panel.
         if (ev.name === 'update_todos' && ev.input?.todos) {
+          { const prevPreview = orchTaskBlockId ? document.getElementById(orchTaskBlockId + '-tool-preview') : null
+            if (prevPreview) prevPreview.remove()
+          }
           if (!currentTaskGraph) {
             const mapped = ev.input.todos.map(t => ({
               id: t.id,
@@ -4799,12 +4830,24 @@ async function _launchOrchestrator(tasksPath, taskCount) {
         }
         // Route edit_todos — surgical mutations
         if (ev.name === 'edit_todos') {
+          { const prevPreview = orchTaskBlockId ? document.getElementById(orchTaskBlockId + '-tool-preview') : null
+            if (prevPreview) prevPreview.remove()
+          }
           if (!currentTaskGraph) applyTodoEdits(ev.input)
           updateAgentStatsBar({ state: 'tool', toolName: ev.name, inputTokens, outputTokens: tokenCount, toolCount: _agentToolCount, activity: 'Updating progress...' })
           scrollOutput()
           break
         }
-        document.getElementById(orchTaskBlockId + '-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
+        // Replace the streaming preview with the real tool block in a single DOM operation
+        // to avoid the visual flash where content disappears between preview removal and insertion.
+        { const prevPreview = orchTaskBlockId ? document.getElementById(orchTaskBlockId + '-tool-preview') : null
+          if (prevPreview) {
+            prevPreview.insertAdjacentHTML('beforebegin', renderToolUse(ev.name, ev.input, 'running'))
+            prevPreview.remove()
+          } else {
+            document.getElementById(orchTaskBlockId + '-tools').insertAdjacentHTML('beforeend', renderToolUse(ev.name, ev.input, 'running'))
+          }
+        }
         document.getElementById(orchTaskBlockId + '-status').textContent = `🔧 Using tool: ${ev.name}`
         { const actEl = document.getElementById(orchTaskBlockId + '-activity')
           if (actEl) { actEl.innerHTML = `⚡ ${esc(ev.name || 'tool')} <span class="activity-dot">●</span>`; actEl.classList.remove('hidden') }
@@ -4828,6 +4871,14 @@ async function _launchOrchestrator(tasksPath, taskCount) {
           const statusEl = lastTool.querySelector('.tool-status')
           if (statusEl) { statusEl.className = 'tool-status ' + newStatus; statusEl.innerHTML = ev.is_error ? '✗ Error' : '✓ Done' }
           lastTool.insertAdjacentHTML('beforeend', renderToolResult(ev.content, ev.is_error))
+          const resultBody = lastTool.querySelector('.tool-result-body')
+          if (resultBody) {
+            const naturalH = resultBody.scrollHeight
+            if (naturalH > 200) {
+              resultBody.style.maxHeight = naturalH + 'px'
+              requestAnimationFrame(() => { resultBody.style.maxHeight = '200px'; resultBody.style.overflowY = 'auto' })
+            }
+          }
         }
         const FILE_TOOLS = ['write_file', 'edit_file', 'create_file', 'bash']
         if (!ev.is_error && FILE_TOOLS.some(t => orchToolName.includes(t))) {

@@ -792,8 +792,10 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .tool-result-header { padding: 6px 12px 2px; font-size: 10px; font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 5px; text-transform: uppercase; letter-spacing: 0.04em; }
 .tool-result-icon { font-size: 11px; font-weight: 700; }
 .tool-result-icon.error { color: var(--red); }
-.tool-result-body { padding: 4px 12px 8px; font-size: 11px; font-family: 'SF Mono', monospace; color: var(--green); white-space: pre-wrap; max-height: 120px; overflow-y: auto; }
+.tool-result-body { padding: 4px 12px 8px; font-size: 11px; font-family: 'SF Mono', monospace; color: var(--green); white-space: pre-wrap; max-height: 200px; overflow-y: auto; transition: max-height 0.3s ease; }
 .tool-result.error .tool-result-body { color: var(--red); }
+/* While the tool block is still running, let the result body grow freely (live streaming) */
+.tool-block.running .tool-result-body { max-height: none; overflow-y: visible; }
 .tool-spinner { display: inline-block; width: 10px; height: 10px; border: 1.5px solid rgba(250,204,21,0.3); border-top-color: var(--yellow); border-radius: 50%; animation: spin 0.6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -809,7 +811,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .tool-preview { border-color: rgba(250,204,21,0.25); background: var(--bg2); }
 .tool-preview .tool-header { border-bottom: 1px solid rgba(255,255,255,0.04); }
 .tool-preview-file { display: none; padding: 4px 12px; font-size: 11px; font-weight: 600; color: var(--yellow); background: rgba(250,204,21,0.04); border-bottom: 1px solid rgba(255,255,255,0.04); }
-.tool-preview-body { display: none; padding: 0; max-height: 280px; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 0 0 10px 10px; }
+.tool-preview-body { display: none; padding: 0; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 0 0 10px 10px; }
 .tool-preview-body pre { margin: 0; padding: 8px 12px; font-size: 11px; font-family: 'SF Mono', monospace; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-all; }
 .tool-preview-body code { font-family: inherit; }
 .tool-preview-body .ln { display: inline-block; width: 30px; color: rgba(255,255,255,0.15); text-align: right; margin-right: 10px; user-select: none; font-size: 10px; }
